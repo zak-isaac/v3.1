@@ -1,0 +1,61 @@
+/* V3.1 viewport fit: shared by the approved three-step login designs. */
+html, body { width:100%; min-height:100%; margin:0; }
+body { overflow-x:hidden; }
+.screen { width:100%; min-height:100dvh; max-width:100%; }
+.screen[hidden] { display:none !important; }
+.auth-screen { min-height:100dvh; }
+.auth-screen .auth-main { width:100%; min-width:0; flex:1; }
+.auth-screen .intro-panel { min-height:0; }
+.auth-screen .signin-area, .auth-screen .active-area { min-width:0; }
+.auth-screen .elevated-card { max-width:100%; }
+.handoff-screen {
+  min-height:100dvh;
+  width:100%;
+  display:flex;
+  flex-direction:column;
+  overflow-x:hidden;
+}
+.handoff-screen .handoff-main {
+  flex:1 0 auto;
+  width:min(96vw,1400px);
+  max-width:100%;
+  margin:0 auto;
+  padding:clamp(8px,1.4vh,18px) 0 9px;
+}
+.handoff-screen .handoff-choices { width:100%; gap:clamp(12px,1.8vw,24px); }
+.handoff-screen .choice-card { min-width:0; }
+.handoff-screen .shift-detail-panel { overflow-wrap:anywhere; }
+.handoff-screen .handoff-footer { flex-shrink:0; }
+#v31-associate-dialog, #v31-manager-shift-picker { max-width:calc(100vw - 28px); max-height:calc(100dvh - 32px); }
+#v31-associate-dialog::backdrop, #v31-manager-shift-picker::backdrop { background:rgba(7,22,45,.55); }
+@media (min-width:901px) {
+  .auth-screen { height:100dvh; overflow:hidden; }
+  .auth-screen .auth-main { height:calc(100dvh - 54px); }
+  .auth-screen .intro-content { max-height:100%; overflow-y:auto; }
+  .auth-screen .signin-area, .auth-screen .active-area { height:100%; }
+  .handoff-screen { height:100dvh; overflow-y:auto; }
+}
+@media (min-width:901px) and (max-height:850px) {
+  .handoff-screen .handoff-heading { margin-bottom:10px; }
+  .handoff-screen .handoff-heading h1 { font-size:clamp(25px,2.7vw,36px); margin:4px 0; }
+  .handoff-screen .choice-card { padding:14px 18px; }
+  .handoff-screen .choice-heading { margin-bottom:7px; min-height:0; }
+  .handoff-screen .shift-detail-panel { padding:12px 15px; }
+  .handoff-screen .timeline-card { padding:8px 20px 10px; margin-top:8px; }
+  .handoff-screen .independence-note { padding:9px 15px; }
+  .active-screen .active-shift-box { margin:10px 0; padding:12px; }
+  .active-screen .active-card { padding:clamp(15px,2.5vh,28px); }
+}
+@media (max-width:900px) {
+  .auth-screen { height:auto; min-height:100dvh; }
+  .auth-screen .auth-main { overflow:visible; }
+  .auth-screen .signin-area, .auth-screen .active-area { height:auto; }
+  .handoff-screen { height:auto; min-height:100dvh; }
+  .handoff-screen .handoff-main { width:calc(100% - 32px); }
+}
+@media (max-width:620px) {
+  .handoff-screen .handoff-main { width:calc(100% - 24px); }
+  .handoff-screen .handoff-choices { grid-template-columns:minmax(0,1fr); }
+  .handoff-screen .timeline-card { overflow-x:auto; }
+  #v31-manager-shift-picker, #v31-associate-dialog { width:calc(100vw - 20px) !important; }
+}
