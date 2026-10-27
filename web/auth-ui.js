@@ -42,8 +42,38 @@
     if (rows[0]) rows[0].textContent = dateLabel(shift.scheduled_start);
     if (rows[1]) rows[1].textContent = timeRange(shift) + ' · ' + grace(shift);
   };
+  // One associate-number popup shared by Resume and Start on the approved
+  // Active Shift and New Shift Ready screens. Never bounce to screen one.
+  const gate = document.createElement('dialog');
+  gate.id = 'v31-associate-dialog';
+  gate.setAttribute('aria-labelledby', 'v31-gate-title');
+  gate.style.cssText = 'width:min(440px,calc(100vw - 28px));border:1px solid #d7e1ee;border-radius:18px;padding:0;box-shadow:0 25px 90px rgba(4,23,54,.27);color:#172b49;font-family:Segoe UI,Arial,sans-serif';
+  gate.innerHTML = `<form id="v31-gate-form" style="padding:27px 30px 28px;display:grid;gap:13px">
+    <h2 id="v31-gate-title" style="font-size:23px;margin:0;color:#071e42">Confirm associate number</h2>
+    <p id="v31-gate-description" style="margin:0;color:#56667b;font-size:14px;line-height:1.5"></p>
+    <label for="v31-gate-associate" style="font-weight:700;font-size:13px">Associate Number</label>
+    <input id="v31-gate-associate" inputmode="numeric" autocomplete="off" maxlength="12" required
+      placeholder="Enter your associate number"
+      style="width:100%;height:49px;border-radius:9px;border:1px solid #b7c7db;padding:12px;font-size:18px;color:#142c50;background:white">
+    <p id="v31-gate-error" role="alert" hidden style="margin:0;color:#a52024;font-size:13px"></p>
+    <button type="submit" id="v31-gate-confirm" style="background:#0872e2;color:#fff;padding:13px;border:0;border-radius:10px;font-weight:700;font-size:15px">Continue to Shift Report</button>
+    <button type="button" id="v31-gate-cancel" style="border:0;background:transparent;color:#536681;padding:8px;cursor:pointer">Cancel</button>
+  </form>`;
+  document.body.append(gate);
+  const gateField = $('#v31-gate-associate'), gateError = $('#v31-gate-error');
+  const gateButton = $('#v31-gate-confirm');
+  let chosen = null;
+  $('#v31-gate-cancel').addEventListener('click', () => gate.close());
+  gate.addEventListener('close', () => { chosen = null; gateField.value = ''; gateError.hidden = true; });
+  gateField.addEventListener('input', () => { gateError.hidden = true; });
+  const enterReport = () => {
+    // Hide the two-pane login page during navigation to avoid a split-page flash.
+    document.body.style.visibility = 'hidden';
+    document.documentElement.style.background = '#fff';
+    window.location.replace('/shift-report.html');
+  };
   const useDifferent = async () => {
-    pending = null;
+    chosen = null;
     if (signedIn) {
       try { await api('/api/logout', {}); } catch (e) { console.warn(e); }
       signedIn = false; account = null;
@@ -52,20 +82,40 @@
     error.hidden = true;
     show('login');
   };
-  const resume = async shift => choose({kind:'resume', shift});
-  const start = async shift => choose({kind:'start', shift});
-  async function choose(choice) {
-    pending = choice;
-    if (!signedIn) { error.hidden = true; show('login'); return; }
+  const resume = shift => choose({kind:'resume', shift});
+  const start = shift => choose({kind:'start', shift});
+  function choose(choice) {
+    chosen = choice;
+    gateError.hidden = true;
+    const label = (choice.kind === 'resume' ? 'resume ' : 'start ') + choice.shift.code +
+      ' (' + dateLabel(choice.shift.scheduled_start) + ')';
+    $('#v31-gate-description').textContent = 'Enter your associate number to ' +
+      label + '. You will open that shift\'s reporting workspace.';
+    gateButton.textContent = (choice.kind === 'resume' ? 'Resume ' : 'Start ') + choice.shift.code + ' Shift';
+    gate.showModal();
+    gateField.focus();
+  }
+  $('#v31-gate-form').addEventListener('submit', async event => {
+    event.preventDefault();
+    if (!chosen) return;
+    const associate = gateField.value.trim();
+    if (!/^\\d{1,12}$/.test(associate)) {
+      gateError.textContent = 'Enter a valid associate number using digits only.';
+      gateError.hidden = false; return;
+    }
+    gateButton.disabled = true; gateError.hidden = true;
+    const choice = chosen;
     try {
+      await api('/api/login', {associate});
       await api(choice.kind === 'resume' ? '/api/shifts/resume' : '/api/shifts/start',
         choice.kind === 'resume' ? {shift_id:choice.shift.id} : {code:choice.shift.code});
-      window.location.assign('/shift-report.html');
+      enterReport();
     } catch (e) {
-      error.textContent = e.message; error.hidden = false;
-      show('login');
-    }
-  }
+      gateError.textContent = e.message;
+      gateError.hidden = false;
+    } finally { gateButton.disabled = false; }
+  });
+
   function updateActive(shift) {
     const box = $('#screen-active .active-shift-box');
     box.querySelector('h3').textContent = shift.code + ' — ' + shift.label;
@@ -185,15 +235,8 @@
       const answer = await api('/api/login', {associate:assoc});
       signedIn = true;
       account = await api('/api/me');
-      if (pending) {
-        const choice = pending; pending = null;
-        await api(choice.kind === 'resume' ? '/api/shifts/resume' : '/api/shifts/start',
-          choice.kind === 'resume' ? {shift_id:choice.shift.id} : {code:choice.shift.code});
-        window.location.assign('/shift-report.html');
-        return;
-      }
       if (answer.destination === '/shift-report.html') {
-        window.location.assign(answer.destination); return;
+        enterReport(); return;
       }
       flow = {open:account.open, ready:account.ready};
       render();
