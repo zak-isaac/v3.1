@@ -1,7 +1,7 @@
 """Isolated V3.1 login and shift-context service. No Workshop integration.
 
-Authentication requires a locally provisioned passphrase as well as an
-associate identifier. Never accept an associate ID as proof of identity.
+Development convenience: associate-number-only access is NOT authentication.
+Never expose this application on the facility network or Internet.
 """
 from __future__ import annotations
 
@@ -25,12 +25,16 @@ from pydantic import BaseModel, Field
 
 ROOT = Path(__file__).resolve().parent
 PRIVATE = Path(os.environ.get('IND3_V31_PRIVATE_DIR', str(ROOT / '.local-data'))).resolve()
-USERS = PRIVATE / 'users.json'
 SESSION_SECRET_FILE = PRIVATE / 'session_secret'
 DB_FILE = PRIVATE / 'shifts.sqlite3'
 TZ = ZoneInfo('America/Indiana/Indianapolis')
 SESSION_TTL = 12 * 3600
 SESSION_COOKIE = 'ind3_v31_session'
+# Local-only development IDs, NOT secure identity verification.
+DEV_ASSOCIATES = {
+    '8972': {'name': 'Management', 'all_shifts': True, 'shift': None},
+    '2759': {'name': 'MST Management', 'all_shifts': True, 'shift': None},
+}
 SHIFT_RULES = {
     'S1': ('Day Shift', (5, 30), (16, 0), (0, 1, 2, 3)),
     'S2': ('Weekday Shift', (12, 0), (22, 30), (0, 1, 2, 3)),
@@ -61,19 +65,8 @@ def _secret() -> bytes:
 
 
 def roster() -> dict:
-    if not USERS.is_file():
-        return {}
-    return json.loads(USERS.read_text(encoding='utf-8'))
-
-
-def verify_passphrase(pw: str, profile: dict) -> bool:
-    try:
-        salt = bytes.fromhex(profile['salt'])
-        expected = bytes.fromhex(profile['hash'])
-        computed = hashlib.scrypt(pw.encode('utf-8'), salt=salt, n=2**14, r=8, p=1, dklen=32)
-        return hmac.compare_digest(computed, expected)
-    except (TypeError, KeyError, ValueError):
-        return False
+    """Local-only preview identifiers. NOT production authentication."""
+    return DEV_ASSOCIATES
 
 
 def issue(assoc: str, shift_id: int = 0) -> str:
@@ -227,7 +220,6 @@ def landing(request: Request):
 
 class LoginRequest(BaseModel):
     associate: str = Field(pattern=r'^\d{1,12}$', max_length=12)
-    passphrase: str = Field(min_length=1, max_length=256)
 
 
 class ShiftChoice(BaseModel):
@@ -242,8 +234,8 @@ class ShiftResume(BaseModel):
 def login(payload: LoginRequest, request: Request, response: Response):
     _origin_check(request)
     profile = roster().get(payload.associate)
-    if not profile or not verify_passphrase(payload.passphrase, profile):
-        raise HTTPException(401, 'Invalid sign-in details')
+    if not profile:
+        raise HTTPException(401, 'Associate number not authorized for this local preview')
     _set_cookie(response, payload.associate)
     return {'destination': '/shift-report.html'}
 
