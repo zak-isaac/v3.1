@@ -14,6 +14,7 @@
   let signedIn = false, pending = null, flow = null, account = null;
   const show = name => {
     for (const [key, element] of Object.entries(screens)) element.hidden = key !== name;
+    document.getElementById('v31-preload')?.remove();
     if (name === 'login') field.focus();
   };
   const dateLabel = iso => new Intl.DateTimeFormat('en-US',
