@@ -1,0 +1,37 @@
+# Local data and databases
+.local-data/
+dbs/
+*.sqlite
+*.sqlite3
+*.db
+*.db-*
+*.bak
+
+# Secrets and environment-specific configuration
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+secrets/
+credentials/
+
+# Employee files, operational exports, real reports
+pm_uploads/
+uploads/
+exports/
+reports/
+*.eml
+*.xlsx
+*.xls
+*.csv
+
+# Local tooling
+__pycache__/
+.pytest_cache/
+.venv/
+venv/
+node_modules/
+.DS_Store
