@@ -2,7 +2,7 @@
 
 A **new, independent** frontend and backend, separate from live IND3 Workshop V3.
 
-Enter associate number **8972** or **2759** on the approved sign-in screen and go **directly to the Shift Report landing page**. Both preview identities have access to all S1–S5 reporting shifts. You can start eligible shifts and resume open ones from **Choose Shift** in the workspace.
+Enter an authorized associate number on the approved sign-in screen. With one eligible shift, it opens **Shift Report** automatically. When multiple reports overlap, select the one you want first. Both local preview identities have access to the S1–S5 reporting shifts within their time windows. You can start eligible shifts and resume open ones from **Choose Shift** in the workspace.
 
 ## Start on your Mac
 
