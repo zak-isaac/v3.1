@@ -189,9 +189,13 @@ def shift_choices(profile: dict, now: datetime) -> tuple[list[dict], list[dict]]
             if record['open']:
                 open_items.append({**entry(record), 'action': 'resume'})
         else:
-            ready_items.append({'id': None, 'code': code, 'date': day.isoformat(),
-                                'label': SHIFT_RULES[code][0], 'open': False,
-                                'action': 'start', **window_info(code, day)})
+            # A new shift starts before its scheduled end. The extra hour
+            # after closing belongs only to an already-open passdown.
+            _, scheduled_end = shift_times(code, day)
+            if now <= scheduled_end:
+                ready_items.append({'id': None, 'code': code, 'date': day.isoformat(),
+                                    'label': SHIFT_RULES[code][0], 'open': False,
+                                    'action': 'start', **window_info(code, day)})
     open_items.sort(key=lambda x: x['scheduled_start'])
     ready_items.sort(key=lambda x: x['scheduled_start'])
     return open_items, ready_items
@@ -316,9 +320,14 @@ def start_shift(payload: ShiftChoice, request: Request, response: Response):
     day = eligible_date(payload.code, datetime.now(TZ))
     if day is None:
         raise HTTPException(409, 'Shift reporting window is not active')
+    now = datetime.now(TZ)
     with _db() as conn:
+        existing = conn.execute('SELECT * FROM shifts WHERE code=? AND shift_day=?',
+                                (payload.code, day.isoformat())).fetchone()
+        if existing is None and now > shift_times(payload.code, day)[1]:
+            raise HTTPException(409, 'New shift may not start after its scheduled end')
         conn.execute('INSERT OR IGNORE INTO shifts (code,shift_day,owner,created_at) VALUES (?,?,?,?)',
-                     (payload.code, day.isoformat(), session['a'], datetime.now(TZ).isoformat()))
+                     (payload.code, day.isoformat(), session['a'], now.isoformat()))
         row = conn.execute('SELECT * FROM shifts WHERE code=? AND shift_day=?',
                            (payload.code, day.isoformat())).fetchone()
         if not row['open']:
