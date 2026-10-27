@@ -326,7 +326,8 @@ def landing(request: Request):
 
 
 class LoginRequest(BaseModel):
-    associate: str = Field(pattern=r'^\d{1,12}
+    associate: str = Field(pattern=r'^\d{1,12}$', max_length=12)
+    intent: Literal['direct', 'select'] = 'direct'
 
 
 class ShiftChoice(BaseModel):
@@ -358,130 +359,6 @@ def login(payload: LoginRequest, request: Request, response: Response):
         # Popup path: do not create/attach an MST shift before a choice is checked.
         _set_cookie(response, payload.associate)
         return {'destination': '/', 'selection_required': True, 'role': 'mst'}
-    now = datetime.now(TZ)
-    opened, ready = shift_choices(profile, now, payload.associate)
-    if opened:
-        # Assigned shift already opened by this MST: resume that report.
-        selected = opened[0]
-    elif ready:
-        # Start assigned shift only if nobody else owns the current instance.
-        target = ready[0]
-        with _db() as conn:
-            conn.execute('INSERT OR IGNORE INTO shifts (code,shift_day,owner,created_at) VALUES (?,?,?,?)',
-                         (target['code'], target['date'], payload.associate, now.isoformat()))
-            row = conn.execute('SELECT * FROM shifts WHERE code=? AND shift_day=?',
-                               (target['code'], target['date'])).fetchone()
-            if not row['open'] or row['owner'] != payload.associate:
-                raise HTTPException(409, 'This shift is already open under another MST. Contact management.')
-            selected = entry(row)
-    else:
-        code = profile.get('shift')
-        raise HTTPException(409, f'{code} is outside its reporting window, or is open under another MST.')
-    _set_cookie(response, payload.associate, selected['id'])
-    return {'destination': '/shift-report.html', 'role': 'mst',
-            'shift': selected['code']}
-
-
-@app.get('/api/me')
-def me(request: Request):
-    session, profile = who(request)
-    return state(session, profile)
-
-
-@app.post('/api/shifts/start')
-def start_shift(payload: ShiftChoice, request: Request, response: Response):
-    _origin_check(request)
-    session, profile = who(request)
-    if not allowed(profile, payload.code):
-        raise HTTPException(403, 'Shift not assigned to this associate')
-    day = eligible_date(payload.code, datetime.now(TZ))
-    if day is None:
-        raise HTTPException(409, 'Shift reporting window is not active')
-    now = datetime.now(TZ)
-    with _db() as conn:
-        existing = conn.execute('SELECT * FROM shifts WHERE code=? AND shift_day=?',
-                                (payload.code, day.isoformat())).fetchone()
-        if existing is None and now > shift_times(payload.code, day)[1]:
-            raise HTTPException(409, 'New shift may not start after its scheduled end')
-        conn.execute('INSERT OR IGNORE INTO shifts (code,shift_day,owner,created_at) VALUES (?,?,?,?)',
-                     (payload.code, day.isoformat(), session['a'], now.isoformat()))
-        row = conn.execute('SELECT * FROM shifts WHERE code=? AND shift_day=?',
-                           (payload.code, day.isoformat())).fetchone()
-        if not row['open']:
-            raise HTTPException(409, 'This shift was already ended')
-        if not profile.get('all_shifts') and row['owner'] != session['a']:
-            raise HTTPException(403, 'The shift belongs to another MST')
-        selected = entry(row)
-    _set_cookie(response, session['a'], selected['id'])
-    return selected
-
-
-@app.post('/api/shifts/resume')
-def resume_shift(payload: ShiftResume, request: Request, response: Response):
-    _origin_check(request)
-    session, profile = who(request)
-    with _db() as conn:
-        row = conn.execute('SELECT * FROM shifts WHERE id=? AND open=1', (payload.shift_id,)).fetchone()
-    if row is None or eligible_date(row['code'], datetime.now(TZ)) != date.fromisoformat(row['shift_day']):
-        raise HTTPException(404, 'Active shift not found within its reporting window')
-    if not allowed(profile, row['code']):
-        raise HTTPException(403, 'Shift not assigned to this associate')
-    if not profile.get('all_shifts') and row['owner'] != session['a']:
-        raise HTTPException(403, 'Only the shift starter or management may resume this report')
-    _set_cookie(response, session['a'], row['id'])
-    return entry(row)
-
-
-@app.post('/api/logout')
-def logout(request: Request, response: Response):
-    _origin_check(request)
-    response.delete_cookie(SESSION_COOKIE, path='/')
-    return {'signed_out': True}
-
-@app.post('/api/shifts/end')
-def end_shift(request: Request, response: Response):
-    """Finish only the bound session; overlapping sessions remain untouched."""
-    _origin_check(request)
-    session, profile = who(request)
-    if not session['s']:
-        raise HTTPException(409, 'No selected shift')
-    with _db() as conn:
-        row = conn.execute('SELECT * FROM shifts WHERE id=? AND open=1',
-                           (session['s'],)).fetchone()
-        if row is None or not allowed(profile, row['code']):
-            raise HTTPException(404, 'Active shift not found')
-        conn.execute('UPDATE shifts SET open=0 WHERE id=?', (session['s'],))
-    _set_cookie(response, session['a'], 0)
-    return {'ended': True, 'shift_id': session['s']}
-, max_length=12)
-    intent: Literal['direct', 'select'] = 'direct'
-
-
-class ShiftChoice(BaseModel):
-    code: Literal['S1', 'S2', 'S3', 'S4', 'S5']
-
-
-class ShiftResume(BaseModel):
-    shift_id: int = Field(gt=0)
-
-
-@app.get('/api/entry')
-def entry_status():
-    return public_flow()
-
-
-@app.post('/api/login')
-def login(payload: LoginRequest, request: Request, response: Response):
-    _origin_check(request)
-    profile = roster().get(payload.associate)
-    if not profile:
-        raise HTTPException(401, 'Associate number not authorized for this local preview')
-    # Original V3 policy: managers select; ordinary MSTs enter their own
-    # roster-assigned shift directly. An MST never chooses another shift.
-    if profile.get('all_shifts'):
-        _set_cookie(response, payload.associate)
-        return {'destination': '/', 'manager_selection_required': True,
-                'role': 'manager'}
     now = datetime.now(TZ)
     opened, ready = shift_choices(profile, now, payload.associate)
     if opened:
