@@ -76,7 +76,8 @@ def roster() -> dict:
     profiles = {key: dict(value) for key, value in MANAGEMENT_ASSOCIATES.items()}
     selected = os.getenv('IND3_V31_ROSTER_PATH', '').strip()
     candidates = [Path(selected).expanduser()] if selected else [
-        PRIVATE / 'Drax Associates.xlsx', PRIVATE / 'mst-roster.xlsx',
+        PRIVATE / 'Drax  Associates.xlsx', PRIVATE / 'Drax Associates.xlsx',
+        PRIVATE / 'mst-roster.xlsx',
         PRIVATE / 'mst-roster.csv'
     ]
     source = next((p for p in candidates if p.is_file()), None)
