@@ -312,7 +312,7 @@ def signin_page(request: Request):
     html = html[:start] + '<script defer src="/web/auth-ui.js"></script>' + html[end + len('</script>'):]
     # Prevent the first-screen/two-pane flash while the client checks shift state.
     # Client removes this rule when the correct login, active or handoff screen is ready.
-    html = html.replace('</head>', '<style id="v31-preload">body{visibility:hidden}html{background:#fff}</style></head>', 1)
+    html = html.replace('</head>', '<link rel="stylesheet" href="/web/login-layout.css"><style id="v31-preload">body{visibility:hidden}html{background:#fff}</style></head>', 1)
     return HTMLResponse(html)
 
 
