@@ -6,6 +6,7 @@ Never expose this application on the facility network or Internet.
 from __future__ import annotations
 
 import base64
+import csv
 from datetime import date, datetime, time as clock, timedelta
 import hashlib
 import hmac
@@ -32,7 +33,7 @@ SESSION_TTL = 18 * 3600
 WINDOW_GRACE = timedelta(hours=1)
 SESSION_COOKIE = 'ind3_v31_session'
 # Local-only development IDs, NOT secure identity verification.
-DEV_ASSOCIATES = {
+MANAGEMENT_ASSOCIATES = {
     '8972': {'name': 'Management', 'all_shifts': True, 'shift': None},
     '2759': {'name': 'MST Management', 'all_shifts': True, 'shift': None},
 }
@@ -66,8 +67,61 @@ def _secret() -> bytes:
 
 
 def roster() -> dict:
-    """Local-only preview identifiers. NOT production authentication."""
-    return DEV_ASSOCIATES
+    """Private independent roster, with original V3's manager/MST distinction.
+
+    For MSTs use the existing Drax columns Name, Assoc. #, Shift, Job Title.
+    Read from this NEW project's .local-data only, never from the live V3
+    database or its production configuration.
+    """
+    profiles = {key: dict(value) for key, value in MANAGEMENT_ASSOCIATES.items()}
+    selected = os.getenv('IND3_V31_ROSTER_PATH', '').strip()
+    candidates = [Path(selected).expanduser()] if selected else [
+        PRIVATE / 'Drax Associates.xlsx', PRIVATE / 'mst-roster.xlsx',
+        PRIVATE / 'mst-roster.csv'
+    ]
+    source = next((p for p in candidates if p.is_file()), None)
+    if source is None:
+        return profiles
+
+    def ingest(row: dict) -> None:
+        fields = {str(k or '').strip().casefold(): v for k, v in row.items()}
+        raw_id = fields.get('assoc. #', fields.get('assoc #', fields.get('associate number', '')))
+        if raw_id is None:
+            return
+        try:
+            number = str(int(raw_id)) if isinstance(raw_id, (int, float)) else str(raw_id).strip()
+        except (TypeError, ValueError):
+            return
+        number = number.strip()
+        if not number.isdecimal() or len(number) > 12 or number in MANAGEMENT_ASSOCIATES:
+            return
+        job = str(fields.get('job title') or '').strip().upper()
+        # Same as V3: employees without the MST roster flag cannot enter.
+        if job != 'MST':
+            return
+        assigned = str(fields.get('shift') or '').strip().upper()
+        if assigned not in SHIFT_RULES:
+            return
+        raw_name = str(fields.get('name') or 'MST Associate').strip()
+        profiles[number] = {'name': raw_name, 'all_shifts': False, 'shift': assigned}
+
+    if source.suffix.lower() == '.csv':
+        with source.open(encoding='utf-8-sig', newline='') as handle:
+            for row in csv.DictReader(handle):
+                ingest(row)
+    elif source.suffix.lower() == '.xlsx':
+        from openpyxl import load_workbook
+        workbook = load_workbook(source, read_only=True, data_only=True)
+        try:
+            sheet = workbook.active
+            rows = sheet.iter_rows(values_only=True)
+            headers = next(rows, None)
+            if headers:
+                for row in rows:
+                    ingest(dict(zip(headers, row)))
+        finally:
+            workbook.close()
+    return profiles
 
 
 def issue(assoc: str, shift_id: int = 0) -> str:
@@ -170,7 +224,7 @@ def allowed(profile: dict, code: str) -> bool:
     return bool(profile.get('all_shifts')) or profile.get('shift') == code
 
 
-def shift_choices(profile: dict, now: datetime) -> tuple[list[dict], list[dict]]:
+def shift_choices(profile: dict, now: datetime, associate: str | None = None) -> tuple[list[dict], list[dict]]:
     """Live and ready reports are bounded by the shift's actual time window.
     Do not delete historical records or automatically finalize a past report."""
     with _db() as conn:
@@ -186,7 +240,7 @@ def shift_choices(profile: dict, now: datetime) -> tuple[list[dict], list[dict]]
         key = (code, day.isoformat())
         record = by_key.get(key)
         if record is not None:
-            if record['open']:
+            if record['open'] and (profile.get('all_shifts') or record['owner'] == associate):
                 open_items.append({**entry(record), 'action': 'resume'})
         else:
             # A new shift starts before its scheduled end. The extra hour
@@ -213,10 +267,17 @@ def public_flow(now: datetime | None = None) -> dict:
 
 def state(session: dict, profile: dict) -> dict:
     now = datetime.now(TZ)
-    opened, ready = shift_choices(profile, now)
+    opened, ready = shift_choices(profile, now, session['a'])
     available = opened + ready
     selected = next((x for x in opened if x['id'] == session['s']), None)
+    catalog = []
+    for code in SHIFT_RULES:
+        match = next((x for x in available if x['code'] == code), None)
+        catalog.append(match if match else {'code': code, 'label': SHIFT_RULES[code][0],
+                                              'action': 'unavailable', 'open': False})
     return {'name': profile.get('name', 'Associate'), 'associate': session['a'],
+            'role': 'manager' if profile.get('all_shifts') else 'mst',
+            'catalog': catalog,
             'all_shifts': bool(profile.get('all_shifts')),
             'assigned_shift': profile.get('shift'), 'selected': selected,
             'shifts': available, 'open': opened, 'ready': ready, 'now': now.isoformat(),
@@ -287,25 +348,34 @@ def login(payload: LoginRequest, request: Request, response: Response):
     profile = roster().get(payload.associate)
     if not profile:
         raise HTTPException(401, 'Associate number not authorized for this local preview')
+    # Original V3 policy: managers select; ordinary MSTs enter their own
+    # roster-assigned shift directly. An MST never chooses another shift.
+    if profile.get('all_shifts'):
+        _set_cookie(response, payload.associate)
+        return {'destination': '/', 'manager_selection_required': True,
+                'role': 'manager'}
     now = datetime.now(TZ)
-    opened, ready = shift_choices(profile, now)
-    # Bind automatically ONLY when the choice is unambiguous.
-    if len(opened) + len(ready) == 1:
-        if opened:
-            _set_cookie(response, payload.associate, opened[0]['id'])
-        else:
-            with _db() as conn:
-                code, day = ready[0]['code'], ready[0]['date']
-                conn.execute('INSERT OR IGNORE INTO shifts (code,shift_day,owner,created_at) VALUES (?,?,?,?)',
-                             (code, day, payload.associate, now.isoformat()))
-                row = conn.execute('SELECT * FROM shifts WHERE code=? AND shift_day=?',
-                                   (code, day)).fetchone()
-                if not row['open']:
-                    raise HTTPException(409, 'Shift was already closed')
-                _set_cookie(response, payload.associate, row['id'])
-        return {'destination': '/shift-report.html'}
-    _set_cookie(response, payload.associate)
-    return {'destination': '/', 'selection_required': True}
+    opened, ready = shift_choices(profile, now, payload.associate)
+    if opened:
+        # Assigned shift already opened by this MST: resume that report.
+        selected = opened[0]
+    elif ready:
+        # Start assigned shift only if nobody else owns the current instance.
+        target = ready[0]
+        with _db() as conn:
+            conn.execute('INSERT OR IGNORE INTO shifts (code,shift_day,owner,created_at) VALUES (?,?,?,?)',
+                         (target['code'], target['date'], payload.associate, now.isoformat()))
+            row = conn.execute('SELECT * FROM shifts WHERE code=? AND shift_day=?',
+                               (target['code'], target['date'])).fetchone()
+            if not row['open'] or row['owner'] != payload.associate:
+                raise HTTPException(409, 'This shift is already open under another MST. Contact management.')
+            selected = entry(row)
+    else:
+        code = profile.get('shift')
+        raise HTTPException(409, f'{code} is outside its reporting window, or is open under another MST.')
+    _set_cookie(response, payload.associate, selected['id'])
+    return {'destination': '/shift-report.html', 'role': 'mst',
+            'shift': selected['code']}
 
 
 @app.get('/api/me')
@@ -335,6 +405,8 @@ def start_shift(payload: ShiftChoice, request: Request, response: Response):
                            (payload.code, day.isoformat())).fetchone()
         if not row['open']:
             raise HTTPException(409, 'This shift was already ended')
+        if not profile.get('all_shifts') and row['owner'] != session['a']:
+            raise HTTPException(403, 'The shift belongs to another MST')
         selected = entry(row)
     _set_cookie(response, session['a'], selected['id'])
     return selected
@@ -350,6 +422,8 @@ def resume_shift(payload: ShiftResume, request: Request, response: Response):
         raise HTTPException(404, 'Active shift not found within its reporting window')
     if not allowed(profile, row['code']):
         raise HTTPException(403, 'Shift not assigned to this associate')
+    if not profile.get('all_shifts') and row['owner'] != session['a']:
+        raise HTTPException(403, 'Only the shift starter or management may resume this report')
     _set_cookie(response, session['a'], row['id'])
     return entry(row)
 
