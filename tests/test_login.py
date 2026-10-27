@@ -184,3 +184,17 @@ def test_fresh_empty_database_and_tamper_rejected(client):
         assert db.execute('SELECT COUNT(*) FROM shifts').fetchone()[0] == 0
     client.cookies.set(m.SESSION_COOKIE, 'invalid')
     assert client.get('/api/me').status_code == 401
+
+
+def test_late_grace_only_resumes_an_already_open_shift(client, monkeypatch):
+    freeze(monkeypatch, at(2026,10,27,16,30))
+    login(client)
+    assert 'S1' not in {x['code'] for x in client.get('/api/me').json()['ready']}
+    assert client.post('/api/shifts/start',json={'code':'S1'}).status_code == 409
+    freeze(monkeypatch, at(2026,10,27,15,59))
+    started = client.post('/api/shifts/start',json={'code':'S1'})
+    assert started.status_code == 200
+    shift_id = started.json()['id']
+    freeze(monkeypatch, at(2026,10,27,16,59))
+    assert client.post('/api/shifts/resume',json={'shift_id':shift_id}).status_code == 200
+    assert client.get('/api/me').json()['selected']['code'] == 'S1'
