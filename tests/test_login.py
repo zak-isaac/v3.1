@@ -198,3 +198,28 @@ def test_late_grace_only_resumes_an_already_open_shift(client, monkeypatch):
     freeze(monkeypatch, at(2026,10,27,16,59))
     assert client.post('/api/shifts/resume',json={'shift_id':shift_id}).status_code == 200
     assert client.get('/api/me').json()['selected']['code'] == 'S1'
+
+
+def test_report_starts_without_fabricated_work_orders(client, monkeypatch):
+    freeze(monkeypatch, at(2026, 10, 27, 8, 0))
+    login(client)
+    response = client.get('/shift-report.html')
+    assert response.status_code == 200
+    html = response.text
+    assert 'const sampleRows = []' in html
+    assert 'No Cetaris File Imported' in html
+    assert 'No work orders yet.' in html
+    assert 'id="metric-work">0<' in html
+    assert 'id="loto-toggle" checked' not in html
+    assert 'data:image/jpeg;base64' not in html
+    assert 'background:#fff' in html
+
+
+def test_active_and_overlap_buttons_use_popup_not_first_signin(client, monkeypatch):
+    js = (m.ROOT / 'web' / 'auth-ui.js').read_text(encoding='utf-8')
+    assert 'v31-associate-dialog' in js
+    assert "gate.showModal();" in js
+    assert "api('/api/login', {associate})" in js
+    assert "window.location.replace('/shift-report.html')" in js
+    assert "if (!signedIn) { error.hidden = true; show('login')" not in js
+    assert 'v31-preload' in client.get('/').text
