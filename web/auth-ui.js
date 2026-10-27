@@ -101,8 +101,20 @@
     const timelineNote = $('#screen-handoff .timeline-card > p');
     if (timelineNote) timelineNote.textContent = 'Reporting windows overlap. New shifts open 1 hour early; prior shifts close 1 hour late.';
     const times = $('#screen-handoff .timeline-times');
-    if (times) times.textContent = timeLabel(previous.scheduled_start) + ' · ' +
-      timeLabel(next.scheduled_start) + ' · ' + timeLabel(next.scheduled_end);
+    if (times) {
+      const cells = times.querySelectorAll(':scope > div');
+      [
+        [previous.scheduled_start, previous.scheduled_start],
+        [next.scheduled_start, next.scheduled_start],
+        [next.scheduled_end, next.scheduled_end]
+      ].forEach(([timestamp, day], i) => {
+        if (!cells[i]) return;
+        const small = document.createElement('small');
+        small.textContent = new Intl.DateTimeFormat('en-US',
+          {timeZone:zone,month:'short',day:'numeric'}).format(new Date(day));
+        cells[i].replaceChildren(timeLabel(timestamp), small);
+      });
+    }
     // Keep all additional eligible shift choices available without altering the approved two cards.
     const choices = $('#screen-handoff .handoff-choices');
     const existing = document.getElementById('v31-extra-choices');
