@@ -1,25 +1,36 @@
-# IND3 Shift Reporting V3.1 — Login Connected
+# IND3 Shift Reporting V3.1 — Associate-number login (local preview)
 
-This is a **new, isolated project**, not the live Workshop V3 application.
+A **new, independent** frontend and backend, separate from live IND3 Workshop V3.
 
-The approved login and Shift Report frontend designs are preserved. Signing in with an authorized associate number and a **private access passphrase** opens the Shift Report landing page directly. A shift picker inside the workspace lets management open any eligible S1–S5 shift without closing overlapping reports.
+Enter associate number **8972** or **2759** on the approved sign-in screen and go **directly to the Shift Report landing page**. Both preview identities have access to all S1–S5 reporting shifts. You can start eligible shifts and resume open ones from **Choose Shift** in the workspace.
 
-## First-time setup
+## Start on your Mac
 
 ```bash
-pip install -r requirements.txt
-python setup_access.py
+cd ~/Projects/ind3-v3.1
+git pull --ff-only
+source .venv/bin/activate
+python -m pip install -r requirements.txt
 python -m uvicorn app:app --host 127.0.0.1 --port 8980
 ```
 
-Open <http://127.0.0.1:8980/>. Provision your two authorized management identifiers during `setup_access.py`, marking both **Full S1–S5 access**. They are **not** embedded in the public repository and no mock accounts are provisioned by default.
+Open <http://127.0.0.1:8980/>. **No passphrase, setup wizard, passkey, or fictional accounts.** The old `setup_access.py` was deleted.
 
-The login screen first requests associate number, then asks for the locally provisioned passphrase in a matching modal. Successful login goes **straight to the Shift Report landing page**. On the landing page, **Choose Shift** selects an active/eligible reporting session. Sign Out does not close a shift.
+### Remove old passphrase setup from this Mac
 
-## Important limits
+After stopping the server (Control+C), you may remove the now-unused local hash/roster file with:
 
-- Loopback-only developer service. Do not bind to `0.0.0.0` or expose through a public tunnel.
-- Local passphrase verification is a staging mechanism, **not** approved enterprise SSO. A facility-network deployment requires IT-approved identity authentication, HTTPS, access logs, and operational security review.
-- `.local-data/` stores only **this project's** password hashes, session signing key, and isolated shift-session database. It is gitignored.
-- Work orders and reporting controls on the frontend are **sample design interactions**, not live Cetaris processing or production reporting.
-- The live IND3 Workshop application, roster, database, and GitHub repository are untouched.
+```bash
+cd ~/Projects/ind3-v3.1
+rm -f -- .local-data/users.json
+```
+
+This does not delete the isolated shift-session database. If you want to sign out an existing browser session, click **Sign Out** in the app.
+
+## Security and scope
+
+- **Associate number alone is not secure authentication.** This deliberately simplified login is **only for local frontend testing** on a computer you control. Anyone with access to the localhost app can use those numbers. Do **not** deploy to the Walmart network or Internet. Before team rollout, integrate approved identity verification and proper authorization.
+- Keep the server bound to `127.0.0.1`, **never** `0.0.0.0`, and do not use public tunnels or reverse proxies. A loopback request restriction is also enforced server-side.
+- New V3.1 has its own local shift database. Existing production GitHub project, Workshop application, and database remain untouched.
+- Shift Report content and controls are still a **sample frontend**, not connected to live Cetaris, reporting, or actual work orders.
+- `.local-data/` contains local session signing key, and isolated shift records; it is ignored by Git.
