@@ -1,45 +1,25 @@
-# IND3 Shift Reporting — V3.1
+# IND3 Shift Reporting V3.1 — Login Connected
 
-New, independent shift-reporting application for IND3 MST Reliability Operations. This is a **fresh project**, not a merge of the existing Workshop production code.
+This is a **new, isolated project**, not the live Workshop V3 application.
 
-## Current milestone: frontend prototypes
+The approved login and Shift Report frontend designs are preserved. Signing in with an authorized associate number and a **private access passphrase** opens the Shift Report landing page directly. A shift picker inside the workspace lets management open any eligible S1–S5 shift without closing overlapping reports.
 
-| View | Open source |
-| --- | --- |
-| Associate Sign In, Active Shift Detected, New Shift Ready | [Login flow](prototypes/login-flow.html) |
-| Shift Report workspace | [Shift reporting](prototypes/shift-report.html) |
+## First-time setup
 
-These are self-contained, interactive HTML demos with embedded styles, JavaScript, and illustrative warehouse imagery. To preview locally, download the HTML and open it in a browser.
+```bash
+pip install -r requirements.txt
+python setup_access.py
+python -m uvicorn app:app --host 127.0.0.1 --port 8980
+```
 
-**These previews do not authenticate associates, create or close production shifts, upload real Cetaris files, modify rosters, or send emails.** Interactions are for frontend design review.
+Open <http://127.0.0.1:8980/>. Provision your two authorized management identifiers during `setup_access.py`, marking both **Full S1–S5 access**. They are **not** embedded in the public repository and no mock accounts are provisioned by default.
 
-## Approved direction
+The login screen first requests associate number, then asks for the locally provisioned passphrase in a matching modal. Successful login goes **straight to the Shift Report landing page**. On the landing page, **Choose Shift** selects an active/eligible reporting session. Sign Out does not close a shift.
 
-A modern, clean enterprise interface. The main navigation is **Shift Report · Shift History · Analytics · Administration**.
+## Important limits
 
-The reporting workspace preserves the necessary information without overcrowding the screen:
-
-- Cetaris import, Change Technicians, Replace File, and Imported WO Audit
-- Shift Happenings, inline editing, exclude/restore, and completed PM count
-- PMs Needing Completion as a separate file upload
-- Breakdown, OOS/RTS tracking
-- Vendors, RO, Shift Notes as text-entry fields
-- LOTO verified toggle and a 20-key missing-key selector
-- Outlook passdown preview/export, End Shift, Sign Out and footer
-
-## Backend status
-
-A **separate local-only** login proof of concept exists outside this GitHub repository, but is **not published here**. Earlier prototype access depended on entering associate-number identifiers; that is not sufficient to authenticate a person. Before a shared deployment, management privileges must be assigned **only after Walmart-approved identity verification**, not based on an entered number.
-
-Never commit real associate numbers, rosters, employee records, production reports, private keys, authentication secrets or local databases to this public repository.
-
-## Project boundaries
-
-- New repository: `zak-isaac/v3.1`
-- Existing live production repository: `zak-isaac/ind3-shift-passdown`
-- No shared databases, branch merges, production deployments, or modifications to the live Workshop.
-- Existing V3 code is a **reference for proven functionality**, not something we copy wholesale.
-
-## Next build work
-
-Structure frontend files into maintainable modules; connect a secure login mechanism and isolated database; test shift-specific reporting flows; then migrate only the proven components needed.
+- Loopback-only developer service. Do not bind to `0.0.0.0` or expose through a public tunnel.
+- Local passphrase verification is a staging mechanism, **not** approved enterprise SSO. A facility-network deployment requires IT-approved identity authentication, HTTPS, access logs, and operational security review.
+- `.local-data/` stores only **this project's** password hashes, session signing key, and isolated shift-session database. It is gitignored.
+- Work orders and reporting controls on the frontend are **sample design interactions**, not live Cetaris processing or production reporting.
+- The live IND3 Workshop application, roster, database, and GitHub repository are untouched.
