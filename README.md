@@ -27,6 +27,14 @@ rm -f -- .local-data/users.json
 
 This does not delete the isolated shift-session database. If you want to sign out an existing browser session, click **Sign Out** in the app.
 
+## Current frontend behavior
+
+Clicking **Resume Active Shift**, **Resume Existing Shift**, or **Start New Shift** on the second and third approved login screens opens a centered **associate-number popup on that same screen**. Successful confirmation selects the requested shift and opens Shift Report. A failed entry stays in the popup with an error. The first sign-in screen is not used as an intermediate step.
+
+The Shift Report now starts with **zero work orders, PM counts, breakdowns, vendor entries, RO entries and technician selections**. LOTO starts unverified. No sample work orders, invented technician names or imported Cetaris filenames appear by default. The main canvas and KPI cards use true white, and the previous blue-tinted warehouse-photo backgrounds have been removed from the dashboard (the approved login photography remains).
+
+Cetaris and PM uploads are still UI-only file selection until the new V3.1 parsing backend is implemented. A selected filename does **not** imply imported work orders. Report preview/EML is still local demo output, not a production passdown.
+
 ## Security and scope
 
 - **Associate number alone is not secure authentication.** This deliberately simplified login is **only for local frontend testing** on a computer you control. Anyone with access to the localhost app can use those numbers. Do **not** deploy to the Walmart network or Internet. Before team rollout, integrate approved identity verification and proper authorization.
