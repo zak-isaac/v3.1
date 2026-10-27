@@ -250,7 +250,9 @@ def signin_page(request: Request):
 
 @app.get('/shift-report.html', response_class=HTMLResponse)
 def landing(request: Request):
-    who(request)
+    session, profile = who(request)
+    if not state(session, profile)['selected']:
+        return RedirectResponse('/', status_code=303)
     html = (ROOT / 'prototypes' / 'shift-report.html').read_text(encoding='utf-8')
     return HTMLResponse(html.replace('</body>', '<script defer src="/web/workspace-auth.js"></script></body>'))
 
