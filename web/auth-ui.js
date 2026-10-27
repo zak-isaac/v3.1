@@ -100,14 +100,14 @@
     event.preventDefault();
     if (!chosen) return;
     const associate = gateField.value.trim();
-    if (!/^\\d{1,12}$/.test(associate)) {
+    if (!/^\d{1,12}$/.test(associate)) {
       gateError.textContent = 'Enter a valid associate number using digits only.';
       gateError.hidden = false; return;
     }
     gateButton.disabled = true; gateError.hidden = true;
     const choice = chosen;
     try {
-      await api('/api/login', {associate});
+      await api('/api/login', {associate, intent:'select'});
       await api(choice.kind === 'resume' ? '/api/shifts/resume' : '/api/shifts/start',
         choice.kind === 'resume' ? {shift_id:choice.shift.id} : {code:choice.shift.code});
       enterReport();
@@ -116,6 +116,67 @@
       gateError.hidden = false;
     } finally { gateButton.disabled = false; }
   });
+
+
+  // A manager's FIRST login always opens this chooser, even with one active
+  // shift. Shift permissions remain checked by the backend for every action.
+  const managerPicker = document.createElement('dialog');
+  managerPicker.id = 'v31-manager-shift-picker';
+  managerPicker.style.cssText = 'width:min(640px,calc(100vw - 28px));max-height:min(85dvh,740px);overflow:auto;border:1px solid #d6e2f0;border-radius:18px;padding:0;background:#fff;color:#132f52;box-shadow:0 25px 90px #0b275444;font-family:Segoe UI,Arial,sans-serif';
+  managerPicker.innerHTML = `<div style="padding:25px 27px 24px">
+    <h2 style="font-size:24px;margin:0 0 7px">Choose your shift</h2>
+    <p style="font-size:14px;color:#60728a;margin:0 0 16px;line-height:1.5">Management access · Select an available S1–S5 shift report. Start and Resume are separate sessions.</p>
+    <div id="v31-manager-choices" style="display:grid;gap:9px"></div>
+    <p role="alert" id="v31-manager-error" hidden style="color:#aa242b;font-size:13px"></p>
+    <button id="v31-manager-different" type="button" style="border:0;background:transparent;color:#35628d;font-weight:650;padding:13px 0 0;cursor:pointer">Use a different associate number</button>
+  </div>`;
+  document.body.append(managerPicker);
+  $('#v31-manager-different').addEventListener('click', () => {
+    managerPicker.close();
+    useDifferent();
+  });
+  async function showManagerPicker() {
+    if (!account || account.role !== 'manager') account = await api('/api/me');
+    const list = $('#v31-manager-choices');
+    list.replaceChildren();
+    const errorNode = $('#v31-manager-error');
+    errorNode.hidden = true;
+    for (const entry of (account.catalog || [])) {
+      const row = document.createElement('div');
+      row.style.cssText='display:flex;gap:12px;align-items:center;justify-content:space-between;padding:13px;border:1px solid #e1e8f1;border-radius:12px;background:#fff';
+      const label = document.createElement('div');
+      label.style.cssText='display:grid;gap:4px;min-width:0';
+      const heading = document.createElement('strong');
+      heading.textContent = entry.code + ' — ' + entry.label;
+      const status = document.createElement('small');
+      status.style.cssText='color:#687a90;font-size:12px';
+      status.textContent = entry.action === 'resume' ? 'Open report · ' + entry.date :
+        entry.action === 'start' ? 'Ready to start · ' + entry.date : 'Outside reporting window';
+      label.append(heading,status);
+      const button=document.createElement('button');
+      button.type='button';
+      button.textContent=entry.action==='resume'?'Resume':entry.action==='start'?'Start':'Unavailable';
+      button.disabled=entry.action==='unavailable';
+      button.style.cssText='min-width:98px;background:#0968d5;color:white;border:0;border-radius:9px;padding:10px 13px;font-weight:700;cursor:pointer';
+      button.addEventListener('click', async () => {
+        button.disabled=true;
+        errorNode.hidden=true;
+        try {
+          await api(entry.action==='resume'?'/api/shifts/resume':'/api/shifts/start',
+            entry.action==='resume'?{shift_id:entry.id}:{code:entry.code});
+          enterReport();
+        } catch(err) {
+          errorNode.textContent=err.message;
+          errorNode.hidden=false;
+          button.disabled=false;
+        }
+      });
+      row.append(label,button);
+      list.append(row);
+    }
+    show('login');
+    if (!managerPicker.open) managerPicker.showModal();
+  }
 
   function updateActive(shift) {
     const box = $('#screen-active .active-shift-box');
@@ -236,6 +297,10 @@
       const answer = await api('/api/login', {associate:assoc});
       signedIn = true;
       account = await api('/api/me');
+      if (answer.role === 'manager' || answer.manager_selection_required) {
+        await showManagerPicker();
+        return;
+      }
       if (answer.destination === '/shift-report.html') {
         enterReport(); return;
       }
@@ -256,6 +321,10 @@
       if (current.ok) {
         account = await current.json(); signedIn = true;
         flow = {open:account.open, ready:account.ready};
+        if (account.role === 'manager' && !account.selected) {
+          await showManagerPicker();
+          return;
+        }
       }
       render();
     } catch (e) {
