@@ -42,6 +42,7 @@
     {timeZone:'America/Indiana/Indianapolis',weekday:'short',month:'short',day:'numeric',year:'numeric'}).format(new Date(iso));
   const draw=async()=>{
     context=await request('/api/me');
+    window.__v31ShiftContext = context.selected || null;
     if (!context.selected) {
       // Never keep displaying a fake or expired shift as the active report.
       window.location.replace('/');
