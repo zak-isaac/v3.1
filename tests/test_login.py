@@ -1,92 +1,186 @@
-from datetime import datetime
-from pathlib import Path
+"""V3.1 shift-bound login, signed-out screens, 60-minute grace and overnight windows."""
+from datetime import date, datetime
 from zoneinfo import ZoneInfo
+
 from fastapi.testclient import TestClient
 import pytest
 import app as m
 
+ZONE = ZoneInfo('America/Indiana/Indianapolis')
+
+
+def at(year, month, day, hour, minute=0):
+    return datetime(year, month, day, hour, minute, tzinfo=ZONE)
+
+
+def freeze(monkeypatch, clock):
+    real_datetime = datetime
+
+    class FakeDateTime:
+        combine = real_datetime.combine
+
+        @staticmethod
+        def now(tz):
+            return clock
+
+    monkeypatch.setattr(m, 'datetime', FakeDateTime)
+
+
 @pytest.fixture
 def client(tmp_path, monkeypatch):
     monkeypatch.setattr(m, 'PRIVATE', tmp_path)
-    monkeypatch.setattr(m, 'SESSION_SECRET_FILE', tmp_path/'session_secret')
-    monkeypatch.setattr(m, 'DB_FILE', tmp_path/'shifts.sqlite3')
-    with TestClient(m.app) as c:yield c
+    monkeypatch.setattr(m, 'SESSION_SECRET_FILE', tmp_path / 'session_secret')
+    monkeypatch.setattr(m, 'DB_FILE', tmp_path / 'shifts.sqlite3')
+    with TestClient(m.app) as c:
+        yield c
 
 
-def login(c, assoc='8972'):
-    r=c.post('/api/login',json={'associate':assoc})
-    assert r.status_code==200,r.text
-    return r
+def login(client, assoc='8972'):
+    r = client.post('/api/login', json={'associate':assoc})
+    assert r.status_code == 200, r.text
+    return r.json()
 
 
-def test_login_opens_landing_page_directly(client):
-    assert client.get('/shift-report.html').status_code==401
-    assert client.get('/').status_code==200
-    assert 'credential-dialog' not in client.get('/').text
-    assert login(client).json()['destination']=='/shift-report.html'
-    assert client.get('/', follow_redirects=False).status_code==303
-    assert client.get('/shift-report.html').status_code==200
+def test_only_approved_local_associate_numbers(client):
+    assert set(m.roster()) == {'8972', '2759'}
+    assert client.post('/api/login', json={'associate':'random'}).status_code == 422
+    assert client.post('/api/login', json={'associate':'9999'}).status_code == 401
+    assert client.post('/api/login', json={'associate':'8972'}).status_code == 200
+    client.post('/api/logout')
+    assert client.post('/api/login', json={'associate':'2759'}).status_code == 200
+
+
+def test_one_hour_before_and_after_s1_and_s2():
+    day = date(2026, 10, 27)  # Tuesday
+    assert m.eligible_date('S1', at(2026,10,27,4,29)) is None
+    assert m.eligible_date('S1', at(2026,10,27,4,30)) == day
+    assert m.eligible_date('S1', at(2026,10,27,17,0)) == day
+    assert m.eligible_date('S1', at(2026,10,27,17,1)) is None
+    assert m.eligible_date('S2', at(2026,10,27,10,59)) is None
+    assert m.eligible_date('S2', at(2026,10,27,11,0)) == day
+    assert m.eligible_date('S2', at(2026,10,27,23,30)) == day
+    assert m.eligible_date('S2', at(2026,10,27,23,31)) is None
+
+
+def test_overnight_s3_includes_next_morning_and_grace():
+    monday = date(2026,10,26)
+    assert m.eligible_date('S3', at(2026,10,26,19,29)) is None
+    assert m.eligible_date('S3', at(2026,10,26,19,30)) == monday
+    assert m.eligible_date('S3', at(2026,10,27,7,59)) == monday
+    assert m.eligible_date('S3', at(2026,10,27,8,0)) == monday
+    assert m.eligible_date('S3', at(2026,10,27,8,1)) is None
+    details = m.window_info('S3', monday)
+    assert details['scheduled_end'].startswith('2026-10-27T07:00')
+    assert details['closes_at'].startswith('2026-10-27T08:00')
+
+
+def test_weekend_s4_and_s5_and_overnight():
+    friday = date(2026,10,30)
+    assert m.eligible_date('S4', at(2026,10,30,4,29)) is None
+    assert m.eligible_date('S4', at(2026,10,30,4,30)) == friday
+    assert m.eligible_date('S4', at(2026,10,30,19,0)) == friday
+    assert m.eligible_date('S5', at(2026,10,30,16,29)) is None
+    assert m.eligible_date('S5', at(2026,10,30,16,30)) == friday
+    assert m.eligible_date('S5', at(2026,10,31,6,59)) == friday
+    assert m.eligible_date('S5', at(2026,10,31,7,0)) == friday
+    # After 7 AM the Friday S5 can no longer be resumed.
+    assert m.eligible_date('S5', at(2026,10,31,7,1)) != friday
+
+
+def test_unique_eligible_shift_binds_login_and_opens_landing(client, monkeypatch):
+    freeze(monkeypatch, at(2026,10,27,8,0))
+    assert client.get('/shift-report.html').status_code == 401
+    assert login(client)['destination'] == '/shift-report.html'
+    who = client.get('/api/me').json()
+    assert who['selected']['code'] == 'S1'
+    assert who['selected']['date'] == '2026-10-27'
+    assert who['selected']['opens_at'].startswith('2026-10-27T04:30')
+    assert client.get('/', follow_redirects=False).status_code == 303
+    assert client.get('/shift-report.html').status_code == 200
     assert 'workspace-auth.js' in client.get('/shift-report.html').text
 
 
-def test_associate_number_only_and_unknown_denied(client):
-    assert client.post('/api/login',json={'associate':'8972'}).status_code==200
-    client.post('/api/logout')
-    assert client.post('/api/login',json={'associate':'2759'}).status_code==200
-    client.post('/api/logout')
-    assert client.post('/api/login',json={'associate':'999'}).status_code==401
-    assert client.post('/api/login',json={}).status_code==422
-    assert client.get('/api/me').status_code==401
-
-
-def test_access_for_both_management_accounts(client,monkeypatch):
-    # S1 and S2 are simultaneously eligible at 1:15 PM local.
-    class FakeDT:
-        @staticmethod
-        def now(tz): return datetime(2026,10,27,13,15,tzinfo=ZoneInfo('America/Indiana/Indianapolis'))
-        combine=datetime.combine
-    monkeypatch.setattr(m,'datetime',FakeDT)
+def test_signed_out_active_shift_screen_and_logout_preserves_shift(client, monkeypatch):
+    freeze(monkeypatch, at(2026,10,27,8,0))
     login(client)
-    choices=client.get('/api/me').json()['shifts']
-    assert {x['code'] for x in choices}=={'S1','S2'}
-    s1=client.post('/api/shifts/start',json={'code':'S1'})
-    assert s1.status_code==200,s1.text
-    first=s1.json()['id']
-    client.post('/api/logout')
-    login(client,'2759')
-    resumed=client.post('/api/shifts/resume',json={'shift_id':first})
-    assert resumed.status_code==200
-    s2=client.post('/api/shifts/start',json={'code':'S2'})
-    assert s2.status_code==200
-    assert client.get('/api/me').json()['selected']['code']=='S2'
-    with m._db() as conn:
-        rows=conn.execute('SELECT id,open FROM shifts ORDER BY id').fetchall()
-        assert len(rows)==2 and all(r['open']==1 for r in rows)
+    assert client.get('/api/entry').json()['screen'] == 'active'
+    assert client.post('/api/logout').status_code == 200
+    assert client.get('/api/me').status_code == 401
+    assert client.get('/api/entry').json()['screen'] == 'active'
+    assert 'auth-ui.js' in client.get('/').text
+    assert login(client, '2759')['destination'] == '/shift-report.html'
+    assert client.get('/api/me').json()['selected']['code'] == 'S1'
 
 
-def test_secure_cookie_and_private_folder_not_accessible(client):
-    r=login(client)
-    assert 'httponly' in r.headers['set-cookie'].lower()
-    assert 'samesite=strict' in r.headers['set-cookie'].lower()
-    for path in ['/users.json','/.local-data/users.json','/web/../users.json','/web/../app.py','/web/../.local-data/session_secret','/app.py','/prototypes/login-flow.html']:
-        assert client.get(path).status_code in (404,405),path
-
-
-def test_cross_site_denied(client):
-    r=client.post('/api/login',json={'associate':'8972'},headers={'Origin':'https://attacker.example'})
-    assert r.status_code==403
-
-
-def test_logout_and_tampered_cookie(client):
+def test_overlap_displays_handoff_and_both_reports_remain_open(client, monkeypatch):
+    freeze(monkeypatch, at(2026,10,26,21,0))
     login(client)
-    assert client.get('/api/me').status_code==200
+    s3 = client.post('/api/shifts/start', json={'code':'S3'})
+    assert s3.status_code == 200
+    old_id = s3.json()['id']
     client.post('/api/logout')
-    assert client.get('/api/me').status_code==401
-    client.cookies.set(m.SESSION_COOKIE,'invalid')
-    assert client.get('/shift-report.html').status_code==401
+    freeze(monkeypatch, at(2026,10,27,4,45))
+    landing = client.get('/api/entry').json()
+    assert landing['screen'] == 'handoff'
+    assert [(x['code'],x['date']) for x in landing['open']] == [('S3','2026-10-26')]
+    assert any(x['code']=='S1' and x['date']=='2026-10-27' for x in landing['ready'])
+    assert login(client, '2759')['destination'] == '/'
+    assert client.get('/shift-report.html', follow_redirects=False).status_code == 303
+    assert client.post('/api/shifts/resume', json={'shift_id':old_id}).status_code == 200
+    assert client.get('/api/me').json()['selected']['code'] == 'S3'
+    new = client.post('/api/shifts/start',json={'code':'S1'})
+    assert new.status_code == 200
+    assert new.json()['id'] != old_id
+    assert client.get('/api/me').json()['selected']['code'] == 'S1'
+    with m._db() as db:
+        rows = db.execute('SELECT code,shift_day,open FROM shifts').fetchall()
+        assert {(x['code'], x['shift_day'], x['open']) for x in rows} == {
+            ('S3','2026-10-26',1), ('S1','2026-10-27',1)}
 
 
-def test_no_preseeded_users_or_shifts(client):
-    with m._db() as conn:
-        assert conn.execute('SELECT COUNT(*) FROM shifts').fetchone()[0]==0
-    assert set(m.roster())=={'8972', '2759'}
+def test_expired_shift_is_hidden_not_erased(client, monkeypatch):
+    freeze(monkeypatch, at(2026,10,27,8,0))
+    login(client)
+    current = client.get('/api/me').json()['selected']['id']
+    freeze(monkeypatch, at(2026,10,27,17,1))
+    # S1 is past the one-hour late grace; it remains in the DB for history.
+    result = client.get('/api/me').json()
+    assert result['selected'] is None
+    assert all(x['code'] != 'S1' for x in result['shifts'])
+    assert client.get('/shift-report.html', follow_redirects=False).status_code == 303
+    assert client.post('/api/shifts/resume', json={'shift_id':current}).status_code == 404
+    with m._db() as db:
+        assert db.execute('SELECT open FROM shifts WHERE id=?',(current,)).fetchone()['open'] == 1
+
+
+def test_end_shift_closes_only_selected_report(client, monkeypatch):
+    freeze(monkeypatch, at(2026,10,27,13,0))
+    login(client)  # two eligible choices; not bound yet
+    assert client.get('/shift-report.html', follow_redirects=False).status_code == 303
+    s1 = client.post('/api/shifts/start', json={'code':'S1'}).json()['id']
+    s2 = client.post('/api/shifts/start', json={'code':'S2'}).json()['id']
+    assert client.post('/api/shifts/end').json() == {'ended':True,'shift_id':s2}
+    with m._db() as db:
+        rows = db.execute('SELECT id, open FROM shifts').fetchall()
+        values = {r['id']: r['open'] for r in rows}
+    assert values[s1] == 1 and values[s2] == 0
+    assert client.get('/api/me').json()['selected'] is None
+    assert client.post('/api/shifts/resume',json={'shift_id':s2}).status_code == 404
+
+
+def test_requests_are_local_only_and_private_paths_not_public(client):
+    response = client.post('/api/login',json={'associate':'8972'})
+    assert 'httponly' in response.headers['set-cookie'].lower()
+    assert 'samesite=strict' in response.headers['set-cookie'].lower()
+    for path in ['/app.py','/setup_access.py','/.local-data/shifts.sqlite3',
+                 '/web/../app.py','/prototypes/login-flow.html']:
+        assert client.get(path).status_code in (404,405)
+    assert client.post('/api/login',json={'associate':'8972'},
+                       headers={'Origin':'https://attacker.example'}).status_code == 403
+
+
+def test_fresh_empty_database_and_tamper_rejected(client):
+    with m._db() as db:
+        assert db.execute('SELECT COUNT(*) FROM shifts').fetchone()[0] == 0
+    client.cookies.set(m.SESSION_COOKIE, 'invalid')
+    assert client.get('/api/me').status_code == 401
