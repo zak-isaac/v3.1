@@ -116,7 +116,8 @@ def sync(private: Path, database: Path, reserved: set, force=False):
     global _last_check
     current = time.monotonic()
     key = str(database.resolve())
-    if not force and current - _last_check.get(key, 0.0) < _CHECK_EVERY_SECONDS:
+    previous = _last_check.get(key)
+    if not force and previous is not None and current - previous < _CHECK_EVERY_SECONDS:
         return
     _last_check[key] = current
     source, configured = _source(private)
