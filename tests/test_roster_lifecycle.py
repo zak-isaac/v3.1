@@ -245,3 +245,31 @@ def test_service_and_ui_integration(client, monkeypatch):
     assert 'const sampleRows = []' in page.text
     assert client.get("/web/roster-admin.js").status_code==200
     assert client.get("/web/login-layout.css").status_code==200
+
+
+def test_admin_name_edit_survives_drax_refresh_and_reset(client, monkeypatch):
+    freeze(monkeypatch, at())
+    sign(client)
+    changed=client.post("/api/admin/roster/edit",
+        json={"number":"111111","full_name":"Approved Display Name"})
+    assert changed.status_code==200, changed.text
+    assert m.roster()["111111"]["name"]=="Approved Display Name"
+    assert client.post("/api/admin/roster/reload",json={}).status_code==200
+    assert m.roster()["111111"]["name"]=="Approved Display Name"
+    result=client.post("/api/admin/roster/override",
+       json={"number":"111111","reset":True})
+    assert result.status_code==200
+    assert m.roster()["111111"]["name"]=="Synthetic MST A"
+    assert client.post("/api/admin/roster/edit",
+       json={"number":"111111","full_name":"New name","new_number":"123123"}).status_code==409
+
+
+def test_roster_error_does_not_erase_cached_data(client,tmp_path,monkeypatch):
+    freeze(monkeypatch, at())
+    assert sign(client).status_code==200
+    (tmp_path/"mst-roster.csv").unlink()
+    status=client.post("/api/admin/roster/reload",json={})
+    assert status.status_code==200
+    assert "No local Drax roster" in status.json()["error"]
+    # Cached data remains available for review, but is explicitly marked stale.
+    assert status.json()["entries"]==3
