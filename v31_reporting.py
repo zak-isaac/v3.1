@@ -141,7 +141,7 @@ def import_selection(conn, shift_id: int, shift_code: str, shift_day: str,
         item=target.setdefault(wo,{"wo":wo,"asset":r.get("asset_id") or "",
             "category":r.get("rfr") or "Other",
             "cause":r.get("reported_issue") or "",
-            "techs":[],"remarks":[],"status":"OOS" if kind=="oos" else "RTS"})
+            "techs":[],"remarks":[],"status":"OOS" if kind=="oos" else ("PENDING" if r.get("closure_reminder") else "RTS")})
         if r.get("tech_name") and r["tech_name"] not in item["techs"]:
             item["techs"].append(r["tech_name"])
         for remark in r.get("remarks_list") or ([r["remarks"]] if r.get("remarks") else []):
