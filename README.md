@@ -70,6 +70,21 @@ At most **two shift sessions** may be active. Overnight work remains assigned to
 
 **End Shift** requires a saved passdown. Use **Generate Passdown (.eml)** first; this stores a copy in the selected V3.1 session, then downloads a local Outlook draft. End Shift only closes the selected session. Sign Out only ends the browser login session.
 
+## Shift Report — Cetaris import (Phase 1)
+
+The existing approved Shift Report UI is wired to the new, private V3.1 database.
+
+1. Sign in as an authorized MST (Drax-assigned shift) or select a shift as management.
+2. **Import Cetaris** accepts validated XLSX or CSV work-order exports, bounded to 12 MB / 30,000 labor rows. Staging the file **does not yet add work orders**.
+3. Select the actual technicians present in the export. V3.1 imports only the selected technicians' rows and uses the reviewed V3 actual-work attribution engine. Drax shift assignments resolve overlapping work when technician identity matches, without assuming that selecting a technician proves ownership.
+4. **Shift Happenings** groups selected labor by WO number, preserves individual remarks and combines multiple technicians, and uses the Cetaris Service/Repair Description as the displayed cause. Preventive-maintenance WOs are counted once and excluded from normal happenings.
+5. Closed work orders are included; Completed-but-not-Closed non-PM WOs are excluded pending review. Use **Import Audit → Review completed work orders** to add a closure reminder, or leave it ignored. A reminder is labeled **PENDING**, never falsely RTS.
+6. **Breakdown OOS** is tracked from a qualifying In Process breakdown. A later Closed WO may transition to RTS in another eligible shift without overwriting the original OOS record.
+7. Edit, exclude, and restore are persisted. Reimporting a file merges WOs by number, preserves manual edits, and leaves previously imported WOs intact. Missing or ambiguous labor timestamps remain in the Import Audit rather than receiving guessed shift attribution.
+8. Vendors, RO entries, notes and LOTO draft values autosave in the selected shift database. Creating the Outlook EML saves the current passdown to the selected shift; **End Shift requires a saved report**. Emails are not sent by the app.
+
+**Not wired yet:** AI rewrite/proofreading preview, processing the separate pending-PM file, real Cetaris automation (imports require the user to supply the export), and production identity verification. Continue using the live Workshop production workflow until independently accepted on approved equipment.
+
 ## Preserve historical V2/V3 shift records
 
 V2 and V3 used a shared per-facility SQLite database, with IND3 typically at \`dbs/ind3.db\`. V3.1 **does not convert, truncate, or overwrite the old database**. It stores a validated exact SQLite backup under \`.local-data/legacy-v2-v3-archive.sqlite3\` retaining every source table, row, original shift ID, entries, reports, timestamps, and ancillary fields. The V3.1 login and new shift database remains separate.
@@ -114,7 +129,7 @@ This is a **limited, guarded two-way synchronization bridge, not an unconditiona
 
 - **Associate number alone is not secure employee identity verification.** This prototype is **localhost only**; do not deploy on the Walmart facility network, open a tunnel, or enable public access. Enterprise SSO and proper authorization are required before real deployment.
 - Any official roster or Cetaris data must be handled only through approved company systems and locations. Never commit such data or secrets to this public repository.
-- The Shift Report interface starts with **zero sample work orders**. Cetaris parsing and verified work-order reporting are **not yet implemented**; file selection is currently a preview. Generating a local EML saves a draft in the isolated V3.1 database, not a verified production report.
+- The Shift Report starts with **zero sample work orders**, but real Cetaris XLSX/CSV parsing and shift-scoped work-order persistence are now connected. Generated local EML files are not sent; the report is not yet production-certified. Pending-PM export parsing and AI rewriting are separate upcoming stages.
 - The original Workshop app, repository, and database remain untouched.
 
 See [login and shift-lifecycle audit](docs/V31_LOGIN_AUDIT.md) for the comparison matrix and remaining environment-dependent verification.
