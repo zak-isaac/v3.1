@@ -31,7 +31,7 @@ PM_CATEGORIES = {"preventive maintenance", "preventative maintenance"}
 # NOTE: bare "pm" is deliberately excluded -- real Cetaris RFR text like
 # "Found During PM" must never count as a completed PM on RFR text alone
 # (see test_only_preventive_maintenance_counts).
-DATE_FORMATS = ("%m/%d/%Y %I:%M %p", "%m/%d/%Y %H:%M", "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d")
+DATE_FORMATS = ("%m/%d/%Y %I:%M %p", "%m/%d/%Y %H:%M", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M", "%Y-%m-%d")
 MAX_SIZE = 12 * 1024 * 1024
 MAX_ROWS = 30000
 
