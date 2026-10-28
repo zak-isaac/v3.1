@@ -25,6 +25,8 @@ from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 import v31_roster
+import v31_legacy_history
+import v31_drax_bridge
 
 ROOT = Path(__file__).resolve().parent
 PRIVATE = Path(os.environ.get('IND3_V31_PRIVATE_DIR', str(ROOT / '.local-data'))).resolve()
@@ -53,14 +55,17 @@ async def lifespan(_app):
     roster()
     expire_shifts()
     task = asyncio.create_task(_periodic_maintenance())
+    bridge = asyncio.create_task(_periodic_drax_bridge())
     try:
         yield
     finally:
-        task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
+        for job in (task,bridge):
+            job.cancel()
+        for job in (task,bridge):
+            try:
+                await job
+            except asyncio.CancelledError:
+                pass
 
 
 async def _periodic_maintenance():
@@ -74,6 +79,33 @@ async def _periodic_maintenance():
                 v31_roster.sync(PRIVATE, DB_FILE, set(MANAGEMENT_ASSOCIATES), force=True)
         except Exception:
             # Do not terminate reporting due to temporary unreadable workbook.
+            pass
+
+
+async def _periodic_drax_bridge():
+    """Opt-in bridge: read old V3 database, write shared Drax only when enabled.
+
+    A no-write first baseline prevents existing mismatches from being
+    interpreted as new changes. Never modifies original V3 SQLite.
+    """
+    while True:
+        await asyncio.sleep(30)
+        old_db = os.getenv("IND3_V31_LEGACY_DB_PATH", "").strip()
+        if not old_db:
+            continue
+        drax, _ = v31_roster._source(PRIVATE)
+        if not drax:
+            continue
+        try:
+            write = v31_drax_bridge.enabled()
+            await asyncio.to_thread(v31_drax_bridge.reconcile, Path(old_db),
+                                    drax, PRIVATE, write=write)
+            # The normal Drax cache refresh sees changes from either system.
+            if write:
+                await asyncio.to_thread(v31_roster.sync, PRIVATE, DB_FILE,
+                                        set(MANAGEMENT_ASSOCIATES), True)
+        except Exception:
+            # Retain last good data; operator can run the bridge CLI to inspect.
             pass
 
 
@@ -169,8 +201,22 @@ def _db() -> sqlite3.Connection:
     }.items():
         if name not in columns:
             conn.execute(f"ALTER TABLE shifts ADD COLUMN {name} {declaration}")
+    conn.execute('''CREATE TABLE IF NOT EXISTS login_events(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        associate TEXT NOT NULL,
+        event TEXT NOT NULL,
+        shift_id INTEGER,
+        recorded_at TEXT NOT NULL
+    )''')
     conn.commit()
     return conn
+
+
+def _record_login_event(associate: str, event: str, shift_id: int | None = None):
+    """Record new V3.1 logins. V2/V3 start history is archived separately."""
+    with _db() as conn:
+        conn.execute('INSERT INTO login_events(associate,event,shift_id,recorded_at) VALUES(?,?,?,?)',
+                     (associate,event,shift_id,datetime.now(TZ).isoformat()))
 
 
 def expire_shifts(now: datetime | None = None) -> int:
@@ -336,7 +382,8 @@ def landing(request: Request):
     html = (ROOT / 'prototypes' / 'shift-report.html').read_text(encoding='utf-8')
     return HTMLResponse(html.replace('</body>',
         '<script defer src="/web/workspace-auth.js"></script>'+
-        '<script defer src="/web/roster-admin.js"></script></body>'))
+        '<script defer src="/web/roster-admin.js"></script>'+
+        '<script defer src="/web/shift-history.js"></script></body>'))
 
 
 class LoginRequest(BaseModel):
@@ -367,11 +414,13 @@ def login(payload: LoginRequest, request: Request, response: Response):
     # roster-assigned shift directly. An MST never chooses another shift.
     if profile.get('all_shifts'):
         _set_cookie(response, payload.associate)
+        _record_login_event(payload.associate, 'manager_signin')
         return {'destination': '/', 'manager_selection_required': True,
                 'role': 'manager'}
     if payload.intent == 'select':
         # Popup path: do not create/attach an MST shift before a choice is checked.
         _set_cookie(response, payload.associate)
+        _record_login_event(payload.associate, 'popup_signin')
         return {'destination': '/', 'selection_required': True, 'role': 'mst'}
     now = datetime.now(TZ)
     opened, ready = shift_choices(profile, now, payload.associate)
@@ -397,6 +446,7 @@ def login(payload: LoginRequest, request: Request, response: Response):
         code = profile.get('shift')
         raise HTTPException(409, f'{code} is outside its reporting window, or is open under another MST.')
     _set_cookie(response, payload.associate, selected['id'])
+    _record_login_event(payload.associate, 'mst_signin', selected['id'])
     return {'destination': '/shift-report.html', 'role': 'mst',
             'shift': selected['code']}
 
@@ -436,6 +486,7 @@ def start_shift(payload: ShiftChoice, request: Request, response: Response):
             raise HTTPException(403, 'The shift belongs to another MST')
         selected = entry(row)
     _set_cookie(response, session['a'], selected['id'])
+    _record_login_event(session['a'], 'start_shift', selected['id'])
     return selected
 
 
@@ -452,12 +503,16 @@ def resume_shift(payload: ShiftResume, request: Request, response: Response):
     if not profile.get('all_shifts') and row['owner'] != session['a']:
         raise HTTPException(403, 'Only the shift starter or management may resume this report')
     _set_cookie(response, session['a'], row['id'])
+    _record_login_event(session['a'], 'resume_shift', row['id'])
     return entry(row)
 
 
 @app.post('/api/logout')
 def logout(request: Request, response: Response):
     _origin_check(request)
+    session = parse_cookie(request.cookies.get(SESSION_COOKIE))
+    if session:
+        _record_login_event(session['a'], 'sign_out', session['s'] or None)
     response.delete_cookie(SESSION_COOKIE, path='/')
     return {'signed_out': True}
 
@@ -480,6 +535,7 @@ def end_shift(request: Request, response: Response):
         conn.execute("""UPDATE shifts SET open=0, closed_at=?,closed_reason='completed'
                         WHERE id=?""",(datetime.now(TZ).isoformat(),session['s']))
     _set_cookie(response, session['a'], 0)
+    _record_login_event(session['a'], 'end_shift', session['s'])
     return {'ended': True, 'shift_id': session['s']}
 
 
@@ -611,3 +667,27 @@ def read_shift_report(request: Request):
         raise HTTPException(403,'Report belongs to another MST')
     return {'content':row['report_content'], 'saved_at':row['report_saved_at'],
             'shift_id':row['id']}
+
+
+@app.get('/api/history/legacy')
+def legacy_history(request: Request, limit: int = 50, offset: int = 0):
+    session, profile = who(request)
+    # Legacy source contains original shift IDs but not every login attempt.
+    return v31_legacy_history.history(PRIVATE,
+        None if profile.get('all_shifts') else session['a'],limit,offset)
+
+
+@app.get('/api/history/login-events')
+def new_login_history(request: Request, limit: int = 50, offset: int = 0):
+    session, profile = who(request)
+    limit = max(1,min(limit,100))
+    offset = max(0,offset)
+    admin = bool(profile.get('all_shifts'))
+    with _db() as conn:
+        if admin:
+            rows=conn.execute('SELECT * FROM login_events ORDER BY id DESC LIMIT ? OFFSET ?',
+                              (limit,offset)).fetchall()
+        else:
+            rows=conn.execute('SELECT * FROM login_events WHERE associate=? ORDER BY id DESC LIMIT ? OFFSET ?',
+                              (session['a'],limit,offset)).fetchall()
+    return {'events':[dict(row) for row in rows],'limit':limit,'offset':offset}
