@@ -17,8 +17,9 @@ jobs:
       - name: Install test dependencies
         run: python -m pip install -r requirements.txt pytest httpx
       - name: Test shift routing and session API
-        run: python -m pytest -q tests/test_login.py
+        run: python -m pytest -q tests/test_login.py tests/test_roster_lifecycle.py
       - name: Check login and workspace JavaScript syntax
         run: |
           node --check web/auth-ui.js
           node --check web/workspace-auth.js
+          node --check web/roster-admin.js
