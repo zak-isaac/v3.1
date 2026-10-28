@@ -19,7 +19,7 @@
 .asset-cell strong{display:block;font-size:12px;font-weight:750;line-height:1.3;overflow-wrap:anywhere}.asset-cell small,.cause-cell small{display:block;font-size:11px;color:#6382a7;margin-top:4px;line-height:1.25}.cause-cell{font-size:12px;line-height:1.35}.table-description{max-width:370px}.table-controls{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-shrink:0}.category-filter{font-size:12px;padding:8px;border:1px solid var(--line);color:#224b7a;background:#f9fcff;border-radius:8px;min-width:130px}.category-pill.cat-blue{color:#0559b6;background:#e3f0ff}.category-pill.cat-red{color:#bb2731;background:#ffe5e7}.category-pill.cat-amber{color:#a96800;background:#fff0d3}.category-pill.cat-purple{color:#7333b2;background:#f1e4ff}.table-bottom-note{border-top:1px solid var(--line);display:flex;gap:7px;align-items:center;color:#6680a3;font-size:11px;padding:8px 6px 3px}.table-bottom-note .icon{height:14px;width:14px}.status-pill .icon{width:14px;height:14px}.detail-list p{margin:9px 0;font-size:13px}.preview-document{white-space:pre-wrap;line-height:1.55;font-size:12px;max-height:55vh;overflow:auto}.row-buttons .icon{height:17px;width:17px}@media(max-width:840px){.table-controls{flex-wrap:wrap;flex:1;justify-content:flex-start}.table-description{max-width:none}.table-tools{align-items:flex-start}}
 
 </style>
-<link rel="stylesheet" href="/web/workspace-layout.css"></head>
+<link rel="stylesheet" href="/web/workspace-layout.css"><link rel="stylesheet" href="/web/administration.css"></head>
 <body>
 <svg class="icon-library" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
 <symbol id="i-clipboard" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="18" rx="2"/><rect x="9" y="2" width="6" height="5" rx="1"/><path d="M8 12h8M8 16h8"/></symbol>
@@ -60,7 +60,7 @@
 <div class="app" id="app">
   <header class="topbar">
     <div class="top-brand"><span class="top-brand-name">MST Reliability Operations</span><span class="top-brand-context">IND3 / Shift Reporting &amp; Passdown</span></div>
-    <div class="top-right"><span class="site-ind"><svg class="icon"><use href="#i-building"/></svg> IND3 McCordsville</span><div class="avatar-area"><button id="account-button" class="account-button" aria-expanded="false"><span class="avatar-icon"><svg class="icon"><use href="#i-user"/></svg></span><span>Frontend Preview</span><svg class="icon tiny"><use href="#i-chevron"/></svg></button><div id="account-menu" class="account-menu" hidden><button id="go-to-login">View Login Designs</button><button id="about-demo">About This Preview</button></div></div></div>
+    <div class="top-right"><span class="site-ind"><svg class="icon"><use href="#i-building"/></svg> IND3 McCordsville</span><div class="avatar-area"><button id="account-button" class="account-button" aria-expanded="false"><span class="avatar-icon"><svg class="icon"><use href="#i-user"/></svg></span><span>Frontend Preview</span><svg class="icon tiny"><use href="#i-chevron"/></svg></button><div id="account-menu" class="account-menu" hidden><button id="v31-menu-choose" type="button" hidden>Choose Shift</button><button id="v31-menu-administration" type="button">Administration</button><button id="about-demo">About V3.1</button></div></div></div>
   </header>
   <div class="shell">
     <aside class="sidebar"><div class="sidebar-brand" aria-label="Walmart IND3 MST Reliability Operations"><div class="sidebar-walmart">Walmart <span class="spark"><i></i><i></i><i></i><i></i><i></i><i></i></span></div><strong>IND3</strong><small>MST Reliability Operations</small></div><nav class="main-nav" aria-label="Primary navigation">
@@ -69,7 +69,13 @@
       <button class="nav-link" data-nav="analytics"><svg class="icon"><use href="#i-chart"/></svg>Analytics</button>
       <button class="nav-link" data-nav="admin"><svg class="icon"><use href="#i-settings"/></svg>Administration</button>
       
-    </nav><div id="v31-sidebar-controls" aria-label="Shift and account controls"></div><div class="sidebar-location"><span class="sidebar-name">IND3</span><span>McCordsville, Indiana</span><div class="sidebar-online"><span class="online-circle"></span> Local reporting workspace</div></div></aside>
+    </nav><div id="v31-sidebar-controls" aria-label="Current shift information"></div>
+    <div class="v31-sidebar-user" id="v31-sidebar-user" aria-label="Signed in associate">
+      <span class="v31-user-avatar" aria-hidden="true"><svg class="icon"><use href="#i-user"/></svg></span>
+      <div class="v31-user-details"><strong id="v31-user-name">Signed in MST</strong><small id="v31-user-role">MST · IND3</small></div>
+    </div>
+    <button id="v31-signout" class="v31-signout" type="button"><svg class="icon"><use href="#i-arrow"/></svg> Sign Out</button>
+    </aside>
     <main class="main-content">
       <div id="report-screen" class="report-screen">
         <section class="shift-header" aria-label="Active shift"><div class="shift-head-main"><div class="shift-heading"><h1>Shift Report</h1><span class="pill active">Active</span></div><div class="shift-meta"><span><svg class="icon"><use href="#i-calendar"/></svg> —</span><span><svg class="icon"><use href="#i-clock"/></svg> —</span><span><svg class="icon"><use href="#i-pin"/></svg> IND3</span></div></div><div class="progress-area"><div class="progress-label"><span>Shift Progress</span><strong id="progress-number">0%</strong></div><div class="progress-track"><span id="progress-fill"></span></div></div></section>
@@ -97,6 +103,55 @@
         </div>
         <div class="footer-stack"><div class="footer-actions"><div class="footer-tip"><svg class="icon"><use href="#i-info"/></svg><span>Each shift is an independent reporting session. Changes remain in this frontend preview.</span></div><div class="footer-buttons"><button class="btn btn-light" id="save-draft"><svg class="icon"><use href="#i-save"/></svg> Save Draft</button><button class="btn btn-light" id="preview-report"><svg class="icon"><use href="#i-eye"/></svg> Preview Report</button><button class="btn btn-primary" id="generate-eml"><svg class="icon"><use href="#i-mail"/></svg> Generate Passdown (.eml)</button><button class="btn btn-end" id="end-shift"><svg class="icon"><use href="#i-flag"/></svg> End Shift</button></div></div><footer class="status-footer"><span><svg class="icon"><use href="#i-cloud"/></svg> <span id="last-saved">Not saved yet</span></span><span><i class="green-dot"></i> Auto-save: <strong>On (local)</strong></span><span><i class="green-dot"></i> Interface: <strong>Ready</strong></span><span class="footer-version">IND3 • V3.1 Local Shift Report</span></footer></div>
       </div>
+      <section id="v31-admin-screen" class="v31-admin" hidden aria-label="Administration">
+        <header class="v31-admin-header">
+          <div><small class="v31-admin-kicker">IND3 / OPERATIONS</small><h1>Administration</h1>
+          <p>Manage the MST roster, shift assignments, and Drax synchronization.</p></div>
+          <div class="v31-admin-header-actions"><button id="v31-admin-refresh" type="button" class="v31-ad-btn">Refresh</button>
+          <button id="v31-admin-reload" type="button" class="v31-ad-btn primary">Sync Drax Now</button></div>
+        </header>
+        <div id="v31-admin-notice" role="status" aria-live="polite"></div>
+        <div id="v31-admin-denied" class="v31-admin-card" hidden>
+          <h2>Management access required</h2><p>Only authorized management accounts can change the Drax roster and MST permissions.</p>
+        </div>
+        <div id="v31-admin-content" hidden>
+          <div class="v31-admin-stats" aria-label="Roster summary">
+            <div class="v31-admin-stat"><span>Total roster</span><strong id="v31-stat-total">—</strong></div>
+            <div class="v31-admin-stat"><span>Active MSTs</span><strong id="v31-stat-msts">—</strong></div>
+            <div class="v31-admin-stat"><span>Manual entries</span><strong id="v31-stat-manual">—</strong></div>
+            <div class="v31-admin-stat"><span>Overrides</span><strong id="v31-stat-overrides">—</strong></div>
+          </div>
+          <section class="v31-admin-card" aria-labelledby="v31-sync-heading">
+            <div class="v31-admin-card-heading"><div><h2 id="v31-sync-heading">Drax Roster Connection</h2>
+            <p>Current approved workbook source and independent V3.1 sync status</p></div>
+            <span id="v31-source-status" class="v31-admin-status">Checking</span></div>
+            <div class="v31-sync-details"><div><span>Workbook source</span><strong id="v31-sync-source">—</strong></div>
+              <div><span>Last successful sync</span><strong id="v31-sync-last">—</strong></div>
+              <div><span>Source records</span><strong id="v31-sync-count">—</strong></div></div>
+            <p id="v31-sync-warning" class="v31-admin-help">Drax synchronizes into V3.1; local overrides remain separate until explicitly approved for write-back.</p>
+          </section>
+          <section class="v31-admin-card" aria-labelledby="v31-roster-heading">
+            <div class="v31-admin-card-heading"><div><h2 id="v31-roster-heading">MST Roster &amp; Permissions</h2>
+            <p>Review, search, and manage authorized associates</p></div>
+            <label class="v31-admin-search">Search roster<input id="v31-roster-search" type="search" placeholder="Name or associate number" autocomplete="off"></label></div>
+            <div class="v31-admin-roster-wrap"><table class="v31-admin-table"><thead><tr><th>Associate</th><th>Assigned Shift</th><th>Access</th><th>Record</th><th>Actions</th></tr></thead>
+            <tbody id="v31-roster-rows"><tr><td colspan="5">Loading roster…</td></tr></tbody></table></div>
+            <div id="v31-roster-count" class="v31-admin-help"></div>
+          </section>
+          <section class="v31-admin-card" aria-labelledby="v31-local-heading">
+            <div class="v31-admin-card-heading"><div><h2 id="v31-local-heading">Add Local Associate</h2>
+            <p>Temporary entries are stored in V3.1 only. Drax-sourced associates should be edited in the approved roster.</p></div></div>
+            <form id="v31-admin-add-form" class="v31-admin-add-form">
+              <label>Associate Number<input id="v31-add-number" inputmode="numeric" pattern="[0-9]{1,12}" maxlength="12" required></label>
+              <label>Full Name<input id="v31-add-name" maxlength="180" required></label>
+              <label>Assigned Shift<select id="v31-add-shift"><option value="">Unassigned</option><option>S1</option><option>S2</option><option>S3</option><option>S4</option><option>S5</option></select></label>
+              <label class="v31-admin-checkbox"><input id="v31-add-mst" type="checkbox" checked> MST access</label>
+              <button class="v31-ad-btn primary" type="submit">Add Associate</button>
+            </form>
+          </section>
+          <p class="v31-admin-footnote">V3.1 is an independent local development application. Production roster and shift history remain protected.</p>
+        </div>
+      </section>
       <div id="placeholder-screen" hidden><div class="placeholder-card"><span class="placeholder-icon"><svg class="icon"><use href="#i-stack"/></svg></span><h1 id="placeholder-title">Shift History</h1><p id="placeholder-description">This screen is planned for a later frontend phase. For now, we're developing the approved Shift Report screen.</p><button id="back-to-report" class="btn btn-primary">Back to Shift Report</button></div></div>
     </main>
   </div>
@@ -221,9 +276,22 @@ $('#change-techs').addEventListener('click',()=>window.V31Reporting?.chooseTechs
 $$('[data-open]').forEach(b=>b.addEventListener('click',()=>b.dataset.open==='notes'?editNotes():editList(b.dataset.open)));
 const keySel=$('#missing-key');for(let i=1;i<=20;i++){const option=document.createElement('option');option.value=`Key ${i}`;option.textContent=`Key ${i}`;keySel.add(option);}const toggle=$('#loto-toggle');function lotoSync(){state.loto=toggle.checked;state.missingKey=keySel.value;$('#loto-state').textContent=toggle.checked?'Verified':'Not verified';$('#loto-state').classList.toggle('missing',!toggle.checked);touch();}toggle.addEventListener('change',()=>{if(toggle.checked)keySel.value='';lotoSync();});keySel.addEventListener('change',()=>{if(keySel.value)toggle.checked=false;lotoSync();toast(keySel.value?`${keySel.value} marked as missing`:'Missing-key selection cleared');});
 $('#save-draft').addEventListener('click',()=>window.V31Reporting?.saveDraft(true));$('#preview-report').addEventListener('click',previewReport);$('#generate-eml').addEventListener('click',emlDownload);$('#end-shift').addEventListener('click',confirmEnd);
-$('#account-button').addEventListener('click',()=>{const el=$('#account-menu');el.hidden=!el.hidden;$('#account-button').setAttribute('aria-expanded',String(!el.hidden));});$('#about-demo').addEventListener('click',()=>{$('#account-menu').hidden=true;showInfo();});$('#go-to-login').addEventListener('click',()=>{window.location.href='index.html';});
-const pNames={history:['Shift History','Shift History screen will be developed in a later frontend phase.'],analytics:['Analytics','The analytics frontend is planned for a later design phase.'],admin:['Administration','The administration frontend is planned for a later design phase.']};
-function navTo(page){$$('.nav-link').forEach(b=>b.classList.toggle('selected',b.dataset.nav===page));$('#report-screen').hidden=page!=='report';$('#placeholder-screen').hidden=page==='report';if(page!=='report'){$('#placeholder-title').textContent=pNames[page][0];$('#placeholder-description').textContent=pNames[page][1];}}$$('.nav-link').forEach(b=>b.addEventListener('click',()=>navTo(b.dataset.nav)));$('#back-to-report').addEventListener('click',()=>navTo('report'));
+$('#account-button').addEventListener('click',()=>{const el=$('#account-menu');el.hidden=!el.hidden;$('#account-button').setAttribute('aria-expanded',String(!el.hidden));});$('#about-demo').addEventListener('click',()=>{$('#account-menu').hidden=true;showInfo();});
+const pNames={history:['Shift History','Shift History screen will be developed in a later frontend phase.'],analytics:['Analytics','The analytics frontend is planned for a later design phase.']};
+function navTo(page){
+  $('.nav-link').forEach(b=>b.classList.toggle('selected',b.dataset.nav===page));
+  $('#report-screen').hidden=page!=='report';
+  $('#placeholder-screen').hidden=page==='report'||page==='admin';
+  $('#v31-admin-screen').hidden=page!=='admin';
+  if(page!=='report'&&page!=='admin'){
+    $('#placeholder-title').textContent=pNames[page][0];
+    $('#placeholder-description').textContent=pNames[page][1];
+  }
+  if(page==='admin')window.dispatchEvent(new Event('v31:administration'));
+}
+$('.nav-link').forEach(b=>b.addEventListener('click',()=>navTo(b.dataset.nav)));
+$('#back-to-report').addEventListener('click',()=>navTo('report'));
+window.v31Navigate=navTo;
 
 window.v31ReportView={
   applySnapshot(data){
