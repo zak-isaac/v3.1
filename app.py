@@ -389,6 +389,10 @@ def login(payload: LoginRequest, request: Request, response: Response):
         return {'destination': '/', 'selection_required': True, 'role': 'mst'}
     now = datetime.now(TZ)
     opened, ready = shift_choices(profile, now, payload.associate)
+    # Direct MST sign-in must always prefer the Drax-assigned shift,
+    # never a different shift merely because overtime was granted.
+    opened = [x for x in opened if x['code'] == profile.get('shift')]
+    ready = [x for x in ready if x['code'] == profile.get('shift')]
     if opened:
         # Assigned shift already opened by this MST: resume that report.
         selected = opened[0]
