@@ -4,6 +4,7 @@
 const view=window.v31ReportView;
 if(!view)return;
 let snapshot=null,saveTimer;
+const closureChoices={};
 async function api(url,body){
  const options={credentials:'same-origin',headers:{Accept:'application/json'}};
  if(body!==undefined){
@@ -36,6 +37,15 @@ async function refresh(){
     const line=document.createElement('p');
     line.textContent='WO# '+r.wo_number+' — '+r.reason;
     audit.append(line);
+  }
+  const pendingClosed=snapshot.audit.pending.filter(x=>
+    String(x.reason||'').startsWith('Completed but not Closed'));
+  if(pendingClosed.length){
+    const button=document.createElement('button');
+    button.type='button';button.className='btn btn-primary btn-small';
+    button.textContent='Review completed work orders';
+    button.onclick=()=>reviewCompleted(pendingClosed);
+    audit.append(button);
   }
  }
  if(snapshot.stage.staged){
@@ -86,6 +96,32 @@ function chooseTechs(){
  ]);
  document.querySelector('#modal-body').append(body);
 }
+function reviewCompleted(items){
+ const block=document.createElement('div');
+ block.style.cssText='display:grid;gap:10px;max-height:320px;overflow:auto';
+ for(const item of items){
+  const label=document.createElement('label');
+  label.style.cssText='display:flex;gap:10px;align-items:center';
+  const check=document.createElement('input');
+  check.type='checkbox';check.className='v31-closure-review';
+  check.value=item.wo_number;check.checked=closureChoices[item.wo_number]==='add';
+  label.append(check,document.createTextNode('WO# '+item.wo_number+
+    ' — Add closure reminder to passdown'));
+  block.append(label);
+ }
+ view.showModal('Completed Work Orders','Choose Add to Passdown for closure reminders; unchecked WOs are ignored until Cetaris is closed.','',[
+   {text:'Cancel',onClick:view.closeModal},
+   {text:'Apply review',kind:'btn-primary',onClick:async()=>{
+     const chosen=new Set([...document.querySelectorAll('#modal-body .v31-closure-review:checked')].map(e=>e.value));
+     for(const item of items)closureChoices[item.wo_number]=chosen.has(item.wo_number)?'add':'ignore';
+     try{
+       await api('/api/reporting/import',{technicians:snapshot.technicians,closure_reviews:closureChoices});
+       view.closeModal();await refresh();view.toast('Closure decisions saved');
+     }catch(e){view.toast(e.message);}
+   }}
+ ]);
+ document.querySelector('#modal-body').append(block);
+}
 async function updateWO(wo,changes){
  return api('/api/reporting/work-orders/'+encodeURIComponent(wo),changes);
 }
@@ -97,6 +133,7 @@ async function saveDraft(notify=false){
  }catch(e){view.toast(e.message);}
 }
 function queueDraft(){clearTimeout(saveTimer);saveTimer=setTimeout(()=>saveDraft(false),650);}
-window.V31Reporting={upload,chooseTechs,updateWO,saveDraft,queueDraft,refresh};
+async function flushDraft(){clearTimeout(saveTimer);await saveDraft(false);}
+window.V31Reporting={upload,chooseTechs,updateWO,saveDraft,queueDraft,flushDraft,refresh};
 refresh().catch(e=>view.toast('Reporting data could not load: '+e.message));
 })();
