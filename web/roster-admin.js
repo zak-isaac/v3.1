@@ -159,6 +159,7 @@
       await refresh();dlg.showModal();
     }catch(e){window.alert(e.message);}
   }
+  window.v31OpenDraxAdmin = open;
   async function mount(){
     let who;
     try{who=await getJSON('/api/me');}catch(_){return;}
