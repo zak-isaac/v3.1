@@ -1,0 +1,152 @@
+/* V3.1 MST Command Center — compact header and V3-style sidebar shift controls. */
+.topbar{
+  height:58px;
+  min-height:58px;
+  padding:0 25px;
+  background:#102c4e;
+  border-bottom:1px solid #213e60;
+  gap:16px;
+}
+.top-brand{gap:13px;display:flex;align-items:baseline;flex-wrap:wrap}
+.top-brand-name{font-size:17px;font-weight:750;letter-spacing:.02em;color:#fff}
+.top-brand-context{font-size:12px;color:#cfdeec;font-weight:500}
+.top-right{gap:12px}
+.top-right .site-ind{font-size:12px;color:#d3e2f0}
+.account-button{font-size:13px}
+.shell{grid-template-columns:244px minmax(0,1fr)}
+.sidebar{
+  min-height:calc(100vh - 58px);
+  padding:16px 12px 18px;
+  background:#0d2c50;
+  gap:0;
+}
+.sidebar-brand{
+  display:flex;
+  flex-direction:column;
+  gap:4px;
+  padding:4px 12px 17px;
+  margin:0 0 13px;
+  border-bottom:1px solid #42617f;
+}
+.sidebar-walmart{
+  font-weight:760;
+  font-size:23px;
+  letter-spacing:-.6px;
+  display:flex;
+  align-items:center;
+  gap:8px;
+}
+.sidebar-brand .spark{transform:scale(.69);transform-origin:left center;width:28px;height:29px}
+.sidebar-brand strong{font-size:19px;font-weight:750;color:#fff}
+.sidebar-brand small{font-size:11px;color:#c7d8e8;line-height:1.4}
+.main-nav{gap:3px}
+.nav-link{font-size:14px;min-height:43px;padding:10px 12px;gap:11px;font-weight:600}
+.nav-link .icon{width:19px;height:19px}
+.nav-link.selected{
+  background:#164c84;
+  box-shadow:inset 3px 0 #ffc220;
+}
+.nav-separator{margin:13px 9px 13px}
+#v31-sidebar-controls{margin-top:15px}
+#v31-context-bar{
+  display:flex;
+  flex-direction:column;
+  gap:13px;
+  padding:14px 10px 9px;
+  margin:0;
+  color:#eaf1fa;
+  border-top:1px solid #43607c;
+  font:inherit;
+}
+.v31-session-heading{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  color:#fff;
+  font-weight:740;
+  font-size:13px;
+}
+.v31-session-heading:before{
+  content:"";
+  width:8px;
+  height:8px;
+  border-radius:50%;
+  background:#49cc74;
+}
+.v31-session-meta{
+  display:grid;
+  gap:8px;
+  font-size:12px;
+  color:#c2d3e4;
+  line-height:1.35;
+}
+.v31-session-meta strong{
+  display:block;
+  font-size:12px;
+  font-weight:700;
+  color:#fff;
+  margin-bottom:2px;
+}
+.v31-context-actions{
+  display:grid;
+  grid-template-columns:minmax(0,1fr);
+  gap:8px;
+}
+#v31-context-bar button{
+  width:100%;
+  text-align:left;
+  display:flex;
+  align-items:center;
+  justify-content:flex-start;
+  padding:11px 12px;
+  border-radius:8px;
+  background:transparent;
+  border:1px solid #55718d;
+  color:#f4f8fd;
+  font-size:12px;
+  font-weight:700;
+  cursor:pointer;
+}
+#v31-context-bar button:hover{background:#24486e;border-color:#9bb1c5}
+#v31-context-bar #v31-signout{border-color:#6b7b8d;color:#edf2f7}
+.sidebar-location{
+  margin-top:auto;
+  padding:18px 12px 0;
+  font-size:11px;
+  color:#c1d0df;
+}
+.sidebar-location .sidebar-name{font-size:15px}
+.shift-meta{display:none!important}
+.shift-header{min-height:76px;padding:11px 20px}
+.shift-heading{margin-bottom:0}
+.shift-heading h1{font-size:25px}
+.progress-area{width:30%}
+.main-content{padding:15px 16px 18px}
+@media(max-width:1200px){
+  .shell{grid-template-columns:220px minmax(0,1fr)}
+  .sidebar{padding-left:9px;padding-right:9px}
+  .top-brand-name{font-size:15px}
+  .top-brand-context{font-size:11px}
+}
+@media(max-width:840px){
+  .topbar{min-height:56px;height:auto;padding:9px 14px}
+  .top-brand{flex-direction:column;gap:2px;align-items:flex-start}
+  .top-brand-context{font-size:10px}
+  .sidebar{min-height:0;padding:9px 11px 12px}
+  .sidebar-brand{display:none}
+  .main-nav{flex-direction:row;gap:5px;overflow-x:auto}
+  .nav-separator{display:none}
+  #v31-sidebar-controls{margin-top:8px}
+  #v31-context-bar{padding:10px 1px;gap:8px}
+  .v31-session-meta{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 14px}
+  .v31-context-actions{grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}
+  #v31-context-bar button{justify-content:center;font-size:11px;padding:10px 6px}
+  .sidebar-location{display:none}
+  .shift-heading h1{font-size:22px}
+}
+@media(max-width:520px){
+  .top-brand-context{display:none}
+  .v31-session-meta{grid-template-columns:minmax(0,1fr)}
+  .v31-context-actions{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .shift-header{padding:11px 12px}
+}
