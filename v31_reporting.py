@@ -180,6 +180,34 @@ def _next_day_work_orders(rows, shift_day, selected, imported, pms, pending, ign
     return result
 
 
+def technician_suggestions(source_techs, roster_rows, shift_code):
+    """Suggest a V3-style technician selection from Drax, without inferring overtime.
+
+    Match normalized complete names (First Last / Last, First) exactly.
+    Never send employee identifiers to the reporting browser.
+    A duplicate/ambiguous Drax match is listed as unmatched, not preselected.
+    """
+    by_name={}
+    for person in roster_rows:
+        if not person.get('active') or not person.get('is_mst'):
+            continue
+        key=_person_key(person.get('name'))
+        if key:
+            by_name.setdefault(key,[]).append(person)
+    result=[]
+    for tech in source_techs:
+        name=tech['name']
+        matches=by_name.get(_person_key(name),[])
+        match=matches[0] if len(matches)==1 else None
+        assigned=match.get('shift') if match else None
+        group=('assigned' if assigned == shift_code else
+               'other_shift' if assigned else 'unmatched')
+        result.append({'name':name,'count':tech['count'],
+                       'group':group,'drax_shift':assigned,
+                       'preselected':group=='assigned'})
+    return result
+
+
 def import_selection(conn, shift_id: int, shift_code: str, shift_day: str,
                      technicians: list[str], closure_reviews: dict[str,str] | None = None,
                      roster_shifts: dict[str,str] | None = None):
