@@ -35,12 +35,12 @@
     });
     return s;
   };
-  let details=null, grants=[];
+  let details=null;
   const dlg=document.createElement('dialog');dlg.id='v31-admin-roster';
   dlg.style.cssText='width:min(890px,calc(100vw - 26px));max-height:90dvh;overflow-y:auto;padding:0;border:1px solid #d4dfec;border-radius:18px;box-shadow:0 28px 90px #071b3c66;background:#fff;color:#19334d;font-family:Segoe UI,Arial,sans-serif';
   dlg.innerHTML='<div style="padding:24px;display:grid;gap:16px">'+
     '<header style="display:flex;justify-content:space-between;gap:10px;align-items:center">'+
-    '<div><h2 style="margin:0;font-size:22px">Drax MST Roster & Overtime</h2>'+
+    '<div><h2 style="margin:0;font-size:22px">Drax MST Roster</h2>'+
     '<small>Independent V3.1 · Local management controls</small></div>'+
     '<button id="v31-admin-close" type="button" style="border:0;background:#edf2f8;border-radius:7px;padding:9px">Close</button></header>'+
     '<div id="v31-admin-health" style="font-size:13px;color:#4d6886"></div>'+
@@ -49,9 +49,6 @@
     '<div id="v31-admin-people" style="display:grid;gap:8px;max-height:260px;overflow:auto"></div>'+
     '<h3 style="margin:4px 0 0;font-size:17px">Add local associate</h3>'+
     '<div id="v31-admin-add" style="display:flex;flex-wrap:wrap;gap:8px"></div>'+
-    '<h3 style="margin:4px 0 0;font-size:17px">Overtime authorization</h3>'+
-    '<div id="v31-admin-overtime" style="display:flex;flex-wrap:wrap;gap:8px"></div>'+
-    '<div id="v31-admin-grants" style="display:grid;gap:7px"></div>'+
     '<p id="v31-admin-message" role="status" style="margin:0;font-size:13px;color:#21557d"></p>'+
     '</div>';
   document.body.append(dlg);
@@ -64,7 +61,6 @@
   };
   async function refresh(force=false){
     details=await getJSON(force?'/api/admin/roster/reload':'/api/admin/roster',force?{}:undefined);
-    grants=(await getJSON('/api/admin/overtime')).grants;
     render();
   }
   function render(){
@@ -131,26 +127,7 @@
         number:assoc.value.trim(),name:name.value.trim(),shift:day.value,is_mst:tick.checked
       });render();notice('Associate added to the private V3.1 roster.');
     }),true));
-    const ot=$('#v31-admin-overtime');ot.replaceChildren();
-    const otNumber=input('MST associate number');otNumber.inputMode='numeric';
-    const otShift=dropdown('S2');const otDate=input('Date','date');
-    ot.append(otNumber,otShift,otDate,button('Authorize OT',()=>run(async()=>{
-      await getJSON('/api/admin/overtime/grant',{
-        associate:otNumber.value.trim(),code:otShift.value,shift_day:otDate.value
-      });await refresh();notice('Overtime authorization saved.');
-    }),true));
-    const pending=$('#v31-admin-grants');pending.replaceChildren();
-    for(const g of grants){
-      const row=document.createElement('div');row.style.cssText='display:flex;justify-content:space-between;gap:9px;align-items:center;border:1px solid #e2eaf3;border-radius:10px;padding:10px';
-      const label=document.createElement('span');
-      label.textContent=g.associate+' · '+g.code+' · '+g.shift_day;
-      row.append(label,button('Revoke',()=>run(async()=>{
-        await getJSON('/api/admin/overtime/revoke',{
-          associate:g.associate,code:g.code,shift_day:g.shift_day
-        });await refresh();notice('Overtime authorization revoked.');
-      })));
-      pending.append(row);
-    }
+
   }
   async function open(){
     try{
