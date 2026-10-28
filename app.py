@@ -6,7 +6,8 @@ Never expose this application on the facility network or Internet.
 from __future__ import annotations
 
 import base64
-import csv
+import asyncio
+from contextlib import asynccontextmanager
 from datetime import date, datetime, time as clock, timedelta
 import hashlib
 import hmac
@@ -23,6 +24,7 @@ from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+import v31_roster
 
 ROOT = Path(__file__).resolve().parent
 PRIVATE = Path(os.environ.get('IND3_V31_PRIVATE_DIR', str(ROOT / '.local-data'))).resolve()
@@ -45,7 +47,38 @@ SHIFT_RULES = {
     'S5': ('Weekend Night Shift', (17, 30), (6, 0), (4, 5, 6)),
 }
 
-app = FastAPI(title='IND3 V3.1', docs_url=None, redoc_url=None, openapi_url=None)
+@asynccontextmanager
+async def lifespan(_app):
+    # Isolated boot: don't touch Workshop V3 data or services.
+    roster()
+    expire_shifts()
+    task = asyncio.create_task(_periodic_maintenance())
+    try:
+        yield
+    finally:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+
+async def _periodic_maintenance():
+    tick = 0
+    while True:
+        await asyncio.sleep(60)
+        try:
+            expire_shifts()
+            tick += 1
+            if tick % 5 == 0:
+                v31_roster.sync(PRIVATE, DB_FILE, set(MANAGEMENT_ASSOCIATES), force=True)
+        except Exception:
+            # Do not terminate reporting due to temporary unreadable workbook.
+            pass
+
+
+app = FastAPI(title='IND3 V3.1', docs_url=None, redoc_url=None, openapi_url=None,
+              lifespan=lifespan)
 app.mount('/web', StaticFiles(directory=ROOT / 'web'), name='web')
 
 
@@ -67,62 +100,7 @@ def _secret() -> bytes:
 
 
 def roster() -> dict:
-    """Private independent roster, with original V3's manager/MST distinction.
-
-    For MSTs use the existing Drax columns Name, Assoc. #, Shift, Job Title.
-    Read from this NEW project's .local-data only, never from the live V3
-    database or its production configuration.
-    """
-    profiles = {key: dict(value) for key, value in MANAGEMENT_ASSOCIATES.items()}
-    selected = os.getenv('IND3_V31_ROSTER_PATH', '').strip()
-    candidates = [Path(selected).expanduser()] if selected else [
-        PRIVATE / 'Drax  Associates.xlsx', PRIVATE / 'Drax Associates.xlsx',
-        PRIVATE / 'mst-roster.xlsx',
-        PRIVATE / 'mst-roster.csv'
-    ]
-    source = next((p for p in candidates if p.is_file()), None)
-    if source is None:
-        return profiles
-
-    def ingest(row: dict) -> None:
-        fields = {str(k or '').strip().casefold(): v for k, v in row.items()}
-        raw_id = fields.get('assoc. #', fields.get('assoc #', fields.get('associate number', '')))
-        if raw_id is None:
-            return
-        try:
-            number = str(int(raw_id)) if isinstance(raw_id, (int, float)) else str(raw_id).strip()
-        except (TypeError, ValueError):
-            return
-        number = number.strip()
-        if not number.isdecimal() or len(number) > 12 or number in MANAGEMENT_ASSOCIATES:
-            return
-        job = str(fields.get('job title') or '').strip().upper()
-        # Same as V3: employees without the MST roster flag cannot enter.
-        if job != 'MST':
-            return
-        assigned = str(fields.get('shift') or '').strip().upper()
-        if assigned not in SHIFT_RULES:
-            return
-        raw_name = str(fields.get('name') or 'MST Associate').strip()
-        profiles[number] = {'name': raw_name, 'all_shifts': False, 'shift': assigned}
-
-    if source.suffix.lower() == '.csv':
-        with source.open(encoding='utf-8-sig', newline='') as handle:
-            for row in csv.DictReader(handle):
-                ingest(row)
-    elif source.suffix.lower() == '.xlsx':
-        from openpyxl import load_workbook
-        workbook = load_workbook(source, read_only=True, data_only=True)
-        try:
-            sheet = workbook.active
-            rows = sheet.iter_rows(values_only=True)
-            headers = next(rows, None)
-            if headers:
-                for row in rows:
-                    ingest(dict(zip(headers, row)))
-        finally:
-            workbook.close()
-    return profiles
+    return v31_roster.profiles(PRIVATE, DB_FILE, MANAGEMENT_ASSOCIATES, SHIFT_RULES)
 
 
 def issue(assoc: str, shift_id: int = 0) -> str:
@@ -173,16 +151,50 @@ def _set_cookie(response: Response, assoc: str, shift_id: int = 0) -> None:
 
 def _db() -> sqlite3.Connection:
     PRIVATE.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(DB_FILE, timeout=5)
+    conn = sqlite3.connect(DB_FILE, timeout=8)
     conn.row_factory = sqlite3.Row
+    conn.execute('PRAGMA busy_timeout=8000')
     conn.execute('''CREATE TABLE IF NOT EXISTS shifts (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         code TEXT NOT NULL, shift_day TEXT NOT NULL,
         owner TEXT NOT NULL, open INTEGER NOT NULL DEFAULT 1,
         created_at TEXT NOT NULL, UNIQUE(code, shift_day)
     )''')
+    columns = {row['name'] for row in conn.execute('PRAGMA table_info(shifts)')}
+    for name, declaration in {
+        'is_ot': 'INTEGER NOT NULL DEFAULT 0',
+        'closed_at': "TEXT NOT NULL DEFAULT ''",
+        'closed_reason': "TEXT NOT NULL DEFAULT ''",
+        'report_saved_at': "TEXT NOT NULL DEFAULT ''",
+        'report_content': "TEXT NOT NULL DEFAULT ''",
+    }.items():
+        if name not in columns:
+            conn.execute(f"ALTER TABLE shifts ADD COLUMN {name} {declaration}")
+    conn.execute('''CREATE TABLE IF NOT EXISTS overtime_grants (
+        associate TEXT NOT NULL, code TEXT NOT NULL, shift_day TEXT NOT NULL,
+        granted_by TEXT NOT NULL, granted_at TEXT NOT NULL,
+        PRIMARY KEY(associate,code,shift_day)
+    )''')
     conn.commit()
     return conn
+
+
+def expire_shifts(now: datetime | None = None) -> int:
+    """Auto-close expired reporting sessions; never erase their history."""
+    moment = now or datetime.now(TZ)
+    count = 0
+    with _db() as conn:
+        rows = conn.execute('SELECT id,code,shift_day FROM shifts WHERE open=1').fetchall()
+        for row in rows:
+            try:
+                ends = shift_times(row['code'], date.fromisoformat(row['shift_day']))[1] + WINDOW_GRACE
+            except (KeyError, ValueError):
+                continue
+            if moment >= ends:
+                conn.execute("""UPDATE shifts SET open=0, closed_at=?, closed_reason='window_expired'
+                                WHERE id=? AND open=1""",(moment.isoformat(),row['id']))
+                count += 1
+    return count
 
 
 def shift_times(code: str, day: date) -> tuple[datetime, datetime]:
@@ -218,25 +230,34 @@ def entry(row: sqlite3.Row) -> dict:
     d = date.fromisoformat(row['shift_day'])
     return {'id': row['id'], 'code': row['code'], 'date': row['shift_day'],
             'label': SHIFT_RULES[row['code']][0], 'open': bool(row['open']),
+            'is_ot': bool(row['is_ot']), 'report_saved': bool(row['report_saved_at']),
             **window_info(row['code'], d)}
 
 
-def allowed(profile: dict, code: str) -> bool:
-    return bool(profile.get('all_shifts')) or profile.get('shift') == code
+def overtime_granted(assoc: str, code: str, day: date) -> bool:
+    with _db() as conn:
+        return conn.execute('''SELECT 1 FROM overtime_grants
+                              WHERE associate=? AND code=? AND shift_day=?''',
+                            (assoc, code, day.isoformat())).fetchone() is not None
+
+
+def allowed(profile: dict, code: str, day: date | None = None, assoc: str | None = None) -> bool:
+    if profile.get('all_shifts') or profile.get('shift') == code:
+        return True
+    return bool(day and assoc and overtime_granted(assoc, code, day))
 
 
 def shift_choices(profile: dict, now: datetime, associate: str | None = None) -> tuple[list[dict], list[dict]]:
     """Live and ready reports are bounded by the shift's actual time window.
     Do not delete historical records or automatically finalize a past report."""
+    expire_shifts(now)
     with _db() as conn:
         records = conn.execute('SELECT * FROM shifts ORDER BY id DESC').fetchall()
     by_key = {(r['code'], r['shift_day']): r for r in records}
     open_items, ready_items = [], []
     for code in SHIFT_RULES:
-        if not allowed(profile, code):
-            continue
         day = eligible_date(code, now)
-        if day is None:
+        if day is None or not allowed(profile, code, day, associate):
             continue
         key = (code, day.isoformat())
         record = by_key.get(key)
@@ -250,7 +271,8 @@ def shift_choices(profile: dict, now: datetime, associate: str | None = None) ->
             if now <= scheduled_end:
                 ready_items.append({'id': None, 'code': code, 'date': day.isoformat(),
                                     'label': SHIFT_RULES[code][0], 'open': False,
-                                    'action': 'start', **window_info(code, day)})
+                                    'action': 'start', 'is_ot': not profile.get('all_shifts') and profile.get('shift') != code,
+                                    **window_info(code, day)})
     open_items.sort(key=lambda x: x['scheduled_start'])
     ready_items.sort(key=lambda x: x['scheduled_start'])
     return open_items, ready_items
@@ -281,6 +303,7 @@ def state(session: dict, profile: dict) -> dict:
             'catalog': catalog,
             'all_shifts': bool(profile.get('all_shifts')),
             'assigned_shift': profile.get('shift'), 'selected': selected,
+            'report_saved': bool(selected and selected.get('report_saved')),
             'shifts': available, 'open': opened, 'ready': ready, 'now': now.isoformat(),
             'grace_minutes': 60, 'production_connected': False}
 
