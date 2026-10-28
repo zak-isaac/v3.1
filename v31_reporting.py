@@ -11,7 +11,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from v31_cetaris import parse_excel, technician_counts, select_records, MAX_SIZE
-from v31_split import assign
+from v31_split import assign, _person_key
 
 TZ=ZoneInfo("America/Indiana/Indianapolis")
 
@@ -90,8 +90,31 @@ def _existing_elsewhere(conn, shift_id, wo):
     return row["shift_id"] if row else None
 
 
+def roster_shift_map(tech_names, associates):
+    """Match names by exact normalized tokens, never guess from selection.
+
+    Drax commonly uses First Last; Cetaris can use Last, First. Missing or
+    conflicting Drax assignments remain unassigned for explicit import audit.
+    """
+    roster={}
+    for associate in associates:
+        if not associate.get("active") or not associate.get("shift"):
+            continue
+        key=_person_key(associate.get("name"))
+        if key:
+            roster.setdefault(key,set()).add(associate["shift"])
+    mapped={}
+    for tech in tech_names:
+        key=_person_key(tech)
+        matches=roster.get(key,set())
+        if len(matches)==1:
+            mapped[tech]=next(iter(matches))
+    return mapped
+
+
 def import_selection(conn, shift_id: int, shift_code: str, shift_day: str,
-                     technicians: list[str], closure_reviews: dict[str,str] | None = None):
+                     technicians: list[str], closure_reviews: dict[str,str] | None = None,
+                     roster_shifts: dict[str,str] | None = None):
     _table(conn)
     staged=conn.execute("SELECT * FROM report_stage WHERE shift_id=?",(shift_id,)).fetchone()
     if not staged:
@@ -104,7 +127,8 @@ def import_selection(conn, shift_id: int, shift_code: str, shift_day: str,
     if len(selected)>100:
         raise ValueError("Too many technicians selected")
     # Exact reviewed V3 evidence, not administrative WO close timestamps.
-    accepted,pending=assign(all_rows, selected, shift_code, shift_day)
+    accepted,pending=assign(all_rows, selected, shift_code, shift_day,
+                            roster_shifts=roster_shifts or {})
     # Do not silently include Completed non-PMs; MST must choose reminder.
     records,summary=select_records(accepted,selected,datetime.min,datetime.max,
                                     closure_reviews=closure_reviews or {})
@@ -174,7 +198,8 @@ def import_selection(conn, shift_id: int, shift_code: str, shift_day: str,
     summary.update({"added":added,"updated":updated,"preserved_edits":preserved,
                     "pm_wos_this_import":pm_count,"selected_technicians":len(selected),
                     "pending_review":len(pending),"ignored":len(ignored),
-                    "staged_rows":len(all_rows)})
+                    "staged_rows":len(all_rows),
+                    "roster_matched":len(roster_shifts or {})})
     conn.execute("""INSERT INTO report_techs(shift_id,selected_json) VALUES(?,?)
           ON CONFLICT(shift_id) DO UPDATE SET selected_json=excluded.selected_json""",
           (shift_id,_json(sorted(selected))))
