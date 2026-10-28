@@ -284,7 +284,7 @@ def test_shift_controls_and_brand_relocated_to_sidebar(client, monkeypatch):
     assert page.status_code==200
     assert 'id="v31-sidebar-controls"' in page.text
     assert 'class="sidebar-brand"' in page.text
-    assert 'class="sidebar-walmart"' in page.text
+    assert 'class="v31-brand-logo"' in page.text
     assert 'data-nav="support"' not in page.text
     assert '/web/workspace-layout.css' in page.text
     css=client.get('/web/workspace-layout.css')
