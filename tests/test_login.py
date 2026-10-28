@@ -300,3 +300,72 @@ def test_shift_controls_and_brand_relocated_to_sidebar(client, monkeypatch):
     admin=client.get('/web/roster-admin.js')
     assert admin.status_code==200
     assert "bar.querySelector('.v31-context-actions')" in admin.text
+
+
+def test_administration_is_full_management_workspace_without_selected_shift(client,monkeypatch):
+    freeze(monkeypatch,at(2026,10,27,8))
+    assert sign_in(client,'8972').status_code==200
+    assert client.get('/api/me').json()['selected'] is None
+    page=client.get('/administration')
+    assert page.status_code==200,page.text[:200]
+    for item in ('id="v31-admin-screen"', 'id="v31-admin-content"',
+                 'id="v31-roster-rows"', 'id="v31-admin-add-form"',
+                 'id="v31-sync-source"', 'id="v31-roster-search"',
+                 '/web/admin-standalone.js', '/web/roster-admin.js',
+                 '/web/administration.css'):
+        assert item in page.text
+    assert 'Manage Drax Roster</button>' not in page.text
+    assert '/web/workspace-auth.js' not in page.text
+    js=client.get('/web/roster-admin.js')
+    assert js.status_code==200
+    assert '/api/admin/roster' in js.text
+    assert 'v31:administration' in js.text
+
+
+def test_administration_requires_manager_and_protects_roster(client,monkeypatch):
+    freeze(monkeypatch,at(2026,10,27,8))
+    assert client.get('/administration').status_code==401
+    assert sign_in(client,'111111').status_code==200
+    assert client.get('/administration').status_code==403
+    assert client.get('/api/admin/roster').status_code==403
+
+
+def test_stationary_sidebar_mst_identity_and_signout(client,monkeypatch):
+    freeze(monkeypatch,at(2026,10,27,8))
+    sign_in(client,'111111')
+    page=client.get('/shift-report.html')
+    assert page.status_code==200
+    markup=page.text
+    assert 'id="v31-sidebar-user"' in markup
+    assert 'id="v31-user-name"' in markup
+    assert markup.index('id="v31-user-name"') < markup.index('id="v31-signout"')
+    assert 'id="v31-select-shift"' not in markup
+    assert 'id="v31-menu-choose"' in markup
+    layout=client.get('/web/workspace-layout.css')
+    assert layout.status_code==200
+    assert '.sidebar{height:100%;min-height:0!important;overflow:hidden' in layout.text
+    assert '.main-content{min-height:0;overflow-y:auto' in layout.text
+    workspace=client.get('/web/workspace-auth.js')
+    assert workspace.status_code==200
+    assert "username.textContent=context.name" in workspace.text
+    assert "context.role==='manager'" in workspace.text
+    assert "v31-select-shift" not in workspace.text
+    assert "$('#v31-signout')" in workspace.text
+
+
+def test_management_chooser_admin_shortcut_and_shift_chooser_not_in_sidebar(client,monkeypatch):
+    freeze(monkeypatch,at(2026,10,27,8))
+    assert sign_in(client,'8972').status_code==200
+    login=client.get('/').text
+    assert '/web/auth-ui.js' in login
+    chooser=client.get('/web/auth-ui.js').text
+    assert '>Administration</button>' in chooser
+    adminjs=client.get('/web/roster-admin.js').text
+    assert "window.location.assign('/administration')" in adminjs
+    assert ".v31-context-actions" not in adminjs
+    page=client.get('/administration').text
+    assert '<button id="v31-signout"' in page
+    assert 'Choose Shift</button>' in page  # Account-menu action, not sidebar.
+    sidebar=page.split('<aside class="sidebar">',1)[1].split('</aside>',1)[0]
+    assert 'Choose Shift' not in sidebar
+    assert 'Manage Drax Roster' not in sidebar
