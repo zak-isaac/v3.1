@@ -255,3 +255,37 @@ def test_roster_error_does_not_erase_cached_data(client,tmp_path,monkeypatch):
     assert "No local Drax roster" in status.json()["error"]
     # Cached data remains available for review, but is explicitly marked stale.
     assert status.json()["entries"]==3
+
+
+def test_original_v3_drax_path_is_preferred_when_present(tmp_path, monkeypatch):
+    from pathlib import Path
+    old_is_file=Path.is_file
+    original=r"C:\Users\ins0002\OneDrive - Walmart Inc\Drax  Associates.xlsx"
+    monkeypatch.delenv("IND3_V31_ROSTER_PATH",raising=False)
+    monkeypatch.delenv("ASSOCIATES_PATH",raising=False)
+    monkeypatch.setattr(Path, "is_file",
+                        lambda self: str(self)==original or old_is_file(self))
+    source, override=roster_module._source(tmp_path)
+    assert str(source)==original
+    assert override is None
+
+
+def test_legacy_and_v31_drax_environment_overrides(tmp_path, monkeypatch):
+    legacy=tmp_path/"legacy-drax.xlsx"
+    specific=tmp_path/"specific-drax.xlsx"
+    legacy.write_bytes(b"not used until parsed")
+    specific.write_bytes(b"not used until parsed")
+    monkeypatch.setenv("ASSOCIATES_PATH",str(legacy))
+    monkeypatch.delenv("IND3_V31_ROSTER_PATH",raising=False)
+    assert roster_module._source(tmp_path)[0]==legacy
+    monkeypatch.setenv("IND3_V31_ROSTER_PATH",str(specific))
+    assert roster_module._source(tmp_path)[0]==specific
+
+
+def test_new_database_has_no_overtime_schema(client):
+    with m._db() as db:
+        tables={row["name"] for row in db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'")}
+        columns={row["name"] for row in db.execute("PRAGMA table_info(shifts)")}
+    assert "overtime_grants" not in tables
+    assert "is_ot" not in columns
