@@ -144,7 +144,7 @@
     if(who.role==='manager'&&bar){
       const manage=button('Manage Drax Roster',open);
       manage.id='v31-admin-open';
-      const actions=bar.querySelector('div:last-child');
+      const actions=bar.querySelector('.v31-context-actions');
       (actions||bar).prepend(manage);
     }
     const adminNav=document.querySelector('button[data-nav="admin"]');
