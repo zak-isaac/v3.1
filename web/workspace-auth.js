@@ -131,6 +131,13 @@
   },true);
   $('#go-to-login')?.addEventListener('click',e=>{e.stopImmediatePropagation();signout();},true);
   await draw();
+  // Returning from standalone Administration may request the manager's
+  // authorized shift picker even when a shift is already selected.
+  if(context.role==='manager' &&
+     new URLSearchParams(window.location.search).get('open-shift-chooser')==='1'){
+    modal.showModal();
+    window.history.replaceState({},'',window.location.pathname);
+  }
   // Apply the real clock when the reporting grace window expires.
   setInterval(()=>{ if(!document.hidden) draw().catch(()=>{}); },60000);
 })();
