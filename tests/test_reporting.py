@@ -514,7 +514,7 @@ def test_shift_report_repositions_cetaris_and_uses_real_walmart_logo(client,monk
     response=client.get("/shift-report.html")
     assert response.status_code==200
     page=response.text
-    header=page.split('<section class="shift-header"',1)[1].split('</section>',1)[0]
+    header=page.split('<section class="shift-header"',1)[1].split('<div class="workspace-grid"',1)[0]
     assert 'S3 Shift Report' not in header  # Displayed shift comes from server.
     assert 'id="replace-file"' in header
     assert 'id="change-techs"' in header
