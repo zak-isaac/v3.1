@@ -83,6 +83,7 @@
 .v31-import-in-header #view-audit:hover{background:#f1f6fa}
 .v31-import-in-header .import-check{background:#eef2f8;color:#3d6b91}
 #v31-import-feedback{
+  grid-column:1 / -1;grid-row:3;
   display:none;border:1px solid #c9d9e7;border-radius:8px;
   padding:9px 12px;margin-top:9px;background:#f2f7fb;
   font-size:12px;line-height:1.45;color:#214e73;
@@ -115,7 +116,8 @@
 }
 @media(max-width:840px){
   .shift-header{grid-template-columns:minmax(0,1fr) minmax(155px,220px);padding:13px}
-  .v31-brand-logo{display:none}
+  .v31-brand-logo{min-height:48px;padding:7px 8px}
+  .v31-brand-logo img{max-width:150px;max-height:34px}
 }
 @media(max-width:560px){
   .shift-header{grid-template-columns:1fr}
