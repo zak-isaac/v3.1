@@ -134,9 +134,7 @@ $$('[data-edit]',tbody).forEach(b=>b.addEventListener('click',()=>editRow(Number
 function editRow(id){const r=state.rows.find(r=>r.id===id);showModal(`Edit ${r.asset}`,'Work order changes are saved to this selected shift.',`<div class="field"><label for="edit-asset">Asset ID</label><input id="edit-asset" value="${esc(r.asset)}"></div><div class="field"><label for="edit-cause">Cause / work performed</label><textarea id="edit-cause">${esc(r.cause)}</textarea></div><div class="field"><label for="edit-tech">Technicians</label><input id="edit-tech" value="${esc(r.tech)}"></div><div class="field"><label for="edit-status">Equipment status</label><select id="edit-status"><option value="RTS" ${r.status==='RTS'?'selected':''}>Returned to Service (RTS)</option><option value="OOS" ${r.status==='OOS'?'selected':''}>Out of Service (OOS)</option></select></div>`,[{text:'Cancel',onClick:closeModal},{text:'Save changes',kind:'btn-primary',onClick:async()=>{const changes={asset:$('#edit-asset').value.trim()||r.asset,cause:$('#edit-cause').value.trim()||r.cause,tech:$('#edit-tech').value.trim()||r.tech,status:$('#edit-status').value};try{await window.V31Reporting.updateWO(r.wo,changes);Object.assign(r,changes);closeModal();updateMetrics();renderTab();toast('Work order updated and saved');}catch(err){toast(err.message);}}}]);}
 function rowDetail(id){const r=state.rows.find(r=>r.id===id);showModal(`Work Order #${r.wo}`,'Read-only work order details',`<div class="detail-list"><p><strong>Asset:</strong> ${esc(r.asset)}</p><p><strong>Category:</strong> ${esc(r.category)}</p><p><strong>Technicians:</strong> ${esc(r.tech)}</p><p><strong>Status:</strong> ${esc(r.status)}</p><p><strong>Reported work:</strong> ${esc(r.cause)}</p><p><strong>Technician remarks:</strong> ${esc(r.remarks||'No remarks')}</p><p><strong>Reporting:</strong> ${r.excluded?'Excluded':'Included'}</p></div>`,[{text:'Close',onClick:closeModal},{text:'Edit',kind:'btn-primary',onClick:()=>editRow(id)}]);}
 function listPane(kind){let list=kind==='vendors'?state.vendors:state.ro;let title=kind==='vendors'?'Vendor Activity':'RO / Work Requests';return `<div class="secondary-pane"><div class="pane-header"><div><h3>${title}</h3><p>Items entered manually for this shift's final report.</p></div><button class="btn btn-primary" id="add-list-entry">+ Add ${kind==='vendors'?'Vendor':'RO'}</button></div><div class="item-list">${list.length?list.map((t,i)=>`<div class="item-card"><div><strong>${esc(t)}</strong><small>Manual reporting entry</small></div><button class="btn btn-light btn-small" data-list-edit="${i}">Edit</button></div>`).join(''):'<p>No entries have been added for this shift.</p>'}</div></div>`;}
-function pmTab(){
-  return `<div class="secondary-pane"><div class="pane-header"><div><h3>Preventive Maintenance</h3><p>Completed PMs are counted from closed Cetaris work orders when import processing is connected.</p></div></div><div class="item-list"><div class="item-card"><div><strong>Completed PMs</strong><small>No PMs imported yet</small></div><span class="status-pill rts">0</span></div><div class="item-card"><div><strong>PMs Needing Completion</strong><small>${state.pmFile?'File selected: '+esc(state.pmFile)+' (awaiting import processing)':'No pending PM file selected'}</small></div><span class="status-pill oos">0</span></div></div><p class="field-help">No example PM records are loaded. Upload controls remain available; file parsing will be connected later.</p></div>`;
-}
+function pmTab(){return `<div class="secondary-pane"><div class="pane-header"><div><h3>Preventive Maintenance</h3><p>Qualified Cetaris PM WOs are counted once.</p></div></div><div class="item-list">${state.pms.length?state.pms.map(r=>`<div class="item-card"><div><strong>${esc(r.asset||'Asset not specified')} · WO# ${esc(r.wo_number)}</strong><small>${esc(r.tech||'')}</small></div><span class="status-pill rts">Completed</span></div>`).join(''):'<p class="field-help">No completed PM work orders imported yet.</p>'}</div></div>`;}
 function breakdownTab(){
   const items=state.rows.filter(r=>!r.excluded&&(r.status==='OOS'||r.category==='Breakdown'));
   return `<div class="secondary-pane"><div class="pane-header"><div><h3>Breakdown / Out of Service</h3><p>Tracked from imported work orders. No manual duplicate entry is needed.</p></div></div><div class="item-list">${items.length ? items.map(r=>`<div class="item-card"><div><strong>${esc(r.asset)} · WO# ${esc(r.wo)}</strong><small>${esc(r.cause)}</small></div><span class="status-pill ${r.status.toLowerCase()}">${esc(r.status)}</span></div>`).join('') : '<p class="field-help">No breakdown or OOS records imported yet.</p>'}</div></div>`;
@@ -155,8 +153,33 @@ function techModal(){
   ]);
   $('#manual-techs').value=state.techs.join('\n');
 }
-function createReport(){const inc=state.rows.filter(r=>!r.excluded);return `IND3 — MST Reliability Operations\n${window.__v31ShiftContext?.code || 'Unassigned'} — Shift Report\nDate: ${window.__v31ShiftContext?.date || 'Not selected'}\nSelected technicians: ${state.techs.join('; ')}\n\nSHIFT HAPPENINGS (${inc.length})\n${inc.map((r,i)=>`${i+1}. ${r.asset} (WO# ${r.wo}) — ${r.category}\n   ${r.cause}\n   Technician(s): ${r.tech} | ${r.status}`).join('\n\n')}\n\nPMs Completed: 0\nPMs Needing Completion: 0${state.pmFile?` — ${state.pmFile}`:''}\n\nVENDORS\n${state.vendors.join('\n')||'None'}\n\nRO\n${state.ro.join('\n')||'None'}\n\nSHIFT NOTES\n${state.notes||'None'}\n\nLOTO Verification: ${state.loto?'Verified':'Not verified'}${state.missingKey?`\nMissing Key: ${state.missingKey}`:''}\n\nLOCAL FRONTEND PREVIEW — CETARIS PARSING NOT CONNECTED`}
-function previewReport(){showModal('Outlook Passdown Preview','Sample report only. No production data or emails are involved.',`<div class="preview-document">${esc(createReport())}</div>`,[{text:'Close',onClick:closeModal},{text:'Download sample EML',kind:'btn-primary',onClick:()=>{closeModal();emlDownload();}}]);}
+function createReport(){const inc=state.rows.filter(r=>!r.excluded);return `IND3 — MST Reliability Operations
+${window.__v31ShiftContext?.code || 'Unassigned'} — Shift Report
+Date: ${window.__v31ShiftContext?.date || 'Not selected'}
+Technicians: ${state.techs.join('; ')||'None selected'}
+
+SHIFT HAPPENINGS
+${inc.map(r=>`${r.asset || 'Unspecified asset'} : ${r.cause || 'No service description'}
+   WO# ${r.wo} · ${r.category} · ${r.status}
+   Technicians: ${r.tech || 'Not specified'}
+   ${r.remarks ? '- '+r.remarks : '- No technician remarks'}`).join('\n\n')||'No qualifying work orders imported.'}
+
+PMs Completed: ${state.pmCount}
+Pending Import Review: ${state.audit.pending.length}
+
+VENDORS
+${state.vendors.join('\n')||'None'}
+
+RO
+${state.ro.join('\n')||'None'}
+
+SHIFT NOTES
+${state.notes||'None'}
+
+LOTO Verification: ${state.loto?'Verified':'Not verified'}${state.missingKey?`\nMissing Key: ${state.missingKey}`:''}
+
+V3.1 LOCAL SHIFT REPORT — NO EMAIL SENT`;}
+function previewReport(){showModal('Shift Passdown Preview','Review the selected shift and imported work before creating the Outlook EML.',`<div class="preview-document">${esc(createReport())}</div>`,[{text:'Close',onClick:closeModal},{text:'Generate Outlook EML',kind:'btn-primary',onClick:()=>{closeModal();emlDownload();}}]);}
 async function emlDownload(){
   const report=createReport();
   const generate=$('#generate-eml');
@@ -173,7 +196,7 @@ async function emlDownload(){
     }
     const body=report.replace(/\r?\n/g,'\r\n');
     const shift=window.__v31ShiftContext?.code||'Unassigned';
-    const eml='To: \r\nSubject: IND3 - '+shift+' Shift Passdown - V3.1 Local Preview\r\n'+
+    const eml='To: \r\nSubject: IND3 - '+shift+' Shift Passdown - V3.1\r\n'+
       'MIME-Version: 1.0\r\nContent-Type: text/plain; charset=UTF-8\r\n'+
       'Content-Transfer-Encoding: 8bit\r\n\r\n'+body;
     const url=URL.createObjectURL(new Blob([eml],{type:'message/rfc822'}));
@@ -182,13 +205,13 @@ async function emlDownload(){
     document.body.append(link);link.click();link.remove();
     setTimeout(()=>URL.revokeObjectURL(url),2000);
     $('#last-saved').textContent='Shift passdown saved · Outlook EML created';
-    toast('Passdown saved to this shift. EML downloaded (not sent).');
+    toast('Passdown saved. Outlook EML downloaded; email not sent.');
   }catch(error){
     toast(error.message);
   }finally{generate.disabled=false;}
 }
 function confirmEnd(){showModal('End this shift?','This is a frontend simulation only. It does not close any real shift.',`<p>Mark the <strong>sample S1 shift</strong> as ended in this browser preview?</p><p class="field-help">The actual IND3 Workshop production system will not be contacted.</p>`,[{text:'Cancel',onClick:closeModal},{text:'End sample shift',kind:'btn-end',onClick:()=>{state.ended=true;$('.shift-heading .pill').textContent='Ended';$('.shift-heading .pill').classList.remove('active');$('.shift-heading .pill').style.background='#667994';$('#end-shift').disabled=true;closeModal();toast('Sample shift ended in this preview');}}]);}
-function showInfo(){showModal('Frontend Design Preview','Separate from live IND3 V3.',`<p>This prototype uses sample shift data and has no production database, authentication, or server connection.</p><p><strong>Included UI interactions:</strong> editing and excluding work orders, tabbed views, file selectors, technician selections, report text entry, LOTO verification with 20 keys, draft status, report preview, example EML export and sample End Shift.</p><p>Imports display filenames only. They do not parse Cetaris XLSX/CSV files yet.</p>`,[{text:'Got it',onClick:closeModal}]);}
+function showInfo(){showModal('Frontend Design Preview','Separate from live IND3 V3.',`<p>This V3.1 local app uses a separate shift database and actual Cetaris imports. It does not modify the live production V3 application.</p><p><strong>Included UI interactions:</strong> editing and excluding work orders, tabbed views, file selectors, technician selections, report text entry, LOTO verification with 20 keys, draft status, report preview, example EML export and sample End Shift.</p><p>Cetaris XLSX/CSV parsing is connected. Ambiguous ownership remains in Import Audit; pending PM parsing and AI rewrite are not connected yet.</p>`,[{text:'Got it',onClick:closeModal}]);}
 // Wiring
 $$('.tab').forEach(t=>t.addEventListener('click',()=>{selectedTab=t.dataset.tab;renderTab();}));
 $('#replace-file').addEventListener('click',()=>$('#cetaris-picker').click());$('#cetaris-picker').addEventListener('change',e=>{const f=e.target.files?.[0];if(!f)return;window.V31Reporting?.upload(f);e.target.value='';});
