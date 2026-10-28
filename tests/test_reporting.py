@@ -552,3 +552,54 @@ def test_file_accepted_but_empty_is_not_treated_as_work_order_import(client,monk
     assert state["stage"]["staged"] and not state["stage"]["imported"]
     assert state["tech_suggestions"]==[]
     assert state["rows"]==[] and state["pm_count"]==0
+
+
+def test_command_center_layout_uses_full_width_metrics_and_real_empty_state(client, monkeypatch):
+    clock(monkeypatch)
+    enter(client)
+    response=client.get("/shift-report.html")
+    assert response.status_code==200
+    markup=response.text
+    # Metrics are across the full workspace, not compressed into the work-order column.
+    header=markup.index('<section class="shift-header"')
+    overview=markup.index('<section class="overview-section"')
+    cards=markup.index('<section class="metrics"')
+    workspace=markup.index('<div class="workspace-grid">')
+    assert header < overview < cards < workspace
+    assert markup.count('id="metric-work"')==1
+    assert markup.count('id="metric-pms-completed"')==1
+    assert '<span>Shift Workspace</span>' in markup
+    assert 'Changes remain in this frontend preview' not in markup
+    assert 'web/command-center.css' in markup
+    script=markup[markup.rfind("<script>")+len("<script>"):markup.rfind("</script>")]
+    assert 'v31-work-empty' in script
+    assert 'Start with a Cetaris work-order export' in script
+    assert 'Your file is ready for technician selection' in script
+    assert 'No qualifying work orders for this shift' in script
+    assert 'window.V31Reporting?.chooseTechs()' in script
+    assert "if(searchBox)populateRows()" in script
+    assert "state.stageImported=!!data.stage?.imported" in script
+
+
+def test_command_center_css_responsive_and_protects_original_ui_actions(client, monkeypatch):
+    clock(monkeypatch)
+    enter(client)
+    stylesheet=client.get("/web/command-center.css")
+    assert stylesheet.status_code==200
+    css=stylesheet.text
+    for rule in (".overview-section", ".metrics", ".v31-work-empty",
+                 ".workspace-grid", ".report-actions", ".sidebar",
+                 "@media(max-width:1240px)", "@media(max-width:1030px)",
+                 "@media(max-width:600px)"):
+        assert rule in css
+    assert "grid-template-columns:repeat(6,minmax(0,1fr))" in css
+    assert "grid-template-columns:repeat(3,minmax(0,1fr))" in css
+    assert "grid-template-columns:repeat(2,minmax(0,1fr))" in css
+    assert "overflow-y:auto" in css
+    markup=client.get("/shift-report.html").text
+    # Design changes must not remove functional import/report/administration controls.
+    for element_id in ("replace-file","change-techs","view-audit",
+                       "save-draft","preview-report","generate-eml","end-shift",
+                       "v31-admin-screen","v31-signout","v31-sidebar-user"):
+        assert f'id="{element_id}"' in markup
+    assert '/web/walmart-2025.svg' in markup
