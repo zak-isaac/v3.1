@@ -1,0 +1,3 @@
+# Next-Day Work Orders — Import Audit
+
+Import Audit lists deduplicated work orders found in the Cetaris export with a next-calendar-day timestamp relative to the selected shift's start date, whether or not they belong to that shift. The listing separates verified work timestamps from administrative close/update timestamps; shows WO#, asset, status, technician names, source timestamp(s), inclusion/PM/disposition; and persists with the selected shift. S3/S5 overnight WOs retain documented attribution. No next-day record is automatically added to Shift Happenings solely because of its date. The migration adds only a new `next_day_json` column and retains old import audit data. Regression tests use synthetic records and the original production V3 remains untouched.
