@@ -70,6 +70,14 @@ At most **two shift sessions** may be active. Overnight work remains assigned to
 
 **End Shift** requires a saved passdown. Use **Generate Passdown (.eml)** first; this stores a copy in the selected V3.1 session, then downloads a local Outlook draft. End Shift only closes the selected session. Sign Out only ends the browser login session.
 
+### V3.1 Shift Report workspace (October 2026 refresh)
+
+Cetaris import status, **Import Cetaris**, **Change Technicians**, and **Import Audit** are now grouped next to the Shift Report title. The Shift Progress bar remains visible and is **0% when no work has been staged**. It represents actual report-preparation milestones, not time elapsed: staged file (20%), imported with no qualifying WOs (30%), imported with qualifying WOs/PMs (75%), saved passdown (100%).
+
+The red Cetaris button starts XLSX/CSV staging; **staging is not the same as importing**. A selection dialog opens immediately. It prechecks only exact technician-name matches to active Drax MSTs on the selected shift, then displays other-shift MSTs and unmatched Cetaris technicians as optional groups. Manually selecting an additional/overtime technician **does not change login permissions or automatically establish WO ownership**. Confirm **Import Selected Work Orders** to persist the work. Missing or ambiguous completion evidence stays visible in Import Audit. The app now distinguishes an unconfirmed staged replacement file from an imported file, preserving earlier saved WOs.
+
+The sidebar now uses the genuine Walmart 2025 vector artwork (official shapes and colors), with IND3 and MST Reliability Operations separated into readable rows. This change does not alter V3, the historical archive, or Drax workbooks.
+
 ## Shift Report — Cetaris import (Phase 1)
 
 The existing approved Shift Report UI is wired to the new, private V3.1 database.

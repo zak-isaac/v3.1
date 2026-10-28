@@ -738,6 +738,13 @@ def reporting_state(request: Request):
     with _db() as conn:
         data=v31_reporting.get_state(conn,row['id'])
         data['draft']=v31_reporting.get_draft(conn,row['id'])
+        shift_row=conn.execute("SELECT report_saved_at FROM shifts WHERE id=?",(row['id'],)).fetchone()
+    # Reporting UI needs technician names / shift groups, never associate IDs.
+    roster_info=v31_roster.status(DB_FILE,include_rows=True)
+    data['tech_suggestions']=v31_reporting.technician_suggestions(
+        data['stage']['technicians'],roster_info['associates'],row['code'])
+    data['roster_source_connected']=bool(roster_info['last_synced']) and not bool(roster_info['error'])
+    data['report_saved']=bool(shift_row and shift_row['report_saved_at'])
     return {'shift':entry(row),**data}
 
 
@@ -759,6 +766,11 @@ async def reporting_stage(request: Request,file: UploadFile=File(...)):
                 file.filename or 'cetaris.xlsx',session['a'])
     except ValueError as exc:
         raise HTTPException(422,str(exc))
+    # Staging parses a file; it deliberately does not credit any WOs until
+    # technicians have been selected and an explicit import is confirmed.
+    roster_info=v31_roster.status(DB_FILE,include_rows=True)
+    result['tech_suggestions']=v31_reporting.technician_suggestions(
+        result['technicians'],roster_info['associates'],row['code'])
     return result
 
 

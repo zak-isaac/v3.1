@@ -448,3 +448,107 @@ def test_next_day_opened_wo_is_audited_without_work_or_close(client,monkeypatch)
     assert item["work_timestamps"]==[]
     assert item["admin_timestamps"]==["2026-10-27T07:00:00"]
     assert item["included_in_shift"] is False
+
+
+def test_drax_preselects_matching_shift_msts_but_not_other_technicians(client,monkeypatch,tmp_path):
+    import csv
+    import v31_roster
+    clock(monkeypatch,day=26,hour=10)
+    roster=tmp_path/"mst-roster.csv"
+    with roster.open("w",newline="") as output:
+        writer=csv.writer(output)
+        writer.writerow(["Name","Assoc. #","Shift","Job Title"])
+        writer.writerow(["A Synthetic","111111","S1","MST"])
+        writer.writerow(["B Synthetic","222222","S2","MST"])
+        writer.writerow(["C Synthetic","333333","S1","Associate"])
+    v31_roster.sync(tmp_path,tmp_path/"v31.sqlite3",set(m.MANAGEMENT_ASSOCIATES),force=True)
+    enter(client,"S1")
+    response=upload(client,[
+        row("D100",tech="Synthetic, A"),
+        row("D200",tech="Synthetic B"),
+        row("D300",tech="Synthetic C"),
+        row("D400",tech="Unknown Fourth")])
+    assert response.status_code==200,response.text
+    suggestions={t["name"]:t for t in response.json()["tech_suggestions"]}
+    assert suggestions["Synthetic, A"]["group"]=="assigned"
+    assert suggestions["Synthetic, A"]["preselected"] is True
+    assert suggestions["Synthetic B"]["group"]=="other_shift"
+    assert suggestions["Synthetic B"]["preselected"] is False
+    assert suggestions["Synthetic C"]["group"]=="unmatched"
+    assert suggestions["Unknown Fourth"]["group"]=="unmatched"
+    assert all("number" not in t for t in suggestions.values())
+    state=client.get("/api/reporting/state").json()
+    assert state["tech_suggestions"]==response.json()["tech_suggestions"]
+    assert state["stage"]["staged"] is True
+    assert state["stage"]["imported"] is False
+    assert state["rows"]==[]
+    accepted=import_techs(client,["Synthetic, A","Synthetic B"])
+    assert accepted.status_code==200,accepted.text
+    final=client.get("/api/reporting/state").json()
+    assert final["stage"]["imported"] is True
+    assert {t["wo_number"] for t in final["rows"]}=={"D100","D200"}
+    assert set(final["technicians"])=={"Synthetic, A","Synthetic B"}
+
+
+def test_cetaris_replacement_requires_import_confirmation_again(client,monkeypatch):
+    clock(monkeypatch,day=26,hour=10)
+    enter(client)
+    assert upload(client,[row("REPLACE1")]).status_code==200
+    assert import_techs(client,["Synthetic A"]).status_code==200
+    first=client.get("/api/reporting/state").json()
+    assert first["stage"]["imported"] is True
+    assert len(first["rows"])==1
+    assert upload(client,[row("REPLACE2")]).status_code==200
+    staged=client.get("/api/reporting/state").json()
+    assert staged["stage"]["staged"] is True and staged["stage"]["imported"] is False
+    assert {r["wo_number"] for r in staged["rows"]}=={"REPLACE1"}
+    assert import_techs(client,["Synthetic A"]).status_code==200
+    final=client.get("/api/reporting/state").json()
+    assert final["stage"]["imported"] is True
+    assert {r["wo_number"] for r in final["rows"]}=={"REPLACE1","REPLACE2"}
+
+
+def test_shift_report_repositions_cetaris_and_uses_real_walmart_logo(client,monkeypatch):
+    clock(monkeypatch,day=26,hour=10)
+    enter(client)
+    response=client.get("/shift-report.html")
+    assert response.status_code==200
+    page=response.text
+    header=page.split('<section class="shift-header"',1)[1].split('<div class="workspace-grid"',1)[0]
+    assert 'S3 Shift Report' not in header  # Displayed shift comes from server.
+    assert 'id="replace-file"' in header
+    assert 'id="change-techs"' in header
+    assert 'id="view-audit"' in header
+    assert 'id="progress-number"' in header
+    assert 'id="v31-import-feedback"' in header
+    assert 'id="progress-fill"' in header
+    assert 'width:75%' not in page
+    assert 'width:0%;height:100%' in page
+    assert 'v31-brand-logo' in page
+    assert '/web/walmart-2025.svg' in page
+    assert 'sidebar-walmart' not in page
+    assert '/web/report-header.css' in page
+    logo=client.get("/web/walmart-2025.svg")
+    assert logo.status_code==200
+    assert '<svg' in logo.text and '#ffc220' in logo.text
+    stylesheet=client.get("/web/report-header.css")
+    assert stylesheet.status_code==200
+    assert '#replace-file.v31-cetaris-primary' in stylesheet.text
+    js=client.get("/web/shift-data.js").text
+    assert "v31-tech-group" in js
+    assert "Drax MSTs" in js
+    assert "snapshot.stage.imported" in js
+
+
+def test_file_accepted_but_empty_is_not_treated_as_work_order_import(client,monkeypatch):
+    clock(monkeypatch,day=26,hour=10)
+    enter(client)
+    blank=workbook([])
+    staged=client.post("/api/reporting/stage",
+        files={"file":("empty.xlsx",blank,"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")})
+    assert staged.status_code==200,staged.text
+    assert staged.json()["stats"]["parsed_rows"]==0
+    state=client.get("/api/reporting/state").json()
+    assert state["stage"]["staged"] and not state["stage"]["imported"]
+    assert state["tech_suggestions"]==[]
+    assert state["rows"]==[] and state["pm_count"]==0

@@ -46,6 +46,12 @@ def _table(conn):
     columns={row["name"] for row in conn.execute("PRAGMA table_info(report_audit)")}
     if "next_day_json" not in columns:
         conn.execute("ALTER TABLE report_audit ADD COLUMN next_day_json TEXT NOT NULL DEFAULT '[]'")
+    stage_columns={row["name"] for row in conn.execute("PRAGMA table_info(report_stage)")}
+    if "applied_at" not in stage_columns:
+        conn.execute("ALTER TABLE report_stage ADD COLUMN applied_at TEXT DEFAULT NULL")
+        # Older V3.1 records already imported by technician selection keep their status.
+        conn.execute("""UPDATE report_stage SET applied_at=uploaded_at
+            WHERE EXISTS(SELECT 1 FROM report_techs t WHERE t.shift_id=report_stage.shift_id)""")
     # Migration only adds tables; original V2/V3 archive and new V3.1 shifts stay intact.
 
 
@@ -62,10 +68,10 @@ def stage(conn, shift_id, payload: bytes, filename: str, actor: str):
     stats={}
     rows=parse_excel(payload,stats)
     filename=Path(filename.replace("\\","/")).name[:120] or "cetaris.xlsx"
-    conn.execute("""INSERT INTO report_stage(shift_id,filename,raw_json,stats_json,uploaded_by,uploaded_at)
-        VALUES(?,?,?,?,?,?) ON CONFLICT(shift_id) DO UPDATE SET
+    conn.execute("""INSERT INTO report_stage(shift_id,filename,raw_json,stats_json,uploaded_by,uploaded_at,applied_at)
+        VALUES(?,?,?,?,?,?,NULL) ON CONFLICT(shift_id) DO UPDATE SET
         filename=excluded.filename,raw_json=excluded.raw_json,stats_json=excluded.stats_json,
-        uploaded_by=excluded.uploaded_by,uploaded_at=excluded.uploaded_at""",
+        uploaded_by=excluded.uploaded_by,uploaded_at=excluded.uploaded_at,applied_at=NULL""",
         (shift_id,filename,_json(rows),_json(stats),actor,_now()))
     return {"filename":filename,"technicians":technician_counts(rows),
             "stats":stats,"staged":True,"requires_selection":True}
@@ -75,9 +81,10 @@ def stage_details(conn, shift_id):
     _table(conn)
     stage_row=conn.execute("SELECT * FROM report_stage WHERE shift_id=?",(shift_id,)).fetchone()
     if not stage_row:
-        return {"staged":False,"filename":"","technicians":[],"stats":{}}
+        return {"staged":False,"imported":False,"filename":"","technicians":[],"stats":{}}
     rows=json.loads(stage_row["raw_json"])
-    return {"staged":True,"filename":stage_row["filename"],
+    return {"staged":True,"imported":bool(stage_row["applied_at"]),
+            "filename":stage_row["filename"],
             "technicians":technician_counts(rows),
             "stats":json.loads(stage_row["stats_json"])}
 
@@ -177,6 +184,34 @@ def _next_day_work_orders(rows, shift_day, selected, imported, pms, pending, ign
             "disposition":disposition,
             "included_in_shift":is_imported or is_pm,
         })
+    return result
+
+
+def technician_suggestions(source_techs, roster_rows, shift_code):
+    """Suggest a V3-style technician selection from Drax, without inferring overtime.
+
+    Match normalized complete names (First Last / Last, First) exactly.
+    Never send employee identifiers to the reporting browser.
+    A duplicate/ambiguous Drax match is listed as unmatched, not preselected.
+    """
+    by_name={}
+    for person in roster_rows:
+        if not person.get('active') or not person.get('is_mst'):
+            continue
+        key=_person_key(person.get('name'))
+        if key:
+            by_name.setdefault(key,[]).append(person)
+    result=[]
+    for tech in source_techs:
+        name=tech['name']
+        matches=by_name.get(_person_key(name),[])
+        match=matches[0] if len(matches)==1 else None
+        assigned=match.get('shift') if match else None
+        group=('assigned' if assigned == shift_code else
+               'other_shift' if assigned else 'unmatched')
+        result.append({'name':name,'count':tech['count'],
+                       'group':group,'drax_shift':assigned,
+                       'preselected':group=='assigned'})
     return result
 
 
@@ -287,6 +322,7 @@ def import_selection(conn, shift_id: int, shift_code: str, shift_day: str,
          ignored_json=excluded.ignored_json,next_day_json=excluded.next_day_json,
          updated_at=excluded.updated_at""",
          (shift_id,_json(summary),_json(pending),_json(ignored),_json(next_day),now))
+    conn.execute("UPDATE report_stage SET applied_at=? WHERE shift_id=?",(_now(),shift_id))
     return summary
 
 
