@@ -392,8 +392,12 @@ def login(payload: LoginRequest, request: Request, response: Response):
         # Start assigned shift only if nobody else owns the current instance.
         target = ready[0]
         with _db() as conn:
-            conn.execute('INSERT OR IGNORE INTO shifts (code,shift_day,owner,created_at) VALUES (?,?,?,?)',
-                         (target['code'], target['date'], payload.associate, now.isoformat()))
+            if conn.execute('SELECT COUNT(*) FROM shifts WHERE open=1').fetchone()[0] >= 2:
+                raise HTTPException(409, 'Two overlapping shifts are already active')
+            conn.execute('''INSERT OR IGNORE INTO shifts
+                (code,shift_day,owner,created_at,is_ot) VALUES (?,?,?,?,?)''',
+                (target['code'], target['date'], payload.associate, now.isoformat(),
+                 int(bool(target.get('is_ot')))))
             row = conn.execute('SELECT * FROM shifts WHERE code=? AND shift_day=?',
                                (target['code'], target['date'])).fetchone()
             if not row['open'] or row['owner'] != payload.associate:
@@ -417,19 +421,24 @@ def me(request: Request):
 def start_shift(payload: ShiftChoice, request: Request, response: Response):
     _origin_check(request)
     session, profile = who(request)
-    if not allowed(profile, payload.code):
-        raise HTTPException(403, 'Shift not assigned to this associate')
-    day = eligible_date(payload.code, datetime.now(TZ))
+    now = datetime.now(TZ)
+    expire_shifts(now)
+    day = eligible_date(payload.code, now)
     if day is None:
         raise HTTPException(409, 'Shift reporting window is not active')
-    now = datetime.now(TZ)
+    if not allowed(profile, payload.code, day, session['a']):
+        raise HTTPException(403, 'Shift not assigned and no authorized overtime grant')
     with _db() as conn:
         existing = conn.execute('SELECT * FROM shifts WHERE code=? AND shift_day=?',
                                 (payload.code, day.isoformat())).fetchone()
         if existing is None and now > shift_times(payload.code, day)[1]:
             raise HTTPException(409, 'New shift may not start after its scheduled end')
-        conn.execute('INSERT OR IGNORE INTO shifts (code,shift_day,owner,created_at) VALUES (?,?,?,?)',
-                     (payload.code, day.isoformat(), session['a'], now.isoformat()))
+        if existing is None and conn.execute('SELECT COUNT(*) FROM shifts WHERE open=1').fetchone()[0] >= 2:
+            raise HTTPException(409, 'Two overlapping shifts are already active')
+        conn.execute('''INSERT OR IGNORE INTO shifts
+            (code,shift_day,owner,created_at,is_ot) VALUES (?,?,?,?,?)''',
+            (payload.code, day.isoformat(), session['a'], now.isoformat(),
+             int(not profile.get('all_shifts') and profile.get('shift') != payload.code)))
         row = conn.execute('SELECT * FROM shifts WHERE code=? AND shift_day=?',
                            (payload.code, day.isoformat())).fetchone()
         if not row['open']:
@@ -449,8 +458,8 @@ def resume_shift(payload: ShiftResume, request: Request, response: Response):
         row = conn.execute('SELECT * FROM shifts WHERE id=? AND open=1', (payload.shift_id,)).fetchone()
     if row is None or eligible_date(row['code'], datetime.now(TZ)) != date.fromisoformat(row['shift_day']):
         raise HTTPException(404, 'Active shift not found within its reporting window')
-    if not allowed(profile, row['code']):
-        raise HTTPException(403, 'Shift not assigned to this associate')
+    if not allowed(profile, row['code'], date.fromisoformat(row['shift_day']), session['a']):
+        raise HTTPException(403, 'Shift not assigned and no authorized overtime grant')
     if not profile.get('all_shifts') and row['owner'] != session['a']:
         raise HTTPException(403, 'Only the shift starter or management may resume this report')
     _set_cookie(response, session['a'], row['id'])
@@ -473,8 +482,13 @@ def end_shift(request: Request, response: Response):
     with _db() as conn:
         row = conn.execute('SELECT * FROM shifts WHERE id=? AND open=1',
                            (session['s'],)).fetchone()
-        if row is None or not allowed(profile, row['code']):
+        if row is None or not allowed(profile, row['code'], date.fromisoformat(row['shift_day']), session['a']):
             raise HTTPException(404, 'Active shift not found')
-        conn.execute('UPDATE shifts SET open=0 WHERE id=?', (session['s'],))
+        if not profile.get('all_shifts') and row['owner'] != session['a']:
+            raise HTTPException(403, 'Only the shift starter or management may close it')
+        if not row['report_saved_at']:
+            raise HTTPException(409, 'Generate and save the passdown report before ending this shift')
+        conn.execute("""UPDATE shifts SET open=0, closed_at=?,closed_reason='completed'
+                        WHERE id=?""",(datetime.now(TZ).isoformat(),session['s']))
     _set_cookie(response, session['a'], 0)
     return {'ended': True, 'shift_id': session['s']}
