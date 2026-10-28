@@ -236,6 +236,7 @@ def test_frontend_shift_data_controller_is_connected(client,monkeypatch):
     script=client.get("/web/shift-data.js")
     assert script.status_code==200
     assert "/api/reporting/stage" in script.text
+    assert "Next-Day Work Orders" in script.text
 
 
 def test_drax_assignments_resolve_s1_s2_overlap(client,monkeypatch,tmp_path):
@@ -312,3 +313,121 @@ def test_cross_shift_breakdown_can_transition_from_oos_to_rts(client,monkeypatch
         old=db.execute("SELECT status FROM report_wo WHERE shift_id=?",(s1,)).fetchone()
         new=db.execute("SELECT status FROM report_wo WHERE shift_id=?",(s2,)).fetchone()
     assert old["status"]=="OOS" and new["status"]=="RTS"
+
+
+def test_next_day_wo_visible_in_audit_without_stealing_next_shift(client,monkeypatch):
+    clock(monkeypatch,day=26,hour=10)
+    enter(client,"S1")
+    imported=row("TODAY1",started="2026-10-26 08:00",serviced="2026-10-26 08:10")
+    tomorrow=row("TOMORROW1",started="2026-10-27 06:00",
+                 serviced="2026-10-27 06:12",issue="Next day asset repair")
+    assert upload(client,[imported,tomorrow]).status_code==200
+    result=import_techs(client,["Synthetic A"])
+    assert result.status_code==200,result.text
+    state=client.get("/api/reporting/state").json()
+    assert {r["wo_number"] for r in state["rows"]}=={"TODAY1"}
+    day=state["audit"]["next_day"]
+    assert len(day)==1
+    assert day[0]["wo_number"]=="TOMORROW1"
+    assert day[0]["date"]=="2026-10-27"
+    assert day[0]["timestamp_type"]=="Work activity"
+    assert day[0]["selected_technician"] is True
+    assert day[0]["included_in_shift"] is False
+    assert day[0]["disposition"]=="Not attributed to selected shift"
+    assert state["audit"]["summary"]["next_day_wos"]==1
+    assert len(client.get("/api/reporting/state").json()["audit"]["next_day"])==1
+
+
+def test_s3_next_day_overnight_wo_appears_as_included(client,monkeypatch):
+    clock(monkeypatch,day=26,hour=21)
+    enter(client,"S3")
+    assert upload(client,[row("S3_NIGHT",started="2026-10-27 01:00",
+                      serviced="2026-10-27 01:15")]).status_code==200
+    result=import_techs(client,["Synthetic A"])
+    assert result.status_code==200,result.text
+    data=client.get("/api/reporting/state").json()
+    assert [r["wo_number"] for r in data["rows"]]==["S3_NIGHT"]
+    audit=data["audit"]["next_day"]
+    assert len(audit)==1
+    assert audit[0]["included_in_shift"] is True
+    assert audit[0]["disposition"]=="Included in selected shift"
+
+
+def test_s5_next_day_overnight_pm_is_counted_and_audited(client,monkeypatch):
+    clock(monkeypatch,day=30,hour=21)
+    enter(client,"S5")
+    r=row("PM_NIGHT",category="Preventive Maintenance",pm="E.001.BALER.WALK",
+          started="2026-10-31 00:20",serviced="2026-10-31 00:33")
+    assert upload(client,[r]).status_code==200
+    assert import_techs(client,["Synthetic A"]).status_code==200
+    data=client.get("/api/reporting/state").json()
+    assert data["pm_count"]==1 and data["rows"]==[]
+    audit=data["audit"]["next_day"]
+    assert len(audit)==1
+    assert audit[0]["wo_number"]=="PM_NIGHT"
+    assert audit[0]["disposition"]=="PM counted in selected shift"
+    assert audit[0]["included_in_shift"] is True
+
+
+def test_next_day_administrative_closure_is_separate_from_work_date(client,monkeypatch):
+    clock(monkeypatch,day=26,hour=10)
+    enter(client,"S1")
+    r=row("CLOSE_LATER",started="2026-10-26 07:30",
+          serviced="2026-10-26 08:10")
+    r["WO Closed Date/Time"]="2026-10-27 09:00"
+    assert upload(client,[r]).status_code==200
+    assert import_techs(client,["Synthetic A"]).status_code==200
+    data=client.get("/api/reporting/state").json()
+    assert len(data["rows"])==1
+    audit=data["audit"]["next_day"]
+    assert len(audit)==1
+    assert audit[0]["timestamp_type"]=="Administrative update only"
+    assert audit[0]["work_timestamps"]==[]
+    assert audit[0]["admin_timestamps"]==["2026-10-27T09:00:00"]
+    assert audit[0]["included_in_shift"] is True
+
+
+def test_next_day_wo_unique_across_labor_rows_and_unselected_visible(client,monkeypatch):
+    clock(monkeypatch,day=26,hour=10)
+    enter(client,"S1")
+    records=[
+       row("OTHER_DAY",tech="Synthetic B",started="2026-10-27 06:05",
+           serviced="2026-10-27 06:11"),
+       row("OTHER_DAY",tech="Synthetic C",started="2026-10-27 06:04",
+           serviced="2026-10-27 06:12"),
+       row("CURRENT_DAY",tech="Synthetic A",started="2026-10-26 09:00",
+           serviced="2026-10-26 09:15")
+    ]
+    assert upload(client,records).status_code==200
+    assert import_techs(client,["Synthetic A"]).status_code==200
+    data=client.get("/api/reporting/state").json()
+    assert {x["wo_number"] for x in data["rows"]}=={"CURRENT_DAY"}
+    nextday=data["audit"]["next_day"]
+    assert len(nextday)==1
+    assert nextday[0]["wo_number"]=="OTHER_DAY"
+    assert nextday[0]["technicians"]==["Synthetic B","Synthetic C"]
+    assert nextday[0]["selected_technician"] is False
+    assert nextday[0]["disposition"]=="Other technician / not selected"
+
+
+def test_next_day_audit_migrates_previous_v31_schema_without_deleting_old_data(client,monkeypatch):
+    clock(monkeypatch,day=26,hour=10)
+    enter(client,"S1")
+    with m._db() as db:
+        db.execute("""CREATE TABLE report_audit (
+            shift_id INTEGER PRIMARY KEY,
+            summary_json TEXT NOT NULL DEFAULT '{}',
+            pending_json TEXT NOT NULL DEFAULT '[]',
+            ignored_json TEXT NOT NULL DEFAULT '[]',updated_at TEXT NOT NULL
+        )""")
+        db.execute("""INSERT INTO report_audit
+          (shift_id,summary_json,pending_json,ignored_json,updated_at)
+          VALUES (1,'{"old_record":1}','[]','[]','2026-10-26')""")
+    state=client.get("/api/reporting/state")
+    assert state.status_code==200,state.text
+    data=state.json()
+    assert data["audit"]["next_day"]==[]
+    assert data["audit"]["summary"]["old_record"]==1
+    with m._db() as db:
+        assert "next_day_json" in {r["name"] for r in
+            db.execute("PRAGMA table_info(report_audit)")}
