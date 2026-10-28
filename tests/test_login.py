@@ -299,7 +299,8 @@ def test_shift_controls_and_brand_relocated_to_sidebar(client, monkeypatch):
     assert 'window.V31Reporting.refresh()' in js.text
     admin=client.get('/web/roster-admin.js')
     assert admin.status_code==200
-    assert "bar.querySelector('.v31-context-actions')" in admin.text
+    assert "window.addEventListener('v31:administration'" in admin.text
+    assert ".v31-context-actions" not in admin.text
 
 
 def test_administration_is_full_management_workspace_without_selected_shift(client,monkeypatch):
