@@ -228,3 +228,72 @@ def test_local_only_cookie_and_private_roster_not_served(client):
         assert client.get(p).status_code in (404,405)
     assert client.post('/api/login',json={'associate':'8972'},
              headers={'Origin':'https://other.example'}).status_code == 403
+
+
+def test_signed_out_login_shows_two_already_open_weekday_shifts(client, monkeypatch):
+    freeze(monkeypatch, at(2026, 10, 26, 13, 0))
+    assert sign_in(client, '8972').status_code == 200
+    assert client.post('/api/shifts/start', json={'code': 'S1'}).status_code == 200
+    assert client.post('/api/shifts/start', json={'code': 'S2'}).status_code == 200
+    assert client.post('/api/logout').status_code == 200
+    entry = client.get('/api/entry').json()
+    assert entry['screen'] == 'handoff'
+    assert {x['code'] for x in entry['open']} == {'S1', 'S2'}
+    assert entry['ready'] == []
+    with m._db() as db:
+        assert db.execute('SELECT COUNT(*) FROM shifts WHERE open=1').fetchone()[0] == 2
+
+
+def test_signed_out_login_shows_two_already_open_weekend_shifts(client, monkeypatch):
+    freeze(monkeypatch, at(2026, 10, 30, 17, 45))
+    sign_in(client, '8972')
+    assert client.post('/api/shifts/start', json={'code': 'S4'}).status_code == 200
+    assert client.post('/api/shifts/start', json={'code': 'S5'}).status_code == 200
+    assert client.post('/api/logout').status_code == 200
+    entry = client.get('/api/entry').json()
+    assert entry['screen'] == 'handoff'
+    assert {x['code'] for x in entry['open']} == {'S4', 'S5'}
+    assert entry['ready'] == []
+    html=client.get('/').text
+    assert '/web/auth-ui.js' in html
+    js=(m.ROOT / 'web' / 'auth-ui.js').read_text()
+    assert 'choices.length >= 2' in js
+    assert 'Two Active Shifts' in js
+
+
+def test_signout_weekend_overnight_s5_and_next_s4_ready(client, monkeypatch):
+    freeze(monkeypatch, at(2026, 10, 30, 21, 0))
+    sign_in(client, '8972')
+    created = client.post('/api/shifts/start', json={'code': 'S5'})
+    assert created.status_code == 200, created.text
+    sid=created.json()['id']
+    assert client.post('/api/logout').status_code == 200
+    freeze(monkeypatch, at(2026, 10, 31, 5, 45))
+    entry=client.get('/api/entry').json()
+    assert entry['screen']=='handoff'
+    assert any(x['code']=='S5' and x['id']==sid and
+               x['date']=='2026-10-30' for x in entry['open'])
+    assert any(x['code']=='S4' and x['date']=='2026-10-31' for x in entry['ready'])
+
+
+def test_shift_controls_and_brand_relocated_to_sidebar(client, monkeypatch):
+    freeze(monkeypatch, at(2026, 10, 27, 8, 0))
+    sign_in(client,'8972')
+    assert client.post('/api/shifts/start',json={'code':'S1'}).status_code==200
+    page=client.get('/shift-report.html')
+    assert page.status_code==200
+    assert 'id="v31-sidebar-controls"' in page.text
+    assert 'class="sidebar-brand"' in page.text
+    assert 'class="sidebar-walmart"' in page.text
+    assert 'data-nav="support"' not in page.text
+    assert '/web/workspace-layout.css' in page.text
+    css=client.get('/web/workspace-layout.css')
+    assert css.status_code==200
+    assert '.v31-context-actions' in css.text
+    assert '.shift-meta{display:none!important}' in css.text
+    js=client.get('/web/workspace-auth.js')
+    assert js.status_code==200
+    for item in ('v31-sidebar-date','v31-sidebar-schedule','v31-sidebar-window',
+                 'v31-sidebar-clock','v31-select-shift','v31-signout'):
+        assert item in js.text
+    assert 'window.V31Reporting.refresh()' in js.text
