@@ -27,7 +27,10 @@ if(display)display.textContent=who.name||'Management';
 const choose=$('#v31-menu-choose');
 if(choose){
  choose.hidden=false;
- choose.addEventListener('click',()=>window.location.assign('/?shift-selection=1'));
+ choose.addEventListener('click',()=>{
+   if(who.selected)window.location.assign('/shift-report.html?open-shift-chooser=1');
+   else window.location.assign('/?shift-selection=1');
+ });
 }
 $('#v31-menu-administration')?.addEventListener('click',()=>{
   $('#account-menu').hidden=true;
