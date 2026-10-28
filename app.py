@@ -754,8 +754,12 @@ def reporting_import(payload:ReportingImport,request:Request):
     session,row=_report_access(request)
     try:
         with _db() as conn:
+            roster_info=v31_roster.status(DB_FILE,include_rows=True)
+            source_shifts=v31_reporting.roster_shift_map(
+                payload.technicians,roster_info['associates'])
             summary=v31_reporting.import_selection(conn,row['id'],row['code'],
-                row['shift_day'],payload.technicians,payload.closure_reviews)
+                row['shift_day'],payload.technicians,payload.closure_reviews,
+                roster_shifts=source_shifts)
             _invalidate_passdown(conn,row['id'])
     except ValueError as exc:
         raise HTTPException(422,str(exc))
