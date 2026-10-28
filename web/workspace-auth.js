@@ -21,10 +21,10 @@
   const reportTitle=document.querySelector('.shift-heading h1');
   const originalTitle=reportTitle?.textContent||'Shift Report';
   const reportText=$('.footer-tip span');
-  if(reportText) reportText.textContent='Work orders and notes belong to the selected shift only. Data remains in the independent V3.1 database.';
+  if(reportText) reportText.textContent='Work orders and notes are saved to the selected V3.1 shift.';
   const bar=document.createElement('section');
   bar.id='v31-context-bar';
-  bar.setAttribute('aria-label','Active shift and account controls');
+  bar.setAttribute('aria-label','Selected shift');
   bar.innerHTML=
     '<div id="v31-context-label" class="v31-session-heading">Selected Shift</div>'+
     '<div class="v31-session-meta">'+
@@ -32,13 +32,20 @@
       '<div><strong>Scheduled Hours</strong><span id="v31-sidebar-schedule">—</span></div>'+
       '<div><strong>Reporting Window</strong><span id="v31-sidebar-window">—</span></div>'+
       '<div><strong>Current Time</strong><span id="v31-sidebar-clock">—</span></div>'+
-    '</div>'+
-    '<div class="v31-context-actions">'+
-      '<button id="v31-select-shift" type="button">Choose Shift</button>'+
-      '<button id="v31-signout" type="button">Sign Out</button>'+
     '</div>';
-  const anchor=$('#v31-sidebar-controls')||$('.sidebar');
-  if(anchor)anchor.append(bar);else document.body.prepend(bar);
+  const anchor=$('#v31-sidebar-controls');
+  if(anchor)anchor.append(bar);
+  const username=$('#v31-user-name');
+  if(username)username.textContent=context.name||'MST Associate';
+  const userrole=$('#v31-user-role');
+  if(userrole)userrole.textContent=(context.role==='manager'?'Management':(context.assigned_shift||'MST')+' · MST')+' · IND3';
+  const accountMenu=$('#v31-menu-choose');
+  if(accountMenu)accountMenu.hidden=context.role!=='manager';
+  const adminMenu=$('#v31-menu-administration');
+  adminMenu?.addEventListener('click',()=>{
+    const menu=$('#account-menu');if(menu)menu.hidden=true;
+    window.v31Navigate?.('admin');
+  });
   const modal=document.createElement('dialog');
   modal.id='v31-shift-dialog';
   modal.style.cssText='width:min(560px,calc(100vw - 32px));max-height:85vh;overflow:auto;border:1px solid #cfdef2;border-radius:16px;padding:24px;box-shadow:0 28px 80px #07265755;font-family:Segoe UI,Arial,sans-serif';
@@ -95,7 +102,11 @@
       row.append(label,b);list.append(row);
     }
   };
-  $('#v31-select-shift').addEventListener('click',async()=>{try{await draw();modal.showModal();}catch(e){alert(e.message);}});
+  accountMenu?.addEventListener('click',async()=>{
+    if(context.role!=='manager')return;
+    const menu=$('#account-menu');if(menu)menu.hidden=true;
+    try{await draw();modal.showModal();}catch(e){window.alert(e.message);}
+  });
   async function signout(){
     try{await request('/api/logout',{});}
     finally {
@@ -104,7 +115,7 @@
       window.location.replace('/?shift-selection=1');
     }
   }
-  $('#v31-signout').addEventListener('click',signout);
+  $('#v31-signout')?.addEventListener('click',signout);
   const endButton=$('#end-shift');
   if (endButton) endButton.addEventListener('click',async e=>{
     e.stopImmediatePropagation();
