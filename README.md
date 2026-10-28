@@ -70,6 +70,46 @@ At most **two shift sessions** may be active. Overnight work remains assigned to
 
 **End Shift** requires a saved passdown. Use **Generate Passdown (.eml)** first; this stores a copy in the selected V3.1 session, then downloads a local Outlook draft. End Shift only closes the selected session. Sign Out only ends the browser login session.
 
+## Preserve historical V2/V3 shift records
+
+V2 and V3 used a shared per-facility SQLite database, with IND3 typically at \`dbs/ind3.db\`. V3.1 **does not convert, truncate, or overwrite the old database**. It stores a validated exact SQLite backup under \`.local-data/legacy-v2-v3-archive.sqlite3\` retaining every source table, row, original shift ID, entries, reports, timestamps, and ancillary fields. The V3.1 login and new shift database remains separate.
+
+On a machine with approved access to the original repository and IND3 historical database:
+
+\`\`\`powershell
+# Run in the V3.1 project directory:
+python scripts/import_legacy_history.py --source "C:\approved\old-v3\dbs\ind3.db"
+# After verifying the table/shift/report counts:
+python scripts/import_legacy_history.py --source "C:\approved\old-v3\dbs\ind3.db" --import
+\`\`\`
+
+The first command is a **dry run**. The second makes an independent snapshot using SQLite's online backup API. Neither command writes to the old V2/V3 database. If importing again later, the new snapshot replaces only the separate V3.1 history archive, not the V3.1 active-shift database. The Shift History screen reads this archive and logs **new V3.1 sign-ins** separately.
+
+**Historical login limitation:** The original database records past shift openings (\`shifts.opened_by_assoc\`, where available) and their times. It does not necessarily record every historical sign-in, failed attempt, or sign-out. Missing login events cannot be reconstructed.
+
+## Drax and original V3 synchronization
+
+The approved Drax roster is the same OneDrive workbook as original V3:
+
+\`\`\`text
+C:\Users\ins0002\OneDrive - Walmart Inc\Drax  Associates.xlsx
+\`\`\`
+
+- **Drax -> V3.1:** Existing \`v31_roster.py\` refreshes the private roster cache from the authorized workbook about every 5 minutes. Changes made in Excel/OneDrive appear after the next successful read.
+- **Drax -> old V3:** The old V3 program already watches the workbook. Its exact handling of administrative overrides and MST demotions depends on its legacy database rules; do not assume every changed cell overwrites prior manual V3 overrides.
+- **Old V3 -> Drax:** New \`v31_drax_bridge.py\` compares the old V3 \`associates\` database (read-only), the workbook, and its last private baseline. Nonconflicting changes to \`Name\`, \`Shift\`, and MST flag can be written to the Excel file only with **explicit authorization and a write flag**. Workbook differences on first setup establish a baseline, and conflicting changes remain for human review. Deletions/new associates are not auto-mirrored.
+
+Review only (does not edit Drax):
+
+\`\`\`powershell
+python scripts/sync_drax_from_v3.py --v3-db "C:\approved\old-v3\dbs\ind3.db"
+\`\`\`
+
+**Do not enable the following on a live company OneDrive workbook without approved IT authorization, an exclusive maintenance window, a verified backup and actual Windows/OneDrive acceptance testing.** If approved, the write setting is \`IND3_V31_DRAX_WRITE_ENABLED=1\`, and \`--apply\` enables the manual CLI write. The optional background bridge also needs \`IND3_V31_LEGACY_DB_PATH\` explicitly set to the old database file. The bridge never writes to the old V3 database. Each proposed workbook write creates a private before-image backup and checks for changes during preparation. OneDrive sync conflicts or Excel file locks still require manual recovery.
+
+This is a **limited, guarded two-way synchronization bridge, not an unconditional real-time bidirectional merge**. It does not change original V3's code or guarantee that every administrative override in V3 is immediately reflected in Excel.
+
+
 ## Development boundaries and security
 
 - **Associate number alone is not secure employee identity verification.** This prototype is **localhost only**; do not deploy on the Walmart facility network, open a tunnel, or enable public access. Enterprise SSO and proper authorization are required before real deployment.
