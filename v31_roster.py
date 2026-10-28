@@ -209,3 +209,24 @@ def add_manual(database, number, name, shift, mst):
             VALUES (?,?,?,?,?,1,1,?)""",(
               number, name, shift, "MST" if mst else "Associate",int(mst),
               datetime.now(_TZ).isoformat()))
+
+
+def edit_associate(database, number, full_name, new_number=None):
+    """Admin edits retain Drax source values for comparison.
+
+    Changing an associate number is blocked after that number is referenced
+    by a report or overtime authorization, preserving existing audit history.
+    """
+    final_number = new_number or number
+    with _connect(database) as conn:
+        row = conn.execute("SELECT * FROM roster_associates WHERE number=?", (number,)).fetchone()
+        if row is None:
+            raise KeyError("Associate does not exist")
+        if final_number != number:
+            if conn.execute("SELECT 1 FROM roster_associates WHERE number=?", (final_number,)).fetchone():
+                raise ValueError("The new associate number is already used")
+            for table, column in (("shifts","owner"),("overtime_grants","associate")):
+                if conn.execute(f"SELECT 1 FROM {table} WHERE {column}=? LIMIT 1",(number,)).fetchone():
+                    raise ValueError("Cannot change an associate number referenced by shift history or overtime")
+            conn.execute("UPDATE roster_associates SET number=? WHERE number=?", (final_number,number))
+        conn.execute("UPDATE roster_associates SET full_name=? WHERE number=?",(full_name,final_number))
