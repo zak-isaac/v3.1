@@ -1,4 +1,4 @@
-"""V3.1 audit: Drax sync, management edits, OT, capacity, passdown/expiry.
+"""V3.1 audit: Drax sync, management edits, assigned shifts, capacity, passdown/expiry.
 
 Tests use isolated temporary files and synthetic records, never production data.
 """
@@ -128,42 +128,24 @@ def test_regular_mst_cannot_use_management_endpoints(client,monkeypatch):
     sign(client, "111111")
     assert client.get("/api/admin/roster").status_code == 403
     assert client.post("/api/admin/roster/reload",json={}).status_code == 403
-    assert client.post("/api/admin/overtime/grant",
-      json={"associate":"222222","code":"S1","shift_day":"2026-10-27"}).status_code == 403
+    assert client.post("/api/admin/roster/edit",
+      json={"number":"222222","full_name":"Denied"}).status_code == 403
 
 
-def test_overtime_grant_and_revocation(client,monkeypatch):
+def test_overtime_disabled_and_mst_locked_to_drax_shift(client, monkeypatch):
     freeze(monkeypatch, at())
     sign(client)
-    grant=client.post("/api/admin/overtime/grant",
-       json={"associate":"222222","code":"S1","shift_day":"2026-10-27"})
-    assert grant.status_code == 200, grant.text
-    assert grant.json()["is_ot"] is True
+    # Deprecated routes must not authorize additional-shift access.
+    for endpoint in ["/api/admin/overtime", "/api/admin/overtime/grant",
+                     "/api/admin/overtime/revoke"]:
+        assert client.post(endpoint, json={"associate":"222222", "code":"S1",
+                                          "shift_day":"2026-10-27"}).status_code == 404
     client.post("/api/logout")
-    assert sign(client,"222222").status_code==200
-    assert client.get("/api/me").json()["selected"]["code"]=="S2"
-    result=client.post("/api/shifts/start",json={"code":"S1"})
-    assert result.status_code==200, result.text
-    assert result.json()["is_ot"] is True
-    client.post("/api/logout")
-    sign(client)
-    revoke=client.post("/api/admin/overtime/revoke",
-       json={"associate":"222222","code":"S1","shift_day":"2026-10-27"})
-    assert revoke.status_code==200
-    client.post("/api/logout")
-    sign(client,"222222")
-    assert client.post("/api/shifts/resume",json={"shift_id":result.json()["id"]}).status_code==403
-
-
-def test_overtime_invalid_day_and_unknown_associate(client,monkeypatch):
-    freeze(monkeypatch, at())
-    sign(client)
-    bad=client.post("/api/admin/overtime/grant",
-       json={"associate":"222222","code":"S4","shift_day":"2026-10-27"})
-    assert bad.status_code==422
-    missing=client.post("/api/admin/overtime/grant",
-       json={"associate":"999999","code":"S1","shift_day":"2026-10-27"})
-    assert missing.status_code==404
+    assert sign(client, "222222").status_code == 200
+    current=client.get("/api/me").json()
+    assert current["selected"]["code"] == "S2"
+    assert client.post("/api/shifts/start", json={"code":"S1"}).status_code == 403
+    assert all(item["code"]=="S2" for item in current["shifts"])
 
 
 def test_two_active_shift_limit_even_if_three_windows_overlap(client,monkeypatch):
