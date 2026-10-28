@@ -515,6 +515,308 @@ class AdminAssociateOverride(BaseModel):
     reset: bool = False
 
 
+class AdminEditAssociate(BaseModel):
+    number: str = Field(pattern=r'^\d{1,12}
+    associate: str = Field(pattern=r'^\d{1,12}$')
+    code: Literal['S1', 'S2', 'S3', 'S4', 'S5']
+    shift_day: date
+
+
+def require_manager(request: Request) -> dict:
+    session, profile = who(request)
+    if not profile.get('all_shifts'):
+        raise HTTPException(403, 'Management access required')
+    return session
+
+
+@app.get('/api/admin/roster')
+def admin_roster(request: Request):
+    require_manager(request)
+    return v31_roster.status(DB_FILE, include_rows=True)
+
+
+@app.post('/api/admin/roster/reload')
+def admin_roster_reload(request: Request):
+    _origin_check(request)
+    require_manager(request)
+    v31_roster.sync(PRIVATE, DB_FILE, set(MANAGEMENT_ASSOCIATES), force=True)
+    return v31_roster.status(DB_FILE, include_rows=True)
+
+
+@app.post('/api/admin/roster/add')
+def admin_roster_add(payload: AdminAddAssociate, request: Request):
+    _origin_check(request)
+    require_manager(request)
+    if payload.number in MANAGEMENT_ASSOCIATES:
+        raise HTTPException(403, 'Management profiles cannot be replaced')
+    try:
+        v31_roster.add_manual(DB_FILE, payload.number, payload.name.strip(), payload.shift, payload.is_mst)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc))
+    return v31_roster.status(DB_FILE, include_rows=True)
+
+
+@app.post('/api/admin/roster/override')
+def admin_roster_override(payload: AdminAssociateOverride, request: Request):
+    _origin_check(request)
+    require_manager(request)
+    if payload.number in MANAGEMENT_ASSOCIATES:
+        raise HTTPException(403, 'Management profiles cannot be modified here')
+    if not payload.reset and payload.is_mst is None and payload.shift is None:
+        raise HTTPException(422, 'Provide a status/shift override or reset')
+    try:
+        v31_roster.set_override(DB_FILE, payload.number,
+                                mst=payload.is_mst, shift=payload.shift, reset=payload.reset)
+    except KeyError as exc:
+        raise HTTPException(404, str(exc))
+    return v31_roster.status(DB_FILE, include_rows=True)
+
+
+@app.post('/api/admin/roster/edit')
+def admin_roster_edit(payload: AdminEditAssociate, request: Request):
+    _origin_check(request)
+    require_manager(request)
+    if payload.number in MANAGEMENT_ASSOCIATES or payload.new_number in MANAGEMENT_ASSOCIATES:
+        raise HTTPException(403, 'Management profiles cannot be edited')
+    try:
+        v31_roster.edit_associate(DB_FILE, payload.number, payload.full_name.strip(),
+                                  payload.new_number)
+    except KeyError as exc:
+        raise HTTPException(404, str(exc))
+    except ValueError as exc:
+        raise HTTPException(409, str(exc))
+    return v31_roster.status(DB_FILE, include_rows=True)
+
+
+@app.get('/api/admin/overtime')
+def admin_overtime(request: Request):
+    require_manager(request)
+    with _db() as conn:
+        grants = conn.execute("""SELECT associate, code, shift_day, granted_by, granted_at
+                                 FROM overtime_grants ORDER BY shift_day DESC,code""").fetchall()
+    return {'grants': [dict(x) for x in grants]}
+
+
+def _validate_grant(payload: OvertimeGrant) -> None:
+    now = datetime.now(TZ).date()
+    if not (now - timedelta(days=1) <= payload.shift_day <= now + timedelta(days=30)):
+        raise HTTPException(422, 'Overtime date must be yesterday through 30 days ahead')
+    if payload.shift_day.weekday() not in SHIFT_RULES[payload.code][3]:
+        raise HTTPException(422, 'Selected shift is not scheduled on that date')
+
+
+@app.post('/api/admin/overtime/grant')
+def admin_overtime_grant(payload: OvertimeGrant, request: Request):
+    _origin_check(request)
+    session = require_manager(request)
+    _validate_grant(payload)
+    profile = roster().get(payload.associate)
+    if not profile or profile.get('all_shifts'):
+        raise HTTPException(404, 'MST associate not found in authorized roster')
+    with _db() as conn:
+        conn.execute("""INSERT INTO overtime_grants (associate,code,shift_day,granted_by,granted_at)
+                        VALUES (?,?,?,?,?) ON CONFLICT(associate,code,shift_day)
+                        DO UPDATE SET granted_by=excluded.granted_by,granted_at=excluded.granted_at""",
+                     (payload.associate,payload.code,payload.shift_day.isoformat(),
+                      session['a'],datetime.now(TZ).isoformat()))
+    return {'granted': True, 'is_ot': profile['shift'] != payload.code}
+
+
+@app.post('/api/admin/overtime/revoke')
+def admin_overtime_revoke(payload: OvertimeGrant, request: Request):
+    _origin_check(request)
+    require_manager(request)
+    with _db() as conn:
+        conn.execute("DELETE FROM overtime_grants WHERE associate=? AND code=? AND shift_day=?",
+                     (payload.associate,payload.code,payload.shift_day.isoformat()))
+    return {'revoked': True}
+
+
+@app.post('/api/shifts/report')
+def save_shift_report(payload: ReportPayload, request: Request):
+    """Store a locally generated passdown before allowing a normal End Shift."""
+    _origin_check(request)
+    session, profile = who(request)
+    if not session['s']:
+        raise HTTPException(409, 'Choose a shift first')
+    now = datetime.now(TZ)
+    with _db() as conn:
+        row = conn.execute("SELECT * FROM shifts WHERE id=? AND open=1",(session['s'],)).fetchone()
+        if row is None:
+            raise HTTPException(404, 'No active report selected')
+        day = date.fromisoformat(row['shift_day'])
+        if eligible_date(row['code'],now) != day:
+            raise HTTPException(409, 'Reporting window expired')
+        if not allowed(profile,row['code'],day,session['a']):
+            raise HTTPException(403, 'Shift access no longer authorized')
+        if not profile.get('all_shifts') and row['owner'] != session['a']:
+            raise HTTPException(403, 'Only the shift starter or management can save a report')
+        body = payload.content.strip()
+        if 'SHIFT HAPPENINGS' not in body or 'IND3' not in body:
+            raise HTTPException(422, 'Passdown content is missing required sections')
+        conn.execute("""UPDATE shifts SET report_content=?, report_saved_at=?
+                        WHERE id=?""",(body,now.isoformat(),session['s']))
+    return {'saved':True, 'shift_id':session['s'], 'saved_at':now.isoformat()}
+
+
+@app.get('/api/shifts/report')
+def read_shift_report(request: Request):
+    session, profile = who(request)
+    if not session['s']:
+        raise HTTPException(409, 'Choose a shift')
+    with _db() as conn:
+        row=conn.execute("SELECT * FROM shifts WHERE id=?",(session['s'],)).fetchone()
+    if row is None or not allowed(profile,row['code'],date.fromisoformat(row['shift_day']),session['a']):
+        raise HTTPException(404,'Shift not found')
+    if not profile.get('all_shifts') and row['owner'] != session['a']:
+        raise HTTPException(403,'Report belongs to another MST')
+    return {'content':row['report_content'], 'saved_at':row['report_saved_at'],
+            'shift_id':row['id']}
+)
+    full_name: str = Field(min_length=2, max_length=180)
+    new_number: str | None = Field(default=None, pattern=r'^\d{1,12}
+    associate: str = Field(pattern=r'^\d{1,12}$')
+    code: Literal['S1', 'S2', 'S3', 'S4', 'S5']
+    shift_day: date
+
+
+def require_manager(request: Request) -> dict:
+    session, profile = who(request)
+    if not profile.get('all_shifts'):
+        raise HTTPException(403, 'Management access required')
+    return session
+
+
+@app.get('/api/admin/roster')
+def admin_roster(request: Request):
+    require_manager(request)
+    return v31_roster.status(DB_FILE, include_rows=True)
+
+
+@app.post('/api/admin/roster/reload')
+def admin_roster_reload(request: Request):
+    _origin_check(request)
+    require_manager(request)
+    v31_roster.sync(PRIVATE, DB_FILE, set(MANAGEMENT_ASSOCIATES), force=True)
+    return v31_roster.status(DB_FILE, include_rows=True)
+
+
+@app.post('/api/admin/roster/add')
+def admin_roster_add(payload: AdminAddAssociate, request: Request):
+    _origin_check(request)
+    require_manager(request)
+    if payload.number in MANAGEMENT_ASSOCIATES:
+        raise HTTPException(403, 'Management profiles cannot be replaced')
+    try:
+        v31_roster.add_manual(DB_FILE, payload.number, payload.name.strip(), payload.shift, payload.is_mst)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc))
+    return v31_roster.status(DB_FILE, include_rows=True)
+
+
+@app.post('/api/admin/roster/override')
+def admin_roster_override(payload: AdminAssociateOverride, request: Request):
+    _origin_check(request)
+    require_manager(request)
+    if payload.number in MANAGEMENT_ASSOCIATES:
+        raise HTTPException(403, 'Management profiles cannot be modified here')
+    if not payload.reset and payload.is_mst is None and payload.shift is None:
+        raise HTTPException(422, 'Provide a status/shift override or reset')
+    try:
+        v31_roster.set_override(DB_FILE, payload.number,
+                                mst=payload.is_mst, shift=payload.shift, reset=payload.reset)
+    except KeyError as exc:
+        raise HTTPException(404, str(exc))
+    return v31_roster.status(DB_FILE, include_rows=True)
+
+
+@app.get('/api/admin/overtime')
+def admin_overtime(request: Request):
+    require_manager(request)
+    with _db() as conn:
+        grants = conn.execute("""SELECT associate, code, shift_day, granted_by, granted_at
+                                 FROM overtime_grants ORDER BY shift_day DESC,code""").fetchall()
+    return {'grants': [dict(x) for x in grants]}
+
+
+def _validate_grant(payload: OvertimeGrant) -> None:
+    now = datetime.now(TZ).date()
+    if not (now - timedelta(days=1) <= payload.shift_day <= now + timedelta(days=30)):
+        raise HTTPException(422, 'Overtime date must be yesterday through 30 days ahead')
+    if payload.shift_day.weekday() not in SHIFT_RULES[payload.code][3]:
+        raise HTTPException(422, 'Selected shift is not scheduled on that date')
+
+
+@app.post('/api/admin/overtime/grant')
+def admin_overtime_grant(payload: OvertimeGrant, request: Request):
+    _origin_check(request)
+    session = require_manager(request)
+    _validate_grant(payload)
+    profile = roster().get(payload.associate)
+    if not profile or profile.get('all_shifts'):
+        raise HTTPException(404, 'MST associate not found in authorized roster')
+    with _db() as conn:
+        conn.execute("""INSERT INTO overtime_grants (associate,code,shift_day,granted_by,granted_at)
+                        VALUES (?,?,?,?,?) ON CONFLICT(associate,code,shift_day)
+                        DO UPDATE SET granted_by=excluded.granted_by,granted_at=excluded.granted_at""",
+                     (payload.associate,payload.code,payload.shift_day.isoformat(),
+                      session['a'],datetime.now(TZ).isoformat()))
+    return {'granted': True, 'is_ot': profile['shift'] != payload.code}
+
+
+@app.post('/api/admin/overtime/revoke')
+def admin_overtime_revoke(payload: OvertimeGrant, request: Request):
+    _origin_check(request)
+    require_manager(request)
+    with _db() as conn:
+        conn.execute("DELETE FROM overtime_grants WHERE associate=? AND code=? AND shift_day=?",
+                     (payload.associate,payload.code,payload.shift_day.isoformat()))
+    return {'revoked': True}
+
+
+@app.post('/api/shifts/report')
+def save_shift_report(payload: ReportPayload, request: Request):
+    """Store a locally generated passdown before allowing a normal End Shift."""
+    _origin_check(request)
+    session, profile = who(request)
+    if not session['s']:
+        raise HTTPException(409, 'Choose a shift first')
+    now = datetime.now(TZ)
+    with _db() as conn:
+        row = conn.execute("SELECT * FROM shifts WHERE id=? AND open=1",(session['s'],)).fetchone()
+        if row is None:
+            raise HTTPException(404, 'No active report selected')
+        day = date.fromisoformat(row['shift_day'])
+        if eligible_date(row['code'],now) != day:
+            raise HTTPException(409, 'Reporting window expired')
+        if not allowed(profile,row['code'],day,session['a']):
+            raise HTTPException(403, 'Shift access no longer authorized')
+        if not profile.get('all_shifts') and row['owner'] != session['a']:
+            raise HTTPException(403, 'Only the shift starter or management can save a report')
+        body = payload.content.strip()
+        if 'SHIFT HAPPENINGS' not in body or 'IND3' not in body:
+            raise HTTPException(422, 'Passdown content is missing required sections')
+        conn.execute("""UPDATE shifts SET report_content=?, report_saved_at=?
+                        WHERE id=?""",(body,now.isoformat(),session['s']))
+    return {'saved':True, 'shift_id':session['s'], 'saved_at':now.isoformat()}
+
+
+@app.get('/api/shifts/report')
+def read_shift_report(request: Request):
+    session, profile = who(request)
+    if not session['s']:
+        raise HTTPException(409, 'Choose a shift')
+    with _db() as conn:
+        row=conn.execute("SELECT * FROM shifts WHERE id=?",(session['s'],)).fetchone()
+    if row is None or not allowed(profile,row['code'],date.fromisoformat(row['shift_day']),session['a']):
+        raise HTTPException(404,'Shift not found')
+    if not profile.get('all_shifts') and row['owner'] != session['a']:
+        raise HTTPException(403,'Report belongs to another MST')
+    return {'content':row['report_content'], 'saved_at':row['report_saved_at'],
+            'shift_id':row['id']}
+)
+
+
 class OvertimeGrant(BaseModel):
     associate: str = Field(pattern=r'^\d{1,12}$')
     code: Literal['S1', 'S2', 'S3', 'S4', 'S5']
