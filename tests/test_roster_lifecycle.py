@@ -64,7 +64,7 @@ def test_drax_roster_sync_and_manager_visibility(client, monkeypatch):
     status = client.get("/api/admin/roster")
     assert status.status_code == 200
     data = status.json()
-    assert data["entries"] == 3
+    assert data["entries"] == 3, data
     assert data["source"] == "mst-roster.csv"
     assert data["last_synced"]
     records = {r["number"]:r for r in data["associates"]}
