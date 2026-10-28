@@ -23,5 +23,6 @@ jobs:
           node --check web/auth-ui.js
           node --check web/workspace-auth.js
           node --check web/roster-admin.js
+          node --check web/admin-standalone.js
           node --check web/shift-history.js
           node --check web/shift-data.js
