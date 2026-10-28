@@ -104,10 +104,11 @@ async function refresh(){
  if(snapshot.stage.staged){
   const count=snapshot.stage.stats?.parsed_rows||0;
   const selected=snapshot.technicians?.length||0;
-  document.querySelector('#cetaris-state').textContent=selected
-   ? 'Cetaris Imported · '+count+' labor rows':'Cetaris Parsed · Select Technicians';
-  if(!selected){
-    feedback(count+' labor rows staged. Confirm technicians to import work orders.','warning');
+  document.querySelector('#cetaris-state').textContent=snapshot.stage.imported
+   ? 'Cetaris Imported · '+count+' labor rows'
+   : 'Cetaris Parsed · Confirm Technicians';
+  if(!snapshot.stage.imported){
+    feedback(count+' labor rows staged. Select/confirm technicians to finish importing this file.','warning');
   } else if(!(snapshot.rows.length+snapshot.pm_count)){
     feedback('No work orders qualified for this selected shift. Check Import Audit for technician, date, status and overlap reasons.','warning');
   } else {
@@ -158,8 +159,8 @@ function chooseTechs(){
  // Existing confirmed selections survive reopening the modal. For a new
  // shift, preselect only exact, active Drax MST matches to this shift.
  const previously=(snapshot.technicians||[]).filter(n=>suggested.some(t=>t.name===n));
- const checked=new Set(previously.length?previously:
-    suggested.filter(t=>t.preselected).map(t=>t.name));
+ const checked=new Set(snapshot.stage.imported?previously:
+    previously.length?previously:suggested.filter(t=>t.preselected).map(t=>t.name));
  const selectedShift=snapshot.shift?.code||'selected shift';
  const container=document.createElement('div');
  container.className='v31-tech-roster';
