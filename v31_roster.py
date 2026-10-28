@@ -226,7 +226,7 @@ def edit_associate(database, number, full_name, new_number=None):
     """Admin display-name overrides survive Drax resync.
 
     Source associate numbers are immutable. Manual numbers can be changed only
-    when unused in shift history and overtime authorization tables.
+    when unused in shift history.
     """
     final_number = new_number or number
     with _connect(database) as conn:
