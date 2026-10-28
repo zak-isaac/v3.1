@@ -128,9 +128,13 @@
     <p style="font-size:14px;color:#60728a;margin:0 0 16px;line-height:1.5">Management access · Select an available S1–S5 shift report. Start and Resume are separate sessions.</p>
     <div id="v31-manager-choices" style="display:grid;gap:9px"></div>
     <p role="alert" id="v31-manager-error" hidden style="color:#aa242b;font-size:13px"></p>
+    <button id="v31-manager-roster" type="button" style="border:1px solid #d6e2ef;background:white;color:#194e86;border-radius:8px;padding:10px 13px;font-weight:700;cursor:pointer">Manage Drax Roster</button>
     <button id="v31-manager-different" type="button" style="border:0;background:transparent;color:#35628d;font-weight:650;padding:13px 0 0;cursor:pointer">Use a different associate number</button>
   </div>`;
   document.body.append(managerPicker);
+  $('#v31-manager-roster').addEventListener('click',()=> {
+    if(window.v31OpenDraxAdmin) window.v31OpenDraxAdmin();
+  });
   $('#v31-manager-different').addEventListener('click', () => {
     managerPicker.close();
     useDifferent();
