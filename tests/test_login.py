@@ -294,7 +294,7 @@ def test_shift_controls_and_brand_relocated_to_sidebar(client, monkeypatch):
     js=client.get('/web/workspace-auth.js')
     assert js.status_code==200
     for item in ('v31-sidebar-date','v31-sidebar-schedule','v31-sidebar-window',
-                 'v31-sidebar-clock','v31-select-shift','v31-signout'):
+                 'v31-sidebar-clock','v31-menu-choose','v31-signout'):
         assert item in js.text
     assert 'window.V31Reporting.refresh()' in js.text
     admin=client.get('/web/roster-admin.js')
