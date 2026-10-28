@@ -234,3 +234,45 @@ def test_frontend_shift_data_controller_is_connected(client,monkeypatch):
     script=client.get("/web/shift-data.js")
     assert script.status_code==200
     assert "/api/reporting/stage" in script.text
+
+
+def test_drax_assignments_resolve_s1_s2_overlap(client,monkeypatch,tmp_path):
+    import csv
+    import v31_roster
+    clock(monkeypatch,day=26,hour=13)
+    with (tmp_path/"mst-roster.csv").open("w",newline="") as output:
+        writer=csv.writer(output)
+        writer.writerow(["Name","Assoc. #","Shift","Job Title"])
+        writer.writerow(["Synthetic A","111111","S1","MST"])
+    v31_roster.sync(tmp_path,tmp_path/"v31.sqlite3",set(m.MANAGEMENT_ASSOCIATES),force=True)
+    enter(client,"S1")
+    upload(client,[row("OVERLAP1",started="2026-10-26 12:45",
+                       serviced="2026-10-26 13:05")])
+    r=import_techs(client,["Synthetic A"])
+    assert r.status_code==200,r.text
+    assert r.json()["summary"]["roster_matched"]==1
+    assert [x["wo_number"] for x in client.get("/api/reporting/state").json()["rows"]]==["OVERLAP1"]
+
+
+def test_missing_drax_shift_evidence_flags_overlap_in_audit(client,monkeypatch):
+    clock(monkeypatch,day=26,hour=13)
+    enter(client,"S1")
+    upload(client,[row("UNCERTAIN1",started="2026-10-26 12:45",
+                       serviced="2026-10-26 13:05")])
+    assert import_techs(client,["Synthetic A"]).status_code==200
+    data=client.get("/api/reporting/state").json()
+    assert data["rows"]==[]
+    assert any(x["wo_number"]=="UNCERTAIN1" for x in data["audit"]["pending"])
+
+
+def test_completed_work_order_reminder_is_not_falsely_rts(client,monkeypatch):
+    clock(monkeypatch)
+    enter(client)
+    upload(client,[row("REMINDER1",status="Completed")])
+    result=client.post("/api/reporting/import",
+       json={"technicians":["Synthetic A"],"closure_reviews":{"REMINDER1":"add"}})
+    assert result.status_code==200,result.text
+    data=client.get("/api/reporting/state").json()
+    assert len(data["rows"])==1
+    assert data["rows"][0]["status"]=="PENDING"
+    assert "Please close this WO" in data["rows"][0]["remarks"]
