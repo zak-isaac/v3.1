@@ -128,7 +128,7 @@ def _next_day_work_orders(rows, shift_day, selected, imported, pms, pending, ign
     """
     next_date=(date.fromisoformat(shift_day)+timedelta(days=1)).isoformat()
     work_fields=("start_at","in_service_at","last_complete_at")
-    admin_fields=("closed_at","updated_at")
+    admin_fields=("opened_at","closed_at","updated_at")
     grouped={}
     for row in rows:
         activity=[(field,str(row.get(field) or "")) for field in work_fields
@@ -171,8 +171,8 @@ def _next_day_work_orders(rows, shift_day, selected, imported, pms, pending, ign
             "status":", ".join(sorted(item["statuses"])),
             "work_timestamps":sorted(item["work_timestamps"]),
             "admin_timestamps":sorted(item["admin_timestamps"]),
-            "timestamp_type":"Work activity" if item["work_timestamps"]
-                             else "Administrative update only",
+            "timestamp_type":"Work/completion recorded" if item["work_timestamps"]
+                             else "WO opened / administrative update only",
             "selected_technician":item["selected_technician"],
             "disposition":disposition,
             "included_in_shift":is_imported or is_pm,
