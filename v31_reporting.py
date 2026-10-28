@@ -78,16 +78,19 @@ def stage_details(conn, shift_id):
             "stats":json.loads(stage_row["stats_json"])}
 
 
-def _existing_elsewhere(conn, shift_id, wo):
-    # Prevent another active/historical local shift claiming the same WO.
-    row=conn.execute("""SELECT shift_id FROM report_wo
-                        WHERE shift_id<>? AND wo_number=? AND excluded=0
-                        LIMIT 1""",(shift_id,wo)).fetchone()
-    if not row:
-        row=conn.execute("""SELECT shift_id FROM report_pm
-                            WHERE shift_id<>? AND wo_number=? LIMIT 1""",
-                         (shift_id,wo)).fetchone()
-    return row["shift_id"] if row else None
+def _existing_elsewhere(conn,shift_id,wo,new_status):
+    """Prevent double-credit, but allow a later RTS for a prior OOS WO."""
+    existing=conn.execute("""SELECT shift_id,status FROM report_wo
+                             WHERE shift_id<>? AND wo_number=? AND excluded=0
+                             ORDER BY id DESC LIMIT 1""",(shift_id,wo)).fetchone()
+    if existing:
+        if existing["status"]=="OOS" and new_status=="RTS":
+            return None  # Valid cross-shift OOS -> RTS progression.
+        return existing["shift_id"]
+    pm=conn.execute("""SELECT shift_id FROM report_pm
+                       WHERE shift_id<>? AND wo_number=? LIMIT 1""",
+                    (shift_id,wo)).fetchone()
+    return pm["shift_id"] if pm else None
 
 
 def roster_shift_map(tech_names, associates):
@@ -154,7 +157,7 @@ def import_selection(conn, shift_id: int, shift_code: str, shift_day: str,
     now=_now()
     added=updated=preserved=pm_count=0
     for wo,row in by_wo.items():
-        owned=_existing_elsewhere(conn,shift_id,wo)
+        owned=_existing_elsewhere(conn,shift_id,wo,row['status'])
         if owned is not None:
             ignored.append({"wo_number":wo,"reason":"Already recorded in V3.1 shift #"+str(owned)})
             continue
@@ -175,7 +178,7 @@ def import_selection(conn, shift_id: int, shift_code: str, shift_day: str,
                VALUES(?,?,?,?,?,?,?,?,?)""",(shift_id,wo,*fields,now))
             added+=1
     for wo,row in pm_by_wo.items():
-        owned=_existing_elsewhere(conn,shift_id,wo)
+        owned=_existing_elsewhere(conn,shift_id,wo,'RTS')
         if owned is not None:
             ignored.append({"wo_number":wo,"reason":"PM already recorded in shift #"+str(owned)})
             continue
