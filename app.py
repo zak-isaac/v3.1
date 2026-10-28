@@ -255,6 +255,7 @@ def shift_choices(profile: dict, now: datetime, associate: str | None = None) ->
         records = conn.execute('SELECT * FROM shifts ORDER BY id DESC').fetchall()
     by_key = {(r['code'], r['shift_day']): r for r in records}
     open_items, ready_items = [], []
+    has_capacity = sum(bool(r['open']) for r in records) < 2
     for code in SHIFT_RULES:
         day = eligible_date(code, now)
         if day is None or not allowed(profile, code, day, associate):
@@ -268,7 +269,7 @@ def shift_choices(profile: dict, now: datetime, associate: str | None = None) ->
             # A new shift starts before its scheduled end. The extra hour
             # after closing belongs only to an already-open passdown.
             _, scheduled_end = shift_times(code, day)
-            if now <= scheduled_end:
+            if now <= scheduled_end and has_capacity:
                 ready_items.append({'id': None, 'code': code, 'date': day.isoformat(),
                                     'label': SHIFT_RULES[code][0], 'open': False,
                                     'action': 'start', 'is_ot': not profile.get('all_shifts') and profile.get('shift') != code,
@@ -346,7 +347,9 @@ def landing(request: Request):
     if not state(session, profile)['selected']:
         return RedirectResponse('/', status_code=303)
     html = (ROOT / 'prototypes' / 'shift-report.html').read_text(encoding='utf-8')
-    return HTMLResponse(html.replace('</body>', '<script defer src="/web/workspace-auth.js"></script></body>'))
+    return HTMLResponse(html.replace('</body>',
+        '<script defer src="/web/workspace-auth.js"></script>'+
+        '<script defer src="/web/roster-admin.js"></script></body>'))
 
 
 class LoginRequest(BaseModel):
