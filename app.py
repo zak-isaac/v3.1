@@ -390,6 +390,18 @@ def landing(request: Request):
         '<script defer src="/web/shift-data.js"></script></body>'))
 
 
+@app.get('/administration', response_class=HTMLResponse)
+def administration_page(request: Request):
+    """Allow authorized management to manage Drax without starting a shift."""
+    session, profile = who(request)
+    if not profile.get('all_shifts'):
+        raise HTTPException(403, 'Management access required')
+    html = (ROOT / 'prototypes' / 'shift-report.html').read_text(encoding='utf-8')
+    return HTMLResponse(html.replace('</body>',
+        '<script defer src="/web/roster-admin.js"></script>'+
+        '<script defer src="/web/admin-standalone.js"></script></body>'))
+
+
 class LoginRequest(BaseModel):
     associate: str = Field(pattern=r'^\d{1,12}$', max_length=12)
     intent: Literal['direct', 'select'] = 'direct'
