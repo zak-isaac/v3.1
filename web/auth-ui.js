@@ -196,6 +196,7 @@
     $('#resume-active').onclick = () => resume(shift);
   }
   function updateHandoff(previous, next) {
+    const openCount=(flow?.open||[]).length;
     const cards = document.querySelectorAll('#screen-handoff .choice-card');
     setDetails(cards[0], previous);
     setDetails(cards[1], next);
@@ -209,6 +210,12 @@
     if (oldStatus) oldStatus.textContent = previous.action === 'resume' ? 'Open' : 'Ready';
     $('#resume-previous').textContent = previous.action === 'resume' ? 'Resume Existing Shift' : 'Start This Shift';
     $('#start-new').textContent = next.action === 'resume' ? 'Resume This Shift' : 'Start New Shift';
+    const nextStatus=cards[1].querySelector('.status-pill');
+    if(nextStatus)nextStatus.textContent=next.action === 'resume'?'Open':'Ready';
+    if(openCount===2){
+      $('#handoff-title').textContent='Two Active Shifts';
+      if(subtitle)subtitle.textContent='Both reports are active. Choose which shift to resume. Signing out does not end either report.';
+    }
     $('#resume-previous').onclick = () => (previous.action === 'resume' ? resume(previous) : start(previous));
     $('#start-new').onclick = () => (next.action === 'resume' ? resume(next) : start(next));
     const oldTrack = $('.timeline-old'), newTrack = $('.timeline-new');
@@ -255,32 +262,19 @@
   }
   function render() {
     const open = flow?.open || [], ready = flow?.ready || [];
-    if (open.length && ready.length) {
-      updateHandoff(open[open.length-1], ready[0]);
+    // Treat two already-open shifts as a real overlap (e.g. S4+S5,
+    // S1+S2). Previously this rendered only the Active Shift page.
+    const choices=[...open,...ready];
+    document.getElementById('v31-active-extra')?.remove();
+    if (choices.length >= 2) {
+      const pair = open.length && ready.length
+        ? [open[open.length-1],ready[0]]
+        : [choices[0],choices[1]];
+      updateHandoff(pair[0],pair[1]);
       show('handoff');
-    } else if (open.length) {
-      updateActive(open[open.length-1]);
+    } else if (open.length === 1) {
+      updateActive(open[0]);
       show('active');
-      if (open.length > 1) {
-        let extra = document.getElementById('v31-active-extra');
-        if (!extra) {
-          extra = document.createElement('div');
-          extra.id = 'v31-active-extra';
-          extra.style.cssText = 'display:grid;gap:8px;margin:12px 0';
-          $('#resume-active').insertAdjacentElement('afterend', extra);
-        }
-        extra.replaceChildren();
-        for (const shift of open.slice(0,-1)) {
-          const button = document.createElement('button');
-          button.className = 'button button-outline';
-          button.textContent = 'Resume ' + shift.code + ' · ' + timeRange(shift);
-          button.onclick = () => resume(shift);
-          extra.append(button);
-        }
-      }
-    } else if (ready.length >= 2) {
-      updateHandoff(ready[0], ready[1]);
-      show('handoff');
     } else {
       show('login');
     }
