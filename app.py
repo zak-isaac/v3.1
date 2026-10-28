@@ -317,7 +317,9 @@ def public_flow(now: datetime | None = None) -> dict:
     moment = now or datetime.now(TZ)
     # Never expose an associate number or a shift owner's identity here.
     opened, ready = shift_choices({'all_shifts': True}, moment)
-    screen = 'handoff' if opened and ready else ('active' if opened else 'login')
+    # Two active sessions also need the two-card handoff screen.
+    screen = ('handoff' if len(opened)+len(ready) >= 2
+              else 'active' if opened else 'login')
     return {'screen': screen, 'open': opened, 'ready': ready, 'now': moment.isoformat(),
             'grace_minutes': 60}
 
