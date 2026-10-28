@@ -162,7 +162,6 @@ def _db() -> sqlite3.Connection:
     )''')
     columns = {row['name'] for row in conn.execute('PRAGMA table_info(shifts)')}
     for name, declaration in {
-        'is_ot': 'INTEGER NOT NULL DEFAULT 0',
         'closed_at': "TEXT NOT NULL DEFAULT ''",
         'closed_reason': "TEXT NOT NULL DEFAULT ''",
         'report_saved_at': "TEXT NOT NULL DEFAULT ''",
@@ -170,11 +169,6 @@ def _db() -> sqlite3.Connection:
     }.items():
         if name not in columns:
             conn.execute(f"ALTER TABLE shifts ADD COLUMN {name} {declaration}")
-    conn.execute('''CREATE TABLE IF NOT EXISTS overtime_grants (
-        associate TEXT NOT NULL, code TEXT NOT NULL, shift_day TEXT NOT NULL,
-        granted_by TEXT NOT NULL, granted_at TEXT NOT NULL,
-        PRIMARY KEY(associate,code,shift_day)
-    )''')
     conn.commit()
     return conn
 
@@ -230,21 +224,13 @@ def entry(row: sqlite3.Row) -> dict:
     d = date.fromisoformat(row['shift_day'])
     return {'id': row['id'], 'code': row['code'], 'date': row['shift_day'],
             'label': SHIFT_RULES[row['code']][0], 'open': bool(row['open']),
-            'is_ot': bool(row['is_ot']), 'report_saved': bool(row['report_saved_at']),
+            'report_saved': bool(row['report_saved_at']),
             **window_info(row['code'], d)}
 
 
-def overtime_granted(assoc: str, code: str, day: date) -> bool:
-    with _db() as conn:
-        return conn.execute('''SELECT 1 FROM overtime_grants
-                              WHERE associate=? AND code=? AND shift_day=?''',
-                            (assoc, code, day.isoformat())).fetchone() is not None
-
-
 def allowed(profile: dict, code: str, day: date | None = None, assoc: str | None = None) -> bool:
-    if profile.get('all_shifts') or profile.get('shift') == code:
-        return True
-    return bool(day and assoc and overtime_granted(assoc, code, day))
+    """Only the Drax-assigned shift for MST; S1–S5 for management."""
+    return bool(profile.get('all_shifts')) or profile.get('shift') == code
 
 
 def shift_choices(profile: dict, now: datetime, associate: str | None = None) -> tuple[list[dict], list[dict]]:
@@ -272,7 +258,7 @@ def shift_choices(profile: dict, now: datetime, associate: str | None = None) ->
             if now <= scheduled_end and has_capacity:
                 ready_items.append({'id': None, 'code': code, 'date': day.isoformat(),
                                     'label': SHIFT_RULES[code][0], 'open': False,
-                                    'action': 'start', 'is_ot': not profile.get('all_shifts') and profile.get('shift') != code,
+                                    'action': 'start',
                                     **window_info(code, day)})
     open_items.sort(key=lambda x: x['scheduled_start'])
     ready_items.sort(key=lambda x: x['scheduled_start'])
@@ -389,10 +375,7 @@ def login(payload: LoginRequest, request: Request, response: Response):
         return {'destination': '/', 'selection_required': True, 'role': 'mst'}
     now = datetime.now(TZ)
     opened, ready = shift_choices(profile, now, payload.associate)
-    # Direct MST sign-in must always prefer the Drax-assigned shift,
-    # never a different shift merely because overtime was granted.
-    opened = [x for x in opened if x['code'] == profile.get('shift')]
-    ready = [x for x in ready if x['code'] == profile.get('shift')]
+    # An MST may enter only the Drax-assigned shift; management chooses S1–S5.
     if opened:
         # Assigned shift already opened by this MST: resume that report.
         selected = opened[0]
@@ -403,9 +386,8 @@ def login(payload: LoginRequest, request: Request, response: Response):
             if conn.execute('SELECT COUNT(*) FROM shifts WHERE open=1').fetchone()[0] >= 2:
                 raise HTTPException(409, 'Two overlapping shifts are already active')
             conn.execute('''INSERT OR IGNORE INTO shifts
-                (code,shift_day,owner,created_at,is_ot) VALUES (?,?,?,?,?)''',
-                (target['code'], target['date'], payload.associate, now.isoformat(),
-                 int(bool(target.get('is_ot')))))
+                (code,shift_day,owner,created_at) VALUES (?,?,?,?)''',
+                (target['code'], target['date'], payload.associate, now.isoformat()))
             row = conn.execute('SELECT * FROM shifts WHERE code=? AND shift_day=?',
                                (target['code'], target['date'])).fetchone()
             if not row['open'] or row['owner'] != payload.associate:
@@ -435,7 +417,7 @@ def start_shift(payload: ShiftChoice, request: Request, response: Response):
     if day is None:
         raise HTTPException(409, 'Shift reporting window is not active')
     if not allowed(profile, payload.code, day, session['a']):
-        raise HTTPException(403, 'Shift not assigned and no authorized overtime grant')
+        raise HTTPException(403, 'Shift is not assigned to this associate')
     with _db() as conn:
         existing = conn.execute('SELECT * FROM shifts WHERE code=? AND shift_day=?',
                                 (payload.code, day.isoformat())).fetchone()
@@ -444,9 +426,8 @@ def start_shift(payload: ShiftChoice, request: Request, response: Response):
         if existing is None and conn.execute('SELECT COUNT(*) FROM shifts WHERE open=1').fetchone()[0] >= 2:
             raise HTTPException(409, 'Two overlapping shifts are already active')
         conn.execute('''INSERT OR IGNORE INTO shifts
-            (code,shift_day,owner,created_at,is_ot) VALUES (?,?,?,?,?)''',
-            (payload.code, day.isoformat(), session['a'], now.isoformat(),
-             int(not profile.get('all_shifts') and profile.get('shift') != payload.code)))
+            (code,shift_day,owner,created_at) VALUES (?,?,?,?)''',
+            (payload.code, day.isoformat(), session['a'], now.isoformat()))
         row = conn.execute('SELECT * FROM shifts WHERE code=? AND shift_day=?',
                            (payload.code, day.isoformat())).fetchone()
         if not row['open']:
@@ -467,7 +448,7 @@ def resume_shift(payload: ShiftResume, request: Request, response: Response):
     if row is None or eligible_date(row['code'], datetime.now(TZ)) != date.fromisoformat(row['shift_day']):
         raise HTTPException(404, 'Active shift not found within its reporting window')
     if not allowed(profile, row['code'], date.fromisoformat(row['shift_day']), session['a']):
-        raise HTTPException(403, 'Shift not assigned and no authorized overtime grant')
+        raise HTTPException(403, 'Shift is not assigned to this associate')
     if not profile.get('all_shifts') and row['owner'] != session['a']:
         raise HTTPException(403, 'Only the shift starter or management may resume this report')
     _set_cookie(response, session['a'], row['id'])
@@ -524,12 +505,6 @@ class AdminEditAssociate(BaseModel):
     number: str = Field(min_length=1, max_length=12, pattern='^[0-9]+$')
     full_name: str = Field(min_length=2, max_length=180)
     new_number: str | None = Field(default=None, min_length=1, max_length=12, pattern='^[0-9]+$')
-
-class OvertimeGrant(BaseModel):
-    associate: str = Field(pattern=r'^\d{1,12}$')
-    code: Literal['S1', 'S2', 'S3', 'S4', 'S5']
-    shift_day: date
-
 
 def require_manager(request: Request) -> dict:
     session, profile = who(request)
@@ -595,50 +570,6 @@ def admin_roster_edit(payload: AdminEditAssociate, request: Request):
     except ValueError as exc:
         raise HTTPException(409, str(exc))
     return v31_roster.status(DB_FILE, include_rows=True)
-
-@app.get('/api/admin/overtime')
-def admin_overtime(request: Request):
-    require_manager(request)
-    with _db() as conn:
-        grants = conn.execute("""SELECT associate, code, shift_day, granted_by, granted_at
-                                 FROM overtime_grants ORDER BY shift_day DESC,code""").fetchall()
-    return {'grants': [dict(x) for x in grants]}
-
-
-def _validate_grant(payload: OvertimeGrant) -> None:
-    now = datetime.now(TZ).date()
-    if not (now - timedelta(days=1) <= payload.shift_day <= now + timedelta(days=30)):
-        raise HTTPException(422, 'Overtime date must be yesterday through 30 days ahead')
-    if payload.shift_day.weekday() not in SHIFT_RULES[payload.code][3]:
-        raise HTTPException(422, 'Selected shift is not scheduled on that date')
-
-
-@app.post('/api/admin/overtime/grant')
-def admin_overtime_grant(payload: OvertimeGrant, request: Request):
-    _origin_check(request)
-    session = require_manager(request)
-    _validate_grant(payload)
-    profile = roster().get(payload.associate)
-    if not profile or profile.get('all_shifts'):
-        raise HTTPException(404, 'MST associate not found in authorized roster')
-    with _db() as conn:
-        conn.execute("""INSERT INTO overtime_grants (associate,code,shift_day,granted_by,granted_at)
-                        VALUES (?,?,?,?,?) ON CONFLICT(associate,code,shift_day)
-                        DO UPDATE SET granted_by=excluded.granted_by,granted_at=excluded.granted_at""",
-                     (payload.associate,payload.code,payload.shift_day.isoformat(),
-                      session['a'],datetime.now(TZ).isoformat()))
-    return {'granted': True, 'is_ot': profile['shift'] != payload.code}
-
-
-@app.post('/api/admin/overtime/revoke')
-def admin_overtime_revoke(payload: OvertimeGrant, request: Request):
-    _origin_check(request)
-    require_manager(request)
-    with _db() as conn:
-        conn.execute("DELETE FROM overtime_grants WHERE associate=? AND code=? AND shift_day=?",
-                     (payload.associate,payload.code,payload.shift_day.isoformat()))
-    return {'revoked': True}
-
 
 @app.post('/api/shifts/report')
 def save_shift_report(payload: ReportPayload, request: Request):
