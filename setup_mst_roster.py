@@ -14,7 +14,8 @@ HEADERS = ["Name", "Assoc. #", "Shift", "Job Title"]
 
 def main():
     PRIVATE.mkdir(parents=True, exist_ok=True)
-    if (PRIVATE / "Drax Associates.xlsx").exists() or (PRIVATE / "mst-roster.xlsx").exists():
+    if any((PRIVATE / filename).exists() for filename in
+           ("Drax  Associates.xlsx", "Drax Associates.xlsx", "mst-roster.xlsx")):
         print("An Excel roster already exists. It takes priority over this CSV.")
         print("Use that authorized roster or remove it from this project's private folder first.")
         return
