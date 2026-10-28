@@ -11,7 +11,7 @@ import app as m
 TZ=ZoneInfo("America/Indiana/Indianapolis")
 HEADERS=["WO Number","Asset #","WO Status","Primary RFR",
          "Service/Repair Description","Technician","Technician Remarks",
-         "Start Date","In Service Date / Time","WO Closed Date/Time",
+         "Start Date","In Service Date / Time","WO Closed Date/Time","WO Date / Time",
          "WO Last Complete Date / Time","SJ / PM Code","Completed By"]
 
 
