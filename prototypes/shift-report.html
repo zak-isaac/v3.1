@@ -157,7 +157,36 @@ function techModal(){
 }
 function createReport(){const inc=state.rows.filter(r=>!r.excluded);return `IND3 — MST Reliability Operations\n${window.__v31ShiftContext?.code || 'Unassigned'} — Shift Report\nDate: ${window.__v31ShiftContext?.date || 'Not selected'}\nSelected technicians: ${state.techs.join('; ')}\n\nSHIFT HAPPENINGS (${inc.length})\n${inc.map((r,i)=>`${i+1}. ${r.asset} (WO# ${r.wo}) — ${r.category}\n   ${r.cause}\n   Technician(s): ${r.tech} | ${r.status}`).join('\n\n')}\n\nPMs Completed: 0\nPMs Needing Completion: 0${state.pmFile?` — ${state.pmFile}`:''}\n\nVENDORS\n${state.vendors.join('\n')||'None'}\n\nRO\n${state.ro.join('\n')||'None'}\n\nSHIFT NOTES\n${state.notes||'None'}\n\nLOTO Verification: ${state.loto?'Verified':'Not verified'}${state.missingKey?`\nMissing Key: ${state.missingKey}`:''}\n\nLOCAL FRONTEND PREVIEW — CETARIS PARSING NOT CONNECTED`}
 function previewReport(){showModal('Outlook Passdown Preview','Sample report only. No production data or emails are involved.',`<div class="preview-document">${esc(createReport())}</div>`,[{text:'Close',onClick:closeModal},{text:'Download sample EML',kind:'btn-primary',onClick:()=>{closeModal();emlDownload();}}]);}
-function emlDownload(){const body=createReport().replace(/\r?\n/g,'\r\n');const eml=`To: \r\nSubject: IND3 - ${window.__v31ShiftContext?.code || "Unassigned"} Shift Passdown - Preview\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=UTF-8\r\nContent-Transfer-Encoding: 8bit\r\n\r\n${body}`;const url=URL.createObjectURL(new Blob([eml],{type:'message/rfc822'}));const a=document.createElement('a');a.href=url;a.download='IND3_'+(window.__v31ShiftContext?.code||'Unassigned')+'_Shift_Passdown_Preview.eml';document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),2000);toast('Sample Outlook .eml downloaded — not sent');}
+async function emlDownload(){
+  const report=createReport();
+  const generate=$('#generate-eml');
+  generate.disabled=true;
+  try {
+    // Server-owned shift record is the prerequisite for End Shift.
+    const response=await fetch('/api/shifts/report',{
+      method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({content:report})
+    });
+    if(!response.ok) {
+      const info=await response.json().catch(()=>({}));
+      throw Error(info.detail||'Could not save this shift passdown.');
+    }
+    const body=report.replace(/\r?\n/g,'\r\n');
+    const shift=window.__v31ShiftContext?.code||'Unassigned';
+    const eml='To: \r\nSubject: IND3 - '+shift+' Shift Passdown - V3.1 Local Preview\r\n'+
+      'MIME-Version: 1.0\r\nContent-Type: text/plain; charset=UTF-8\r\n'+
+      'Content-Transfer-Encoding: 8bit\r\n\r\n'+body;
+    const url=URL.createObjectURL(new Blob([eml],{type:'message/rfc822'}));
+    const link=document.createElement('a');
+    link.href=url;link.download='IND3_'+shift+'_Shift_Passdown_Preview.eml';
+    document.body.append(link);link.click();link.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),2000);
+    $('#last-saved').textContent='Shift passdown saved · Outlook EML created';
+    toast('Passdown saved to this shift. EML downloaded (not sent).');
+  }catch(error){
+    toast(error.message);
+  }finally{generate.disabled=false;}
+}
 function confirmEnd(){showModal('End this shift?','This is a frontend simulation only. It does not close any real shift.',`<p>Mark the <strong>sample S1 shift</strong> as ended in this browser preview?</p><p class="field-help">The actual IND3 Workshop production system will not be contacted.</p>`,[{text:'Cancel',onClick:closeModal},{text:'End sample shift',kind:'btn-end',onClick:()=>{state.ended=true;$('.shift-heading .pill').textContent='Ended';$('.shift-heading .pill').classList.remove('active');$('.shift-heading .pill').style.background='#667994';$('#end-shift').disabled=true;closeModal();toast('Sample shift ended in this preview');}}]);}
 function showInfo(){showModal('Frontend Design Preview','Separate from live IND3 V3.',`<p>This prototype uses sample shift data and has no production database, authentication, or server connection.</p><p><strong>Included UI interactions:</strong> editing and excluding work orders, tabbed views, file selectors, technician selections, report text entry, LOTO verification with 20 keys, draft status, report preview, example EML export and sample End Shift.</p><p>Imports display filenames only. They do not parse Cetaris XLSX/CSV files yet.</p>`,[{text:'Got it',onClick:closeModal}]);}
 // Wiring
