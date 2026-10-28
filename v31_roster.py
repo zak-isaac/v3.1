@@ -40,10 +40,16 @@ def _connect(database: Path):
 
 
 def _source(private: Path):
-    configured = os.getenv("IND3_V31_ROSTER_PATH", "").strip()
+    # Original V3's canonical OneDrive path (double-space is intentional).
+    # Compatible with the existing ASSOCIATES_PATH override; V3.1-specific
+    # override takes precedence and supports Mac workstation testing.
+    configured = (os.getenv("IND3_V31_ROSTER_PATH") or os.getenv("ASSOCIATES_PATH") or "").strip()
     if configured:
         file = Path(configured).expanduser()
         return file if file.is_file() else None, configured
+    original = Path(r"C:\Users\ins0002\OneDrive - Walmart Inc\Drax  Associates.xlsx")
+    if original.is_file():
+        return original, None
     choices = [private / "Drax  Associates.xlsx", private / "Drax Associates.xlsx",
                private / "mst-roster.xlsx", private / "mst-roster.csv"]
     return next((file for file in choices if file.is_file()), None), None
@@ -232,9 +238,9 @@ def edit_associate(database, number, full_name, new_number=None):
                 raise ValueError("Update associate numbers in the Drax workbook, then reload")
             if conn.execute("SELECT 1 FROM roster_associates WHERE number=?", (final_number,)).fetchone():
                 raise ValueError("The new associate number is already used")
-            for table, column in (("shifts","owner"),("overtime_grants","associate")):
+            for table, column in (("shifts","owner"),):
                 if conn.execute(f"SELECT 1 FROM {table} WHERE {column}=? LIMIT 1",(number,)).fetchone():
-                    raise ValueError("Cannot change an associate number referenced by shift history or overtime")
+                    raise ValueError("Cannot change an associate number referenced by shift history")
             conn.execute("UPDATE roster_associates SET number=? WHERE number=?", (final_number,number))
         if row["manual"]:
             conn.execute("UPDATE roster_associates SET full_name=? WHERE number=?",(full_name,final_number))
