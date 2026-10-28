@@ -31,13 +31,55 @@ async function refresh(){
   p.textContent='Added '+(counts.added||0)+' · Updated '+(counts.updated||0)+
   ' · Edits preserved '+(counts.preserved_edits||0)+' · PM '+snapshot.pm_count+
   ' · Pending review '+snapshot.audit.pending.length+
-  ' · Ignored '+snapshot.audit.ignored.length;
+  ' · Ignored '+snapshot.audit.ignored.length+
+  ' · Next-day WOs '+(snapshot.audit.next_day||[]).length;
   audit.append(p);
   for(const r of [...snapshot.audit.pending,...snapshot.audit.ignored].slice(0,35)){
     const line=document.createElement('p');
     line.textContent='WO# '+r.wo_number+' — '+r.reason;
     audit.append(line);
   }
+  // Next-day WOs are audit visibility, not automatic shift attribution.
+  const nextDay=snapshot.audit.next_day||[];
+  const nextWrap=document.createElement('details');
+  nextWrap.style.cssText='margin-top:14px;padding:10px;border:1px solid #dbe5f0;border-radius:10px;background:#fff';
+  const heading=document.createElement('summary');
+  heading.style.cssText='cursor:pointer;font-weight:700;color:#224d77';
+  heading.textContent='Next-Day Work Orders ('+nextDay.length+')';
+  nextWrap.append(heading);
+  const description=document.createElement('p');
+  description.style.cssText='margin:9px 0;font-size:12px;color:#536c83';
+  description.textContent='Following calendar day; work timestamps and administrative closures are different. S3/S5 overnight WOs may already belong to this shift. This list does not add WOs to Shift Happenings.';
+  nextWrap.append(description);
+  if(nextDay.length===0){
+    const empty=document.createElement('p');
+    empty.textContent='No next-calendar-day work orders detected in this import.';
+    nextWrap.append(empty);
+  }
+  const list=document.createElement('div');
+  list.style.cssText='display:grid;gap:8px;max-height:320px;overflow:auto';
+  for(const row of nextDay){
+    const item=document.createElement('div');
+    item.style.cssText='border:1px solid #e3eaf2;padding:9px;border-radius:8px;font-size:12px';
+    const title=document.createElement('strong');
+    title.textContent=(row.asset_id||'No asset')+' · WO# '+row.wo_number;
+    const meta=document.createElement('p');
+    meta.style.cssText='margin:5px 0 0;color:#4b647e';
+    meta.textContent=row.date+' · '+row.timestamp_type+' · '+row.disposition+
+      ' · Status: '+(row.status||'Not provided')+
+      ' · Techs: '+(row.technicians||[]).join('; ');
+    item.append(title,meta);
+    if(row.work_timestamps?.length || row.admin_timestamps?.length){
+      const times=document.createElement('p');
+      times.style.cssText='margin:4px 0 0;color:#687e94';
+      times.textContent=(row.work_timestamps?.length?'Work: '+row.work_timestamps.join('; ')+' · ':'')+
+        (row.admin_timestamps?.length?'Administrative: '+row.admin_timestamps.join('; '):'');
+      item.append(times);
+    }
+    list.append(item);
+  }
+  nextWrap.append(list);
+  audit.append(nextWrap);
   const pendingClosed=snapshot.audit.pending.filter(x=>
     String(x.reason||'').startsWith('Completed but not Closed'));
   if(pendingClosed.length){
