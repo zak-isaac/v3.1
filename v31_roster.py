@@ -29,6 +29,9 @@ def _connect(database: Path):
         override_mst INTEGER DEFAULT NULL, override_shift TEXT DEFAULT NULL,
         last_seen TEXT NOT NULL DEFAULT ''
     )""")
+    columns = {row["name"] for row in con.execute("PRAGMA table_info(roster_associates)")}
+    if "override_name" not in columns:
+        con.execute("ALTER TABLE roster_associates ADD COLUMN override_name TEXT DEFAULT NULL")
     con.execute("""CREATE TABLE IF NOT EXISTS roster_meta (
         k TEXT PRIMARY KEY, value TEXT NOT NULL
     )""")
@@ -164,7 +167,7 @@ def profiles(private, database, management, rules):
         is_mst = row["override_mst"] if row["override_mst"] is not None else row["is_mst"]
         assigned = row["override_shift"] if row["override_shift"] is not None else row["shift"]
         if is_mst and assigned in rules and row["number"] not in management:
-            data[row["number"]] = {"name": row["full_name"], "all_shifts":False,
+            data[row["number"]] = {"name": row["override_name"] or row["full_name"], "all_shifts":False,
                                    "shift":assigned, "default_id":row["default_id"], "is_mst":True}
     return data
 
@@ -178,10 +181,10 @@ def status(database, include_rows=False):
               "entries":sum(bool(r["source_active"]) for r in rows)}
     if include_rows:
         result["associates"] = [{
-            "number":r["number"], "name":r["full_name"],
+            "number":r["number"], "name":r["override_name"] or r["full_name"],
             "shift":r["override_shift"] if r["override_shift"] is not None else r["shift"],
             "drax_shift":r["shift"], "is_mst":bool(r["override_mst"] if r["override_mst"] is not None else r["is_mst"]),
-            "drax_is_mst":bool(r["is_mst"]), "overridden":r["override_mst"] is not None or r["override_shift"] is not None,
+            "drax_is_mst":bool(r["is_mst"]), "overridden":r["override_mst"] is not None or r["override_shift"] is not None or r["override_name"] is not None,
             "active":bool(r["source_active"]), "manual":bool(r["manual"])
         } for r in rows]
     return result
@@ -192,7 +195,7 @@ def set_override(database, number, *, mst=None, shift=None, reset=False):
         row = conn.execute("SELECT * FROM roster_associates WHERE number=?",(number,)).fetchone()
         if not row: raise KeyError("Associate not found in Drax cache")
         if reset:
-            conn.execute("UPDATE roster_associates SET override_mst=NULL,override_shift=NULL WHERE number=?",(number,))
+            conn.execute("UPDATE roster_associates SET override_mst=NULL,override_shift=NULL,override_name=NULL WHERE number=?",(number,))
         else:
             if mst is not None:
                 conn.execute("UPDATE roster_associates SET override_mst=? WHERE number=?",(int(mst),number))
@@ -212,10 +215,10 @@ def add_manual(database, number, name, shift, mst):
 
 
 def edit_associate(database, number, full_name, new_number=None):
-    """Admin edits retain Drax source values for comparison.
+    """Admin display-name overrides survive Drax resync.
 
-    Changing an associate number is blocked after that number is referenced
-    by a report or overtime authorization, preserving existing audit history.
+    Source associate numbers are immutable. Manual numbers can be changed only
+    when unused in shift history and overtime authorization tables.
     """
     final_number = new_number or number
     with _connect(database) as conn:
@@ -223,10 +226,15 @@ def edit_associate(database, number, full_name, new_number=None):
         if row is None:
             raise KeyError("Associate does not exist")
         if final_number != number:
+            if not row["manual"]:
+                raise ValueError("Update associate numbers in the Drax workbook, then reload")
             if conn.execute("SELECT 1 FROM roster_associates WHERE number=?", (final_number,)).fetchone():
                 raise ValueError("The new associate number is already used")
             for table, column in (("shifts","owner"),("overtime_grants","associate")):
                 if conn.execute(f"SELECT 1 FROM {table} WHERE {column}=? LIMIT 1",(number,)).fetchone():
                     raise ValueError("Cannot change an associate number referenced by shift history or overtime")
             conn.execute("UPDATE roster_associates SET number=? WHERE number=?", (final_number,number))
-        conn.execute("UPDATE roster_associates SET full_name=? WHERE number=?",(full_name,final_number))
+        if row["manual"]:
+            conn.execute("UPDATE roster_associates SET full_name=? WHERE number=?",(full_name,final_number))
+        else:
+            conn.execute("UPDATE roster_associates SET override_name=? WHERE number=?",(full_name,final_number))
