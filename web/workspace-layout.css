@@ -19,6 +19,9 @@
   padding:16px 12px 18px;
   background:#0d2c50;
   gap:0;
+  overflow:hidden;
+  height:100%;
+  flex-shrink:0;
 }
 .sidebar-brand{
   display:flex;
@@ -47,7 +50,7 @@
   box-shadow:inset 3px 0 #ffc220;
 }
 .nav-separator{margin:13px 9px 13px}
-#v31-sidebar-controls{margin-top:15px}
+#v31-sidebar-controls{margin-top:13px;flex:0 1 auto;min-height:0}
 #v31-context-bar{
   display:flex;
   flex-direction:column;
@@ -87,28 +90,30 @@
   color:#fff;
   margin-bottom:2px;
 }
-.v31-context-actions{
-  display:grid;
-  grid-template-columns:minmax(0,1fr);
-  gap:8px;
+.v31-context-actions{display:none!important}
+#v31-context-bar button{display:none!important}
+.v31-sidebar-user{
+  display:flex;align-items:center;gap:9px;
+  border-top:1px solid #496684;padding:13px 9px 8px;
+  margin-top:auto;min-width:0;flex-shrink:0;color:#fff
 }
-#v31-context-bar button{
-  width:100%;
-  text-align:left;
-  display:flex;
-  align-items:center;
-  justify-content:flex-start;
-  padding:11px 12px;
-  border-radius:8px;
-  background:transparent;
-  border:1px solid #55718d;
-  color:#f4f8fd;
-  font-size:12px;
-  font-weight:700;
-  cursor:pointer;
+.v31-user-avatar{
+  width:31px;height:31px;border:1px solid #607f9e;border-radius:50%;
+  display:grid;place-items:center;flex-shrink:0;background:#24486d
 }
-#v31-context-bar button:hover{background:#24486e;border-color:#9bb1c5}
-#v31-context-bar #v31-signout{border-color:#6b7b8d;color:#edf2f7}
+.v31-user-avatar .icon{width:18px;height:18px}
+.v31-user-details{display:flex;flex-direction:column;min-width:0;gap:2px}
+.v31-user-details strong{font-size:12px;line-height:1.25;overflow-wrap:anywhere}
+.v31-user-details small{font-size:11px;color:#bcd1e7}
+#v31-signout.v31-signout{
+  display:flex;align-items:center;justify-content:flex-start;gap:10px;
+  width:100%;padding:10px 12px;min-height:39px;
+  border:1px solid #5d7690;border-radius:8px;
+  background:#163b61;color:#fff;font-size:12px;font-weight:700;
+  flex-shrink:0
+}
+#v31-signout.v31-signout:hover{background:#26527c}
+.v31-signout .icon{height:17px;width:17px}
 .sidebar-location{
   margin-top:auto;
   padding:18px 12px 0;
@@ -139,14 +144,50 @@
   #v31-sidebar-controls{margin-top:8px}
   #v31-context-bar{padding:10px 1px;gap:8px}
   .v31-session-meta{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 14px}
-  .v31-context-actions{grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}
-  #v31-context-bar button{justify-content:center;font-size:11px;padding:10px 6px}
   .sidebar-location{display:none}
   .shift-heading h1{font-size:22px}
 }
 @media(max-width:520px){
   .top-brand-context{display:none}
   .v31-session-meta{grid-template-columns:minmax(0,1fr)}
-  .v31-context-actions{grid-template-columns:repeat(2,minmax(0,1fr))}
   .shift-header{padding:11px 12px}
+}
+
+/* Keep the sidebar stationary. Scroll only the workspace content. */
+html,body{height:100%;overflow:hidden}
+.app{height:100dvh;min-height:0;overflow:hidden}
+.shell{flex:1;min-height:0;overflow:hidden}
+.sidebar{height:100%;min-height:0!important;overflow:hidden;overscroll-behavior:none}
+.main-content{min-height:0;overflow-y:auto;overscroll-behavior:contain}
+.sidebar-brand{flex-shrink:0}
+.main-nav{flex-shrink:0}
+#v31-context-bar{border-top:0;padding:0 8px 10px;gap:9px}
+.v31-session-meta{gap:6px;font-size:11px}
+.v31-session-meta strong{font-size:11px}
+@media(max-height:730px) and (min-width:841px){
+ .sidebar{padding-top:8px;padding-bottom:9px}
+ .sidebar-brand{padding-bottom:9px;margin-bottom:7px}
+ .nav-link{min-height:35px;padding:7px 11px}
+ #v31-context-bar{gap:7px}
+ .v31-session-meta{gap:4px}
+ .v31-sidebar-user{padding-top:8px}
+}
+@media(max-height:570px) and (min-width:841px){
+ .sidebar-brand{padding-bottom:6px;margin-bottom:5px}
+ .sidebar-brand small{display:none}
+ .v31-session-meta{grid-template-columns:repeat(2,minmax(0,1fr))}
+ .sidebar-brand .sidebar-walmart{font-size:20px}
+ .nav-link{min-height:31px;padding:5px 10px}
+}
+@media(max-width:840px){
+ html,body{height:auto;overflow:auto}
+ .app{height:auto;min-height:100dvh;overflow:visible}
+ .shell{display:block;min-height:0;overflow:visible}
+ .sidebar{height:auto;min-height:0!important;overflow:hidden}
+ .main-nav{overflow:visible;flex-wrap:wrap}
+ .main-nav .nav-link{flex-shrink:0}
+ #v31-context-bar{padding:8px 1px}
+ .v31-session-meta{grid-template-columns:repeat(2,minmax(0,1fr))}
+ .v31-sidebar-user{margin-top:6px}
+ .main-content{overflow:visible;min-height:0}
 }
