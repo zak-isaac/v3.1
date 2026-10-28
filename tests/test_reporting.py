@@ -136,7 +136,7 @@ def test_edit_and_exclude_survive_reimport_and_relogin(client,monkeypatch):
     upload(client,records)
     assert import_techs(client,["Synthetic A"]).status_code==200
     edited=client.post("/api/reporting/work-orders/9010",
-        json={"cause":"Confirmed defective bearing","excluded":True})
+        json={"cause":"Confirmed defective bearing","remarks":"Inspected and replaced bearing","excluded":True})
     assert edited.status_code==200,edited.text
     upload(client,records)
     summary=import_techs(client,["Synthetic A"]).json()["summary"]
@@ -147,6 +147,7 @@ def test_edit_and_exclude_survive_reimport_and_relogin(client,monkeypatch):
     assert client.post("/api/shifts/resume",json={"shift_id":sid}).status_code==200
     persisted=client.get("/api/reporting/state").json()["rows"][0]
     assert persisted["cause"]=="Confirmed defective bearing" and persisted["excluded"]
+    assert persisted["remarks"]=="Inspected and replaced bearing"
 
 
 def test_multiple_uploads_add_not_erase_prior_workorders(client,monkeypatch):
@@ -231,6 +232,7 @@ def test_frontend_shift_data_controller_is_connected(client,monkeypatch):
     assert page.status_code==200
     assert '/web/shift-data.js' in page.text
     assert 'window.v31ReportView' in page.text
+    assert 'id="edit-remarks"' in page.text
     script=client.get("/web/shift-data.js")
     assert script.status_code==200
     assert "/api/reporting/stage" in script.text
