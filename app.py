@@ -20,13 +20,14 @@ import time
 from typing import Literal
 from zoneinfo import ZoneInfo
 
-from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi import FastAPI, HTTPException, Request, Response, UploadFile, File
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 import v31_roster
 import v31_legacy_history
 import v31_drax_bridge
+import v31_reporting
 
 ROOT = Path(__file__).resolve().parent
 PRIVATE = Path(os.environ.get('IND3_V31_PRIVATE_DIR', str(ROOT / '.local-data'))).resolve()
@@ -383,7 +384,8 @@ def landing(request: Request):
     return HTMLResponse(html.replace('</body>',
         '<script defer src="/web/workspace-auth.js"></script>'+
         '<script defer src="/web/roster-admin.js"></script>'+
-        '<script defer src="/web/shift-history.js"></script></body>'))
+        '<script defer src="/web/shift-history.js"></script>'+
+        '<script defer src="/web/shift-data.js"></script></body>'))
 
 
 class LoginRequest(BaseModel):
@@ -667,6 +669,126 @@ def read_shift_report(request: Request):
         raise HTTPException(403,'Report belongs to another MST')
     return {'content':row['report_content'], 'saved_at':row['report_saved_at'],
             'shift_id':row['id']}
+
+
+def _report_access(request: Request):
+    session, profile = who(request)
+    shift_id = session.get('s')
+    if not shift_id:
+        raise HTTPException(409, 'Choose a shift before using Shift Report')
+    with _db() as conn:
+        row = conn.execute('SELECT * FROM shifts WHERE id=? AND open=1',(shift_id,)).fetchone()
+    if not row:
+        raise HTTPException(409, 'Selected shift is no longer open')
+    if not allowed(profile,row['code']) or (
+        not profile.get('all_shifts') and row['owner'] != session['a']
+    ):
+        raise HTTPException(403, 'You are not authorized for this shift')
+    if eligible_date(row['code'],datetime.now(TZ)) != date.fromisoformat(row['shift_day']):
+        raise HTTPException(409, 'Reporting window has ended')
+    return session,row
+
+
+def _invalidate_passdown(conn,shift_id):
+    # Edited data cannot be followed by End Shift until a new EML is saved.
+    conn.execute("UPDATE shifts SET report_saved_at='',report_content='' WHERE id=?",
+                 (shift_id,))
+
+
+class ReportingImport(BaseModel):
+    technicians: list[str] = Field(min_length=1,max_length=100)
+    closure_reviews: dict[str,Literal['add','ignore']] = Field(default_factory=dict)
+
+
+class ReportingWOEdit(BaseModel):
+    asset: str | None = None
+    category: str | None = None
+    cause: str | None = None
+    tech: str | None = None
+    remarks: str | None = None
+    status: Literal['RTS','OOS'] | None = None
+    excluded: bool | None = None
+
+
+class ReportingDraft(BaseModel):
+    vendors: list[str] = Field(default_factory=list,max_length=100)
+    ro: list[str] = Field(default_factory=list,max_length=100)
+    notes: str = Field(default='',max_length=3000)
+    loto: bool = False
+    missingKey: str = Field(default='',max_length=100)
+
+
+@app.get('/api/reporting/state')
+def reporting_state(request: Request):
+    session,row=_report_access(request)
+    with _db() as conn:
+        data=v31_reporting.get_state(conn,row['id'])
+        data['draft']=v31_reporting.get_draft(conn,row['id'])
+    return {'shift':entry(row),**data}
+
+
+@app.post('/api/reporting/stage')
+async def reporting_stage(request: Request,file: UploadFile=File(...)):
+    _origin_check(request)
+    session,row=_report_access(request)
+    try:
+        content=await file.read(v31_reporting.MAX_SIZE+1)
+    finally:
+        await file.close()
+    if not content:
+        raise HTTPException(422, 'File is empty')
+    if len(content)>v31_reporting.MAX_SIZE:
+        raise HTTPException(413, 'Cetaris export exceeds 12 MB')
+    try:
+        with _db() as conn:
+            result=v31_reporting.stage(conn,row['id'],content,
+                file.filename or 'cetaris.xlsx',session['a'])
+    except ValueError as exc:
+        raise HTTPException(422,str(exc))
+    return result
+
+
+@app.post('/api/reporting/import')
+def reporting_import(payload:ReportingImport,request:Request):
+    _origin_check(request)
+    session,row=_report_access(request)
+    try:
+        with _db() as conn:
+            summary=v31_reporting.import_selection(conn,row['id'],row['code'],
+                row['shift_day'],payload.technicians,payload.closure_reviews)
+            _invalidate_passdown(conn,row['id'])
+    except ValueError as exc:
+        raise HTTPException(422,str(exc))
+    return {'imported':True,'summary':summary}
+
+
+@app.post('/api/reporting/work-orders/{wo_number}')
+def reporting_work_order(wo_number:str,payload:ReportingWOEdit,request:Request):
+    _origin_check(request)
+    session,row=_report_access(request)
+    if not wo_number.strip() or len(wo_number)>100:
+        raise HTTPException(422,'Invalid work-order number')
+    data=payload.model_dump(exclude_none=True)
+    try:
+        with _db() as conn:
+            v31_reporting.update_wo(conn,row['id'],wo_number,data)
+            _invalidate_passdown(conn,row['id'])
+    except (KeyError,ValueError) as exc:
+        raise HTTPException(404 if isinstance(exc,KeyError) else 422,str(exc))
+    return {'updated':True,'wo_number':wo_number}
+
+
+@app.post('/api/reporting/draft')
+def reporting_draft(payload:ReportingDraft,request:Request):
+    _origin_check(request)
+    session,row=_report_access(request)
+    content=payload.model_dump()
+    if sum(len(x) for x in content['vendors']+content['ro'])>15000:
+        raise HTTPException(422,'Too much draft content')
+    with _db() as conn:
+        v31_reporting.save_draft(conn,row['id'],content)
+        _invalidate_passdown(conn,row['id'])
+    return {'saved':True,'shift_id':row['id']}
 
 
 @app.get('/api/history/legacy')
