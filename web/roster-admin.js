@@ -105,7 +105,19 @@
           {number:person.number,reset:true});
         render();notice('Drax defaults restored.');
       }));
-      row.append(name,shift,flag,reset);people.append(row);
+      const edit=button('Edit',()=>run(async()=>{
+        const editedName=window.prompt('Associate display name',person.name);
+        if(editedName===null)return;
+        const editedNumber=window.prompt(
+          person.manual?'Associate number (manual record)':'Associate number (Drax-controlled; change in Excel)',
+          person.number);
+        if(editedNumber===null)return;
+        details=await getJSON('/api/admin/roster/edit',{
+          number:person.number,full_name:editedName.trim(),new_number:editedNumber.trim()
+        });
+        render();notice('Associate information updated.');
+      }));
+      row.append(name,shift,flag,edit,reset);people.append(row);
     }
     const add=$('#v31-admin-add');add.replaceChildren();
     const assoc=input('Associate number');assoc.inputMode='numeric';
