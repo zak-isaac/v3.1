@@ -297,3 +297,6 @@ def test_shift_controls_and_brand_relocated_to_sidebar(client, monkeypatch):
                  'v31-sidebar-clock','v31-select-shift','v31-signout'):
         assert item in js.text
     assert 'window.V31Reporting.refresh()' in js.text
+    admin=client.get('/web/roster-admin.js')
+    assert admin.status_code==200
+    assert "bar.querySelector('.v31-context-actions')" in admin.text
