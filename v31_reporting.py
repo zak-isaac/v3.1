@@ -6,7 +6,7 @@ No production V3 database or real roster is changed. No AI rewriting yet.
 from __future__ import annotations
 import json
 import sqlite3
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -42,6 +42,10 @@ def _table(conn):
       pending_json TEXT NOT NULL DEFAULT '[]',
       ignored_json TEXT NOT NULL DEFAULT '[]', updated_at TEXT NOT NULL);
     """)
+    # Keep existing per-shift audits; add a dedicated next-calendar-day listing.
+    columns={row["name"] for row in conn.execute("PRAGMA table_info(report_audit)")}
+    if "next_day_json" not in columns:
+        conn.execute("ALTER TABLE report_audit ADD COLUMN next_day_json TEXT NOT NULL DEFAULT '[]'")
     # Migration only adds tables; original V2/V3 archive and new V3.1 shifts stay intact.
 
 
@@ -113,6 +117,67 @@ def roster_shift_map(tech_names, associates):
         if len(matches)==1:
             mapped[tech]=next(iter(matches))
     return mapped
+
+
+def _next_day_work_orders(rows, shift_day, selected, imported, pms, pending, ignored):
+    """Surface next-calendar-day work-order evidence WITHOUT reassigning ownership.
+
+    Work timestamps (labor Start / In Service / WO Last Complete) are
+    separate from administrative Closed / Update timestamps; neither
+    constitutes shift ownership by itself. Dedup by WO# across labor rows.
+    """
+    next_date=(date.fromisoformat(shift_day)+timedelta(days=1)).isoformat()
+    work_fields=("start_at","in_service_at","last_complete_at")
+    admin_fields=("closed_at","updated_at")
+    grouped={}
+    for row in rows:
+        activity=[(field,str(row.get(field) or "")) for field in work_fields
+                  if str(row.get(field) or "")[:10]==next_date]
+        administration=[(field,str(row.get(field) or "")) for field in admin_fields
+                        if str(row.get(field) or "")[:10]==next_date]
+        if not activity and not administration:
+            continue
+        wo=str(row.get("wo_number") or "").strip()
+        if not wo:
+            continue
+        item=grouped.setdefault(wo,{
+            "wo_number":wo,"asset_id":row.get("asset_id") or "",
+            "date":next_date,"technicians":set(),"statuses":set(),
+            "work_timestamps":set(),"admin_timestamps":set(),
+            "selected_technician":False})
+        if not item["asset_id"]:
+            item["asset_id"]=row.get("asset_id") or ""
+        tech=row.get("tech_name") or ""
+        if tech:item["technicians"].add(tech)
+        if tech in selected:item["selected_technician"]=True
+        if row.get("status"):item["statuses"].add(str(row["status"]))
+        item["work_timestamps"].update(value for _,value in activity)
+        item["admin_timestamps"].update(value for _,value in administration)
+    pending_numbers={str(x.get("wo_number") or "") for x in pending}
+    ignored_numbers={str(x.get("wo_number") or "") for x in ignored}
+    result=[]
+    for wo,item in sorted(grouped.items()):
+        is_imported=wo in imported
+        is_pm=wo in pms
+        if is_pm:disposition="PM counted in selected shift"
+        elif is_imported:disposition="Included in selected shift"
+        elif not item["selected_technician"]:disposition="Other technician / not selected"
+        elif wo in pending_numbers:disposition="Needs shift/closure review"
+        elif wo in ignored_numbers:disposition="Excluded from selected shift"
+        else:disposition="Not attributed to selected shift"
+        result.append({
+            "wo_number":wo,"asset_id":item["asset_id"],
+            "date":next_date,"technicians":sorted(item["technicians"]),
+            "status":", ".join(sorted(item["statuses"])),
+            "work_timestamps":sorted(item["work_timestamps"]),
+            "admin_timestamps":sorted(item["admin_timestamps"]),
+            "timestamp_type":"Work activity" if item["work_timestamps"]
+                             else "Administrative update only",
+            "selected_technician":item["selected_technician"],
+            "disposition":disposition,
+            "included_in_shift":is_imported or is_pm,
+        })
+    return result
 
 
 def import_selection(conn, shift_id: int, shift_code: str, shift_day: str,
@@ -198,19 +263,30 @@ def import_selection(conn, shift_id: int, shift_code: str, shift_day: str,
     for wo in sorted(completed):
         pending.append({"wo_number":wo,"reason":
                         "Completed but not Closed: add closure reminder or ignore"})
+    # Show next-day WOs even when the shift-attribution rules correctly
+    # reject them. Overnight S3/S5 WOs may already be included.
+    persisted_numbers={r["wo_number"] for r in conn.execute(
+        "SELECT wo_number FROM report_wo WHERE shift_id=?",(shift_id,))}
+    saved_pm_numbers={r["wo_number"] for r in conn.execute(
+        "SELECT wo_number FROM report_pm WHERE shift_id=?",(shift_id,))}
+    next_day=_next_day_work_orders(
+        all_rows,shift_day,selected,persisted_numbers,saved_pm_numbers,pending,ignored)
     summary.update({"added":added,"updated":updated,"preserved_edits":preserved,
                     "pm_wos_this_import":pm_count,"selected_technicians":len(selected),
                     "pending_review":len(pending),"ignored":len(ignored),
                     "staged_rows":len(all_rows),
-                    "roster_matched":len(roster_shifts or {})})
+                    "roster_matched":len(roster_shifts or {}),
+                    "next_day_wos":len(next_day)})
     conn.execute("""INSERT INTO report_techs(shift_id,selected_json) VALUES(?,?)
           ON CONFLICT(shift_id) DO UPDATE SET selected_json=excluded.selected_json""",
           (shift_id,_json(sorted(selected))))
-    conn.execute("""INSERT INTO report_audit(shift_id,summary_json,pending_json,ignored_json,updated_at)
-         VALUES(?,?,?,?,?) ON CONFLICT(shift_id) DO UPDATE SET
+    conn.execute("""INSERT INTO report_audit
+         (shift_id,summary_json,pending_json,ignored_json,next_day_json,updated_at)
+         VALUES(?,?,?,?,?,?) ON CONFLICT(shift_id) DO UPDATE SET
          summary_json=excluded.summary_json,pending_json=excluded.pending_json,
-         ignored_json=excluded.ignored_json,updated_at=excluded.updated_at""",
-         (shift_id,_json(summary),_json(pending),_json(ignored),now))
+         ignored_json=excluded.ignored_json,next_day_json=excluded.next_day_json,
+         updated_at=excluded.updated_at""",
+         (shift_id,_json(summary),_json(pending),_json(ignored),_json(next_day),now))
     return summary
 
 
@@ -250,7 +326,8 @@ def get_state(conn,shift_id):
             "stage":stage_data,
             "audit":{"summary":json.loads(audit["summary_json"]) if audit else {},
                      "pending":json.loads(audit["pending_json"]) if audit else [],
-                     "ignored":json.loads(audit["ignored_json"]) if audit else []}}
+                     "ignored":json.loads(audit["ignored_json"]) if audit else [],
+                     "next_day":json.loads(audit["next_day_json"]) if audit else []}}
 
 
 def save_draft(conn,shift_id,data):
