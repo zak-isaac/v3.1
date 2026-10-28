@@ -13,7 +13,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 _CHECK_EVERY_SECONDS = 300
-_last_check = 0.0
+_last_check = {}
 _TZ = ZoneInfo("America/Indiana/Indianapolis")
 
 
@@ -112,9 +112,10 @@ def sync(private: Path, database: Path, reserved: set, force=False):
     """
     global _last_check
     current = time.monotonic()
-    if not force and current - _last_check < _CHECK_EVERY_SECONDS:
+    key = str(database.resolve())
+    if not force and current - _last_check.get(key, 0.0) < _CHECK_EVERY_SECONDS:
         return
-    _last_check = current
+    _last_check[key] = current
     source, configured = _source(private)
     with _connect(database) as conn:
         _meta(conn, "last_checked", datetime.now(_TZ).isoformat())
@@ -144,12 +145,8 @@ def sync(private: Path, database: Path, reserved: set, force=False):
                     source_active=1,last_seen=excluded.last_seen
                 """, (*item, seen_at))
             # A removed Drax row is disabled, not allowed to keep logging in.
-            if entries:
-                placeholders = ",".join("?" for _ in entries)
-                conn.execute(f"UPDATE roster_associates SET source_active=0 WHERE manual=0 AND number NOT IN ({placeholders})",
-                             tuple(entries))
-            else:
-                conn.execute("UPDATE roster_associates SET source_active=0 WHERE manual=0")
+            conn.execute("UPDATE roster_associates SET source_active=0 WHERE manual=0 AND last_seen<>?",
+                         (seen_at,))
             _meta(conn, "signature", identity)
             _meta(conn, "source_name", source.name)
             _meta(conn, "last_synced", seen_at)
