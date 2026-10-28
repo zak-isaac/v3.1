@@ -181,6 +181,7 @@ LOTO Verification: ${state.loto?'Verified':'Not verified'}${state.missingKey?`\n
 V3.1 LOCAL SHIFT REPORT — NO EMAIL SENT`;}
 function previewReport(){showModal('Shift Passdown Preview','Review the selected shift and imported work before creating the Outlook EML.',`<div class="preview-document">${esc(createReport())}</div>`,[{text:'Close',onClick:closeModal},{text:'Generate Outlook EML',kind:'btn-primary',onClick:()=>{closeModal();emlDownload();}}]);}
 async function emlDownload(){
+  await window.V31Reporting?.flushDraft();
   const report=createReport();
   const generate=$('#generate-eml');
   generate.disabled=true;
