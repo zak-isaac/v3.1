@@ -276,3 +276,37 @@ def test_completed_work_order_reminder_is_not_falsely_rts(client,monkeypatch):
     assert len(data["rows"])==1
     assert data["rows"][0]["status"]=="PENDING"
     assert "Please close this WO" in data["rows"][0]["remarks"]
+
+
+def test_cross_shift_breakdown_can_transition_from_oos_to_rts(client,monkeypatch,tmp_path):
+    import csv
+    import v31_roster
+    clock(monkeypatch,day=26,hour=10)
+    with (tmp_path/"mst-roster.csv").open("w",newline="") as output:
+        writer=csv.writer(output)
+        writer.writerow(["Name","Assoc. #","Shift","Job Title"])
+        writer.writerow(["Synthetic A","111111","S2","MST"])
+    v31_roster.sync(tmp_path,tmp_path/"v31.sqlite3",set(m.MANAGEMENT_ASSOCIATES),force=True)
+    s1=enter(client,"S1")
+    upload(client,[row("BREAK1",status="In Process",category="Breakdown",
+                       started="2026-10-26 09:00",serviced=None,
+                       remarks="Asset stopped; awaiting replacement")])
+    first=import_techs(client,["Synthetic A"])
+    assert first.status_code==200,first.text
+    first_record=client.get("/api/reporting/state").json()["rows"][0]
+    assert first_record["status"]=="OOS"
+    clock(monkeypatch,day=26,hour=14)
+    second=client.post("/api/shifts/start",json={"code":"S2"})
+    assert second.status_code==200,second.text
+    s2=second.json()["id"]
+    upload(client,[row("BREAK1",status="Closed",category="Breakdown",
+                       started="2026-10-26 13:55",serviced="2026-10-26 14:10",
+                       remarks="Replacement installed and tested")])
+    final=import_techs(client,["Synthetic A"])
+    assert final.status_code==200,final.text
+    current=client.get("/api/reporting/state").json()["rows"]
+    assert len(current)==1 and current[0]["status"]=="RTS"
+    with m._db() as db:
+        old=db.execute("SELECT status FROM report_wo WHERE shift_id=?",(s1,)).fetchone()
+        new=db.execute("SELECT status FROM report_wo WHERE shift_id=?",(s2,)).fetchone()
+    assert old["status"]=="OOS" and new["status"]=="RTS"
