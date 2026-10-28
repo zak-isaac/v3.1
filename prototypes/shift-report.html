@@ -310,8 +310,8 @@ window.v31ReportView={
     state.cetarisFile=data.stage?.filename||'';
     // Progress is based on actual reporting milestones, never time elapsed.
     // A completely empty shift report must show 0%.
-    state.progress=data.report_saved?100:!data.stage?.staged?0:
-      !state.techs.length?20:!(state.rows.length+state.pmCount)?30:75;
+    state.progress=!data.stage?.staged?0:!data.stage.imported?20:
+      data.report_saved?100:!(state.rows.length+state.pmCount)?30:75;
     if(data.draft){
       state.vendors=data.draft.vendors||[];state.ro=data.draft.ro||[];
       state.notes=data.draft.notes||'';state.loto=!!data.draft.loto;
@@ -320,7 +320,8 @@ window.v31ReportView={
       $('#loto-state').textContent=state.loto?'Verified':'Not verified';
       $('#loto-state').classList.toggle('missing',!state.loto);
     }
-    $('#cetaris-state').textContent=data.stage?.staged?'Cetaris File Staged':'No Cetaris File Imported';
+    $('#cetaris-state').textContent=!data.stage?.staged?'No Cetaris File Imported':
+      data.stage.imported?'Cetaris Imported':'Cetaris Parsed · Confirm Technicians';
     $('#cetaris-filename').textContent=state.cetarisFile||'Choose an .xlsx or .csv file';
     updateMetrics();renderTab();
   },
