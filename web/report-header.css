@@ -1,0 +1,127 @@
+/* IND3 V3.1 — official Walmart brand, compact fixed sidebar, visible Cetaris workflow. */
+/* The real 2025 Walmart artwork is bundled locally and displayed without any CSS imitation. */
+.sidebar-brand{
+  padding:4px 8px 14px;
+  margin:0 0 11px;
+  gap:10px;
+  align-items:stretch;
+}
+.v31-brand-logo{
+  display:flex;align-items:center;justify-content:center;
+  background:#fff;border-radius:10px;
+  border:1px solid #d6e1ed;
+  padding:10px 9px;min-height:59px;
+}
+.v31-brand-logo img{
+  display:block;width:100%;height:auto;max-width:190px;
+  max-height:43px;object-fit:contain;
+}
+.v31-brand-identity{display:grid;gap:5px;padding:3px 5px 0}
+.v31-brand-site{
+  font-size:11px;letter-spacing:.12em;font-weight:850;
+  color:#ffc220;line-height:1.1;
+}
+.v31-brand-dept{display:grid;gap:5px}
+.v31-brand-dept strong{
+  color:#fff;font-size:14px;font-weight:770;
+  line-height:1.25;letter-spacing:-.01em;
+}
+.v31-brand-dept small{color:#bdcee2;font-size:11px;line-height:1.3}
+/* Above content stays fixed; no independent vertical scroll on the sidebar. */
+.sidebar{overflow:hidden;overscroll-behavior:none}
+.shift-header{
+  display:grid;grid-template-columns:minmax(0,1fr) minmax(200px,290px);
+  grid-template-rows:auto auto;align-items:center;
+  gap:13px 18px;min-height:0;padding:16px 18px;
+}
+.shift-header .shift-head-main{grid-column:1;grid-row:1;min-width:0}
+.shift-header .progress-area{
+  grid-column:2;grid-row:1;min-width:0;width:100%;border-left:0;
+  padding-left:0;align-self:center;
+}
+.shift-header .progress-track{height:9px;background:#e3eaf2}
+.shift-header #progress-fill{width:0%;background:linear-gradient(90deg,#1a75c2,#30a2cb);transition:width .25s ease}
+.shift-header .v31-import-in-header{
+  grid-column:1 / -1;grid-row:2;min-width:0;
+  border-top:1px solid #dce5ef;padding-top:12px;
+}
+.v31-import-in-header .import-card{
+  box-shadow:none;border:0;background:transparent;
+  padding:0;min-height:0;display:flex;
+  justify-content:space-between;align-items:center;
+  gap:12px;
+}
+.v31-import-in-header .import-text{flex:1 1 220px;min-width:150px;gap:8px}
+.v31-import-in-header .import-text strong{
+  font-size:12px;font-weight:800;color:#1b3854;
+}
+.v31-import-in-header .import-text small{
+  font-size:11px;word-break:break-word;color:#688098
+}
+.v31-import-in-header .import-actions{
+  display:flex;align-items:center;justify-content:flex-end;
+  gap:8px;flex-wrap:wrap;
+}
+.v31-import-in-header .import-actions .btn{
+  border-radius:8px;min-height:40px;font-size:12px;
+  padding:9px 13px;font-weight:750;white-space:nowrap;
+}
+#replace-file.v31-cetaris-primary{
+  color:#fff;background:#bf2534;border:1px solid #a71c2b;
+  box-shadow:0 2px 7px #981c2635;
+  font-size:12px;font-weight:820;
+}
+#replace-file.v31-cetaris-primary .icon{color:#fff}
+#replace-file.v31-cetaris-primary:hover{background:#a81b2b;box-shadow:0 3px 9px #981c2650}
+#replace-file.v31-cetaris-primary:focus-visible{outline:3px solid #ffc220;outline-offset:3px}
+#replace-file.v31-cetaris-primary:disabled{opacity:.55;cursor:progress}
+.v31-import-in-header #change-techs,
+.v31-import-in-header #view-audit{
+  border:1px solid #cbd9e7;background:#fff;color:#264e76;
+}
+.v31-import-in-header #change-techs:hover,
+.v31-import-in-header #view-audit:hover{background:#f1f6fa}
+.v31-import-in-header .import-check{background:#eef2f8;color:#3d6b91}
+#v31-import-feedback{
+  display:none;border:1px solid #c9d9e7;border-radius:8px;
+  padding:9px 12px;margin-top:9px;background:#f2f7fb;
+  font-size:12px;line-height:1.45;color:#214e73;
+}
+#v31-import-feedback:not(:empty){display:block}
+#v31-import-feedback.warning{border-color:#ecd1a0;background:#fff9e9;color:#764c00}
+#v31-import-feedback.error{border-color:#eebabb;background:#fff2f3;color:#9c2934}
+.v31-tech-roster{
+  display:grid;gap:12px;font-size:13px;
+}
+.v31-tech-roster .v31-roster-search{width:100%;padding:10px;border:1px solid #cbd9e7;border-radius:8px}
+.v31-tech-group{
+  border:1px solid #dce5ed;border-radius:10px;background:#fff;
+  overflow:hidden;
+}
+.v31-tech-group h3{padding:12px 13px;margin:0;background:#f2f7fb;font-size:13px;font-weight:800;color:#254b71}
+.v31-tech-group p{padding:0 13px;font-size:11px;line-height:1.4;color:#587087}
+.v31-tech-group .v31-tech-list{max-height:200px;overflow-y:auto;display:grid}
+.v31-tech-person{display:flex;align-items:center;gap:11px;padding:10px 13px;border-top:1px solid #eef2f6;cursor:pointer}
+.v31-tech-person:hover{background:#f8fafc}
+.v31-tech-person input{width:17px;height:17px;accent-color:#216ac4;flex-shrink:0}
+.v31-tech-person strong{display:block;font-size:12px;color:#203d5c}
+.v31-tech-person small{display:block;font-size:11px;color:#647a90;margin-top:3px}
+.v31-tech-tools{display:flex;gap:8px;flex-wrap:wrap}
+.v31-tech-tools button{background:#eef5fb;border:1px solid #c9d8e7;color:#254b70;border-radius:7px;padding:7px 9px;font-size:11px}
+@media(max-width:1300px){
+  .shift-header{grid-template-columns:minmax(0,1fr) minmax(175px,240px)}
+  .v31-import-in-header .import-card{flex-wrap:wrap}
+  .v31-import-in-header .import-actions{justify-content:flex-start;width:100%}
+}
+@media(max-width:840px){
+  .shift-header{grid-template-columns:minmax(0,1fr) minmax(155px,220px);padding:13px}
+  .v31-brand-logo{display:none}
+}
+@media(max-width:560px){
+  .shift-header{grid-template-columns:1fr}
+  .shift-header .shift-head-main{grid-column:1;grid-row:1}
+  .shift-header .progress-area{grid-column:1;grid-row:2;max-width:none}
+  .shift-header .v31-import-in-header{grid-column:1;grid-row:3}
+  .v31-import-in-header .import-actions{display:grid;grid-template-columns:1fr}
+  .v31-import-in-header .import-actions .btn{justify-content:center}
+}
