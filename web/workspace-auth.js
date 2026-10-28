@@ -1,6 +1,4 @@
-/* V3.1 signed shift workspace: navigation and switcher only.
- * Existing Shift Report data/actions are illustrative frontend previews.
- */
+/* V3.1 signed shift workspace: V3-style sidebar navigation, shift sessions and reporting context. */
 (async () => {
   'use strict';
   const $ = selector => document.querySelector(selector);
@@ -23,13 +21,24 @@
   const reportTitle=document.querySelector('.shift-heading h1');
   const originalTitle=reportTitle?.textContent||'Shift Report';
   const reportText=$('.footer-tip span');
-  if(reportText) reportText.textContent='New V3.1 project. Sample report content; no production work orders are connected.';
-  const bar=document.createElement('div');
+  if(reportText) reportText.textContent='Work orders and notes belong to the selected shift only. Data remains in the independent V3.1 database.';
+  const bar=document.createElement('section');
   bar.id='v31-context-bar';
-  bar.style.cssText='display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;background:#f4f8ff;border:1px solid #cfdef2;border-radius:12px;padding:12px 16px;margin:12px 0;color:#193d69;font:600 14px Segoe UI,Arial,sans-serif';
-  bar.innerHTML='<span id="v31-context-label">Select a shift to start reporting</span><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><button id="v31-select-shift" type="button" style="border:1px solid #1763bd;background:white;color:#0755ad;border-radius:8px;padding:9px 13px;font-weight:700;cursor:pointer">Choose Shift</button><button id="v31-signout" type="button" style="border:1px solid #d2dff1;background:#f6f9ff;color:#395473;border-radius:8px;padding:9px 13px;cursor:pointer">Sign Out</button></div>';
-  const anchor=$('.shift-header')||$('#report-screen')||document.querySelector('main');
-  if(anchor) anchor.insertAdjacentElement('afterend',bar); else document.body.prepend(bar);
+  bar.setAttribute('aria-label','Active shift and account controls');
+  bar.innerHTML=
+    '<div id="v31-context-label" class="v31-session-heading">Selected Shift</div>'+
+    '<div class="v31-session-meta">'+
+      '<div><strong>Shift Date</strong><span id="v31-sidebar-date">—</span></div>'+
+      '<div><strong>Scheduled Hours</strong><span id="v31-sidebar-schedule">—</span></div>'+
+      '<div><strong>Reporting Window</strong><span id="v31-sidebar-window">—</span></div>'+
+      '<div><strong>Current Time</strong><span id="v31-sidebar-clock">—</span></div>'+
+    '</div>'+
+    '<div class="v31-context-actions">'+
+      '<button id="v31-select-shift" type="button">Choose Shift</button>'+
+      '<button id="v31-signout" type="button">Sign Out</button>'+
+    '</div>';
+  const anchor=$('#v31-sidebar-controls')||$('.sidebar');
+  if(anchor)anchor.append(bar);else document.body.prepend(bar);
   const modal=document.createElement('dialog');
   modal.id='v31-shift-dialog';
   modal.style.cssText='width:min(560px,calc(100vw - 32px));max-height:85vh;overflow:auto;border:1px solid #cfdef2;border-radius:16px;padding:24px;box-shadow:0 28px 80px #07265755;font-family:Segoe UI,Arial,sans-serif';
@@ -55,10 +64,13 @@
       if(spans[1]) spans[1].textContent=fmtTime(context.selected.scheduled_start)+' – '+fmtTime(context.selected.scheduled_end);
       if(spans[2]) spans[2].textContent='Reporting window closes '+fmtTime(context.selected.closes_at);
     }
-    $('#v31-context-label').textContent=
-      context.selected.code+' · '+context.selected.date+
-      ' · Window '+fmtTime(context.selected.opens_at)+' – '+fmtTime(context.selected.closes_at)+
-      ' · Current time '+fmtTime(context.now);
+    $('#v31-context-label').textContent=context.selected.code+' · Active Shift';
+    $('#v31-sidebar-date').textContent=fmtDay(context.selected.scheduled_start);
+    $('#v31-sidebar-schedule').textContent=
+      fmtTime(context.selected.scheduled_start)+' – '+fmtTime(context.selected.scheduled_end);
+    $('#v31-sidebar-window').textContent=
+      fmtTime(context.selected.opens_at)+' – '+fmtTime(context.selected.closes_at);
+    $('#v31-sidebar-clock').textContent=fmtTime(context.now);
     if(reportTitle) reportTitle.textContent=context.selected?`${context.selected.code} Shift Report`:originalTitle;
     const list=$('#v31-shift-list');list.replaceChildren();
     if(!context.shifts.length){
@@ -77,13 +89,21 @@
           await request(shift.action==='resume'?'/api/shifts/resume':'/api/shifts/start',
             shift.action==='resume'?{shift_id:shift.id}:{code:shift.code});
           modal.close();await draw();
+          if(window.V31Reporting?.refresh)await window.V31Reporting.refresh();
         }catch(e){alert(e.message);}finally{b.disabled=false;}
       });
       row.append(label,b);list.append(row);
     }
   };
   $('#v31-select-shift').addEventListener('click',async()=>{try{await draw();modal.showModal();}catch(e){alert(e.message);}});
-  async function signout(){try{await request('/api/logout',{});}finally{window.location.replace('/');}}
+  async function signout(){
+    try{await request('/api/logout',{});}
+    finally {
+      // The public entry screen evaluates all current open and ready shifts.
+      // Sign Out never closes a shift and never assumes only one is active.
+      window.location.replace('/?shift-selection=1');
+    }
+  }
   $('#v31-signout').addEventListener('click',signout);
   const endButton=$('#end-shift');
   if (endButton) endButton.addEventListener('click',async e=>{
