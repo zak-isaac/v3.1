@@ -330,7 +330,7 @@ def test_next_day_wo_visible_in_audit_without_stealing_next_shift(client,monkeyp
     assert len(day)==1
     assert day[0]["wo_number"]=="TOMORROW1"
     assert day[0]["date"]=="2026-10-27"
-    assert day[0]["timestamp_type"]=="Work activity"
+    assert day[0]["timestamp_type"]=="Work/completion recorded"
     assert day[0]["selected_technician"] is True
     assert day[0]["included_in_shift"] is False
     assert day[0]["disposition"]=="Not attributed to selected shift"
@@ -381,7 +381,7 @@ def test_next_day_administrative_closure_is_separate_from_work_date(client,monke
     assert len(data["rows"])==1
     audit=data["audit"]["next_day"]
     assert len(audit)==1
-    assert audit[0]["timestamp_type"]=="Administrative update only"
+    assert audit[0]["timestamp_type"]=="WO opened / administrative update only"
     assert audit[0]["work_timestamps"]==[]
     assert audit[0]["admin_timestamps"]==["2026-10-27T09:00:00"]
     assert audit[0]["included_in_shift"] is True
@@ -431,3 +431,20 @@ def test_next_day_audit_migrates_previous_v31_schema_without_deleting_old_data(c
     with m._db() as db:
         assert "next_day_json" in {r["name"] for r in
             db.execute("PRAGMA table_info(report_audit)")}
+
+
+def test_next_day_opened_wo_is_audited_without_work_or_close(client,monkeypatch):
+    clock(monkeypatch,day=26,hour=10)
+    enter(client,"S1")
+    r=row("NEXT_OPEN",started=None,serviced=None,status="Open")
+    r["WO Date / Time"]="2026-10-27 07:00"
+    assert upload(client,[r]).status_code==200
+    assert import_techs(client,["Synthetic A"]).status_code==200
+    data=client.get("/api/reporting/state").json()
+    assert data["rows"]==[]
+    assert len(data["audit"]["next_day"])==1
+    item=data["audit"]["next_day"][0]
+    assert item["wo_number"]=="NEXT_OPEN"
+    assert item["work_timestamps"]==[]
+    assert item["admin_timestamps"]==["2026-10-27T07:00:00"]
+    assert item["included_in_shift"] is False
