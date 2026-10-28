@@ -14,7 +14,7 @@ Audit focus: new `zak-isaac/v3.1` only. The original Workshop V3 remains unchang
 | Active and handoff screens | Popup identity check, chosen shift ID | `test_login_popup_regex_and_manager_selector` |
 | One-hour boundaries | Facility clock, S3/S5 next-day handling | `test_time_window_one_hour_before_after_and_overnight` |
 | Two active reports maximum | Reject third start, even if three windows become eligible | `test_two_active_shift_limit_even_if_three_windows_overlap` |
-| OT | Management-granted date/shift, recorded `is_ot`, revoke | `test_overtime_grant_and_revocation` |
+| Assigned-shift-only policy | MST can access only the Drax-assigned shift; all previous overtime routes are removed | `test_overtime_disabled_and_mst_locked_to_drax_shift` |
 | End Shift | Require server-saved report; close selected report only | `test_report_required_before_ending_and_saved_in_correct_shift` |
 | Auto close | Startup, request-time and every minute after end + 1 hour | `test_late_closure_auto_expires_and_preserves_unsubmitted_history` |
 | No fabricated work orders | Empty Shift Happenings on first load | `test_zero_sample_maintenance_data_in_report` |
@@ -27,3 +27,9 @@ Audit focus: new `zak-isaac/v3.1` only. The original Workshop V3 remains unchang
 4. Generated reports currently use the local preview frontend, not real Cetaris ingestion. End Shift can require saving a report, but that does not mean the reporting engine is production-ready.
 
 CI runs `pytest` for both login and lifecycle test modules and Node syntax checks for all three active JavaScript files.
+
+## Changes following the audit
+
+- **Drax source alignment:** V3.1 uses the original V3 canonical Windows OneDrive file `C:\Users\ins0002\OneDrive - Walmart Inc\Drax  Associates.xlsx` by default when it exists. The original `ASSOCIATES_PATH` environment variable still overrides this default. `IND3_V31_ROSTER_PATH` is also supported for independent Mac development.
+- **Overtime removed for now:** Overtime grants, UI, API routes, and permission logic are disabled. No new overtime table or shift flag is created. Legacy DB columns may remain inert to avoid destroying historical local data.
+- **Production boundary:** Original V3 was not modified. Drax is read-only and still must be accessible locally through an approved OneDrive sync.
