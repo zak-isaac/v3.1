@@ -73,7 +73,8 @@ def import_snapshot(source: Path, private: Path):
         raise LegacyHistoryError("Legacy database file not found")
     private.mkdir(parents=True, exist_ok=True)
     archive = private / "legacy-v2-v3-archive.sqlite3"
-    with _ro(source) as origin:
+    origin = _ro(source)
+    try:
         source_tables = _validate(origin)
         source_counts = _counts(origin, source_tables)
         fd, temp_name = tempfile.mkstemp(prefix=".legacy-backup-", suffix=".sqlite3",
@@ -81,18 +82,31 @@ def import_snapshot(source: Path, private: Path):
         os.close(fd)
         staging = Path(temp_name)
         try:
-            with sqlite3.connect(staging) as copy:
-                origin.backup(copy)
-            with _ro(staging) as copied:
-                copied_tables = _validate(copied)
-                copied_counts = _counts(copied, copied_tables)
-                if copied_tables != source_tables or copied_counts != source_counts:
-                    raise LegacyHistoryError("History backup verification failed")
+            # sqlite3's context manager only commits/rolls back a transaction;
+            # it does NOT close the connection. On Windows a still-open handle
+            # blocks the rename/unlink below, so close explicitly afterward.
+            copy = sqlite3.connect(staging)
+            try:
+                with copy:
+                    origin.backup(copy)
+            finally:
+                copy.close()
+            copied = _ro(staging)
+            try:
+                with copied:
+                    copied_tables = _validate(copied)
+                    copied_counts = _counts(copied, copied_tables)
+                    if copied_tables != source_tables or copied_counts != source_counts:
+                        raise LegacyHistoryError("History backup verification failed")
+            finally:
+                copied.close()
             # Replace only the local V3.1 historical snapshot.
             staging.replace(archive)
             archive.chmod(0o600)
         finally:
             staging.unlink(missing_ok=True)
+    finally:
+        origin.close()
     metadata = {"source": str(source), "archived_at":datetime.now(TZ).isoformat(),
                 "table_count":len(source_tables), "counts":source_counts,
                 "format":"Exact V2/V3 SQLite backup; independent from V3.1 sessions"}

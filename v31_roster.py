@@ -47,9 +47,14 @@ def _source(private: Path):
     if configured:
         file = Path(configured).expanduser()
         return file if file.is_file() else None, configured
-    original = Path(r"C:\Users\ins0002\OneDrive - Walmart Inc\Drax  Associates.xlsx")
-    if original.is_file():
-        return original, None
+    # Test-only escape hatch: skips the hardcoded production OneDrive check so
+    # automated tests never accidentally read the real roster on a developer
+    # machine where that file happens to be synced. Unset in every real
+    # deployment, so production fallback behavior is unchanged by default.
+    if not os.getenv("IND3_V31_TEST_SKIP_ONEDRIVE"):
+        original = Path(r"C:\Users\ins0002\OneDrive - Walmart Inc\Drax  Associates.xlsx")
+        if original.is_file():
+            return original, None
     choices = [private / "Drax  Associates.xlsx", private / "Drax Associates.xlsx",
                private / "mst-roster.xlsx", private / "mst-roster.csv"]
     return next((file for file in choices if file.is_file()), None), None

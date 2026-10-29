@@ -263,6 +263,9 @@ def test_original_v3_drax_path_is_preferred_when_present(tmp_path, monkeypatch):
     original=r"C:\Users\ins0002\OneDrive - Walmart Inc\Drax  Associates.xlsx"
     monkeypatch.delenv("IND3_V31_ROSTER_PATH",raising=False)
     monkeypatch.delenv("ASSOCIATES_PATH",raising=False)
+    # This test specifically verifies the real OneDrive-priority branch, so it
+    # opts back out of the global test-isolation flag set by conftest.py.
+    monkeypatch.delenv("IND3_V31_TEST_SKIP_ONEDRIVE",raising=False)
     monkeypatch.setattr(Path, "is_file",
                         lambda self: str(self)==original or old_is_file(self))
     source, override=roster_module._source(tmp_path)
