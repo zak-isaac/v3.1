@@ -320,8 +320,11 @@ def public_flow(now: datetime | None = None) -> dict:
     # Two active sessions also need the two-card handoff screen.
     screen = ('handoff' if len(opened)+len(ready) >= 2
               else 'active' if opened else 'login')
+    sync_status = v31_roster.status(DB_FILE)
+    sync_health = ('connected' if sync_status['last_synced'] and not sync_status['error']
+                   else 'stale' if sync_status['last_synced'] else 'unavailable')
     return {'screen': screen, 'open': opened, 'ready': ready, 'now': moment.isoformat(),
-            'grace_minutes': 60}
+            'grace_minutes': 60, 'roster_health': sync_health}
 
 
 def state(session: dict, profile: dict) -> dict:
@@ -364,6 +367,8 @@ def signin_page(request: Request):
     if session and state(session, roster()[session['a']])['selected']:
         return RedirectResponse('/shift-report.html', status_code=303)
     html = (ROOT / 'prototypes' / 'login-flow.html').read_text(encoding='utf-8')
+    # Preserve approved artwork while replacing stale prototype version labels.
+    html = html.replace('v1.0.0', 'V3.1').replace('Version 1.0.0', 'Version 3.1')
     # Keep the approved original page CSS and media; remove its demo-only JS.
     start = html.rfind('<script>')
     end = html.rfind('</script>')
@@ -413,6 +418,441 @@ class ShiftChoice(BaseModel):
 
 class ShiftResume(BaseModel):
     shift_id: int = Field(gt=0)
+
+
+class ShiftEnter(BaseModel):
+    associate: str = Field(pattern=r'^\d{1,12}
+def entry_status():
+    return public_flow()
+
+
+@app.post('/api/login')
+def login(payload: LoginRequest, request: Request, response: Response):
+    _origin_check(request)
+    profile = roster().get(payload.associate)
+    if not profile:
+        raise HTTPException(401, 'Associate number not authorized for this local preview')
+    # Original V3 policy: managers select; ordinary MSTs enter their own
+    # roster-assigned shift directly. An MST never chooses another shift.
+    if profile.get('all_shifts'):
+        _set_cookie(response, payload.associate)
+        _record_login_event(payload.associate, 'manager_signin')
+        return {'destination': '/', 'manager_selection_required': True,
+                'role': 'manager'}
+    if payload.intent == 'select':
+        # Popup path: do not create/attach an MST shift before a choice is checked.
+        _set_cookie(response, payload.associate)
+        _record_login_event(payload.associate, 'popup_signin')
+        return {'destination': '/', 'selection_required': True, 'role': 'mst'}
+    now = datetime.now(TZ)
+    opened, ready = shift_choices(profile, now, payload.associate)
+    # An MST may enter only the Drax-assigned shift; management chooses S1–S5.
+    if opened:
+        # Assigned shift already opened by this MST: resume that report.
+        selected = opened[0]
+    elif ready:
+        # Start assigned shift only if nobody else owns the current instance.
+        target = ready[0]
+        with _db() as conn:
+            if conn.execute('SELECT COUNT(*) FROM shifts WHERE open=1').fetchone()[0] >= 2:
+                raise HTTPException(409, 'Two overlapping shifts are already active')
+            conn.execute('''INSERT OR IGNORE INTO shifts
+                (code,shift_day,owner,created_at) VALUES (?,?,?,?)''',
+                (target['code'], target['date'], payload.associate, now.isoformat()))
+            row = conn.execute('SELECT * FROM shifts WHERE code=? AND shift_day=?',
+                               (target['code'], target['date'])).fetchone()
+            if not row['open'] or row['owner'] != payload.associate:
+                raise HTTPException(409, 'This shift is already open under another MST. Contact management.')
+            selected = entry(row)
+    else:
+        code = profile.get('shift')
+        raise HTTPException(409, f'{code} is outside its reporting window, or is open under another MST.')
+    _set_cookie(response, payload.associate, selected['id'])
+    _record_login_event(payload.associate, 'mst_signin', selected['id'])
+    return {'destination': '/shift-report.html', 'role': 'mst',
+            'shift': selected['code']}
+
+
+@app.get('/api/me')
+def me(request: Request):
+    session, profile = who(request)
+    return state(session, profile)
+
+
+@app.post('/api/shifts/start')
+def start_shift(payload: ShiftChoice, request: Request, response: Response):
+    _origin_check(request)
+    session, profile = who(request)
+    now = datetime.now(TZ)
+    expire_shifts(now)
+    day = eligible_date(payload.code, now)
+    if day is None:
+        raise HTTPException(409, 'Shift reporting window is not active')
+    if not allowed(profile, payload.code, day, session['a']):
+        raise HTTPException(403, 'Shift is not assigned to this associate')
+    with _db() as conn:
+        existing = conn.execute('SELECT * FROM shifts WHERE code=? AND shift_day=?',
+                                (payload.code, day.isoformat())).fetchone()
+        if existing is None and now > shift_times(payload.code, day)[1]:
+            raise HTTPException(409, 'New shift may not start after its scheduled end')
+        if existing is None and conn.execute('SELECT COUNT(*) FROM shifts WHERE open=1').fetchone()[0] >= 2:
+            raise HTTPException(409, 'Two overlapping shifts are already active')
+        conn.execute('''INSERT OR IGNORE INTO shifts
+            (code,shift_day,owner,created_at) VALUES (?,?,?,?)''',
+            (payload.code, day.isoformat(), session['a'], now.isoformat()))
+        row = conn.execute('SELECT * FROM shifts WHERE code=? AND shift_day=?',
+                           (payload.code, day.isoformat())).fetchone()
+        if not row['open']:
+            raise HTTPException(409, 'This shift was already ended')
+        if not profile.get('all_shifts') and row['owner'] != session['a']:
+            raise HTTPException(403, 'The shift belongs to another MST')
+        selected = entry(row)
+    _set_cookie(response, session['a'], selected['id'])
+    _record_login_event(session['a'], 'start_shift', selected['id'])
+    return selected
+
+
+@app.post('/api/shifts/resume')
+def resume_shift(payload: ShiftResume, request: Request, response: Response):
+    _origin_check(request)
+    session, profile = who(request)
+    with _db() as conn:
+        row = conn.execute('SELECT * FROM shifts WHERE id=? AND open=1', (payload.shift_id,)).fetchone()
+    if row is None or eligible_date(row['code'], datetime.now(TZ)) != date.fromisoformat(row['shift_day']):
+        raise HTTPException(404, 'Active shift not found within its reporting window')
+    if not allowed(profile, row['code'], date.fromisoformat(row['shift_day']), session['a']):
+        raise HTTPException(403, 'Shift is not assigned to this associate')
+    if not profile.get('all_shifts') and row['owner'] != session['a']:
+        raise HTTPException(403, 'Only the shift starter or management may resume this report')
+    _set_cookie(response, session['a'], row['id'])
+    _record_login_event(session['a'], 'resume_shift', row['id'])
+    return entry(row)
+
+
+@app.post('/api/logout')
+def logout(request: Request, response: Response):
+    _origin_check(request)
+    session = parse_cookie(request.cookies.get(SESSION_COOKIE))
+    if session:
+        _record_login_event(session['a'], 'sign_out', session['s'] or None)
+    response.delete_cookie(SESSION_COOKIE, path='/')
+    return {'signed_out': True}
+
+@app.post('/api/shifts/end')
+def end_shift(request: Request, response: Response):
+    """Finish only the bound session; overlapping sessions remain untouched."""
+    _origin_check(request)
+    session, profile = who(request)
+    if not session['s']:
+        raise HTTPException(409, 'No selected shift')
+    with _db() as conn:
+        row = conn.execute('SELECT * FROM shifts WHERE id=? AND open=1',
+                           (session['s'],)).fetchone()
+        if row is None or not allowed(profile, row['code'], date.fromisoformat(row['shift_day']), session['a']):
+            raise HTTPException(404, 'Active shift not found')
+        if not profile.get('all_shifts') and row['owner'] != session['a']:
+            raise HTTPException(403, 'Only the shift starter or management may close it')
+        if not row['report_saved_at']:
+            raise HTTPException(409, 'Generate and save the passdown report before ending this shift')
+        conn.execute("""UPDATE shifts SET open=0, closed_at=?,closed_reason='completed'
+                        WHERE id=?""",(datetime.now(TZ).isoformat(),session['s']))
+    _set_cookie(response, session['a'], 0)
+    _record_login_event(session['a'], 'end_shift', session['s'])
+    return {'ended': True, 'shift_id': session['s']}
+
+
+class ReportPayload(BaseModel):
+    content: str = Field(min_length=30, max_length=90000)
+
+
+class AdminAddAssociate(BaseModel):
+    number: str = Field(pattern=r'^\d{1,12}$')
+    name: str = Field(min_length=2, max_length=180)
+    shift: Literal['', 'S1', 'S2', 'S3', 'S4', 'S5'] = ''
+    is_mst: bool = True
+
+
+class AdminAssociateOverride(BaseModel):
+    number: str = Field(pattern=r'^\d{1,12}$')
+    is_mst: bool | None = None
+    shift: Literal['S1', 'S2', 'S3', 'S4', 'S5'] | None = None
+    reset: bool = False
+
+
+class AdminEditAssociate(BaseModel):
+    number: str = Field(min_length=1, max_length=12, pattern='^[0-9]+$')
+    full_name: str = Field(min_length=2, max_length=180)
+    new_number: str | None = Field(default=None, min_length=1, max_length=12, pattern='^[0-9]+$')
+
+def require_manager(request: Request) -> dict:
+    session, profile = who(request)
+    if not profile.get('all_shifts'):
+        raise HTTPException(403, 'Management access required')
+    return session
+
+
+@app.get('/api/admin/roster')
+def admin_roster(request: Request):
+    require_manager(request)
+    return v31_roster.status(DB_FILE, include_rows=True)
+
+
+@app.post('/api/admin/roster/reload')
+def admin_roster_reload(request: Request):
+    _origin_check(request)
+    require_manager(request)
+    v31_roster.sync(PRIVATE, DB_FILE, set(MANAGEMENT_ASSOCIATES), force=True)
+    return v31_roster.status(DB_FILE, include_rows=True)
+
+
+@app.post('/api/admin/roster/add')
+def admin_roster_add(payload: AdminAddAssociate, request: Request):
+    _origin_check(request)
+    require_manager(request)
+    if payload.number in MANAGEMENT_ASSOCIATES:
+        raise HTTPException(403, 'Management profiles cannot be replaced')
+    try:
+        v31_roster.add_manual(DB_FILE, payload.number, payload.name.strip(), payload.shift, payload.is_mst)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc))
+    return v31_roster.status(DB_FILE, include_rows=True)
+
+
+@app.post('/api/admin/roster/override')
+def admin_roster_override(payload: AdminAssociateOverride, request: Request):
+    _origin_check(request)
+    require_manager(request)
+    if payload.number in MANAGEMENT_ASSOCIATES:
+        raise HTTPException(403, 'Management profiles cannot be modified here')
+    if not payload.reset and payload.is_mst is None and payload.shift is None:
+        raise HTTPException(422, 'Provide a status/shift override or reset')
+    try:
+        v31_roster.set_override(DB_FILE, payload.number,
+                                mst=payload.is_mst, shift=payload.shift, reset=payload.reset)
+    except KeyError as exc:
+        raise HTTPException(404, str(exc))
+    return v31_roster.status(DB_FILE, include_rows=True)
+
+
+@app.post('/api/admin/roster/edit')
+def admin_roster_edit(payload: AdminEditAssociate, request: Request):
+    _origin_check(request)
+    require_manager(request)
+    if payload.number in MANAGEMENT_ASSOCIATES or payload.new_number in MANAGEMENT_ASSOCIATES:
+        raise HTTPException(403, 'Management profiles cannot be edited')
+    try:
+        v31_roster.edit_associate(DB_FILE, payload.number, payload.full_name.strip(),
+                                  payload.new_number)
+    except KeyError as exc:
+        raise HTTPException(404, str(exc))
+    except ValueError as exc:
+        raise HTTPException(409, str(exc))
+    return v31_roster.status(DB_FILE, include_rows=True)
+
+@app.post('/api/shifts/report')
+def save_shift_report(payload: ReportPayload, request: Request):
+    """Store a locally generated passdown before allowing a normal End Shift."""
+    _origin_check(request)
+    session, profile = who(request)
+    if not session['s']:
+        raise HTTPException(409, 'Choose a shift first')
+    now = datetime.now(TZ)
+    with _db() as conn:
+        row = conn.execute("SELECT * FROM shifts WHERE id=? AND open=1",(session['s'],)).fetchone()
+        if row is None:
+            raise HTTPException(404, 'No active report selected')
+        day = date.fromisoformat(row['shift_day'])
+        if eligible_date(row['code'],now) != day:
+            raise HTTPException(409, 'Reporting window expired')
+        if not allowed(profile,row['code'],day,session['a']):
+            raise HTTPException(403, 'Shift access no longer authorized')
+        if not profile.get('all_shifts') and row['owner'] != session['a']:
+            raise HTTPException(403, 'Only the shift starter or management can save a report')
+        body = payload.content.strip()
+        if 'SHIFT HAPPENINGS' not in body or 'IND3' not in body:
+            raise HTTPException(422, 'Passdown content is missing required sections')
+        conn.execute("""UPDATE shifts SET report_content=?, report_saved_at=?
+                        WHERE id=?""",(body,now.isoformat(),session['s']))
+    return {'saved':True, 'shift_id':session['s'], 'saved_at':now.isoformat()}
+
+
+@app.get('/api/shifts/report')
+def read_shift_report(request: Request):
+    session, profile = who(request)
+    if not session['s']:
+        raise HTTPException(409, 'Choose a shift')
+    with _db() as conn:
+        row=conn.execute("SELECT * FROM shifts WHERE id=?",(session['s'],)).fetchone()
+    if row is None or not allowed(profile,row['code'],date.fromisoformat(row['shift_day']),session['a']):
+        raise HTTPException(404,'Shift not found')
+    if not profile.get('all_shifts') and row['owner'] != session['a']:
+        raise HTTPException(403,'Report belongs to another MST')
+    return {'content':row['report_content'], 'saved_at':row['report_saved_at'],
+            'shift_id':row['id']}
+
+
+def _report_access(request: Request):
+    session, profile = who(request)
+    shift_id = session.get('s')
+    if not shift_id:
+        raise HTTPException(409, 'Choose a shift before using Shift Report')
+    with _db() as conn:
+        row = conn.execute('SELECT * FROM shifts WHERE id=? AND open=1',(shift_id,)).fetchone()
+    if not row:
+        raise HTTPException(409, 'Selected shift is no longer open')
+    if not allowed(profile,row['code']) or (
+        not profile.get('all_shifts') and row['owner'] != session['a']
+    ):
+        raise HTTPException(403, 'You are not authorized for this shift')
+    if eligible_date(row['code'],datetime.now(TZ)) != date.fromisoformat(row['shift_day']):
+        raise HTTPException(409, 'Reporting window has ended')
+    return session,row
+
+
+def _invalidate_passdown(conn,shift_id):
+    # Edited data cannot be followed by End Shift until a new EML is saved.
+    conn.execute("UPDATE shifts SET report_saved_at='',report_content='' WHERE id=?",
+                 (shift_id,))
+
+
+class ReportingImport(BaseModel):
+    technicians: list[str] = Field(min_length=1,max_length=100)
+    closure_reviews: dict[str,Literal['add','ignore']] = Field(default_factory=dict)
+
+
+class ReportingWOEdit(BaseModel):
+    asset: str | None = None
+    category: str | None = None
+    cause: str | None = None
+    tech: str | None = None
+    remarks: str | None = None
+    status: Literal['RTS','OOS'] | None = None
+    excluded: bool | None = None
+
+
+class ReportingDraft(BaseModel):
+    vendors: list[str] = Field(default_factory=list,max_length=100)
+    ro: list[str] = Field(default_factory=list,max_length=100)
+    notes: str = Field(default='',max_length=3000)
+    loto: bool = False
+    missingKey: str = Field(default='',max_length=100)
+
+
+@app.get('/api/reporting/state')
+def reporting_state(request: Request):
+    session,row=_report_access(request)
+    with _db() as conn:
+        data=v31_reporting.get_state(conn,row['id'])
+        data['draft']=v31_reporting.get_draft(conn,row['id'])
+        shift_row=conn.execute("SELECT report_saved_at FROM shifts WHERE id=?",(row['id'],)).fetchone()
+    # Reporting UI needs technician names / shift groups, never associate IDs.
+    roster_info=v31_roster.status(DB_FILE,include_rows=True)
+    data['tech_suggestions']=v31_reporting.technician_suggestions(
+        data['stage']['technicians'],roster_info['associates'],row['code'])
+    data['roster_source_connected']=bool(roster_info['last_synced']) and not bool(roster_info['error'])
+    data['report_saved']=bool(shift_row and shift_row['report_saved_at'])
+    return {'shift':entry(row),**data}
+
+
+@app.post('/api/reporting/stage')
+async def reporting_stage(request: Request,file: UploadFile=File(...)):
+    _origin_check(request)
+    session,row=_report_access(request)
+    try:
+        content=await file.read(v31_reporting.MAX_SIZE+1)
+    finally:
+        await file.close()
+    if not content:
+        raise HTTPException(422, 'File is empty')
+    if len(content)>v31_reporting.MAX_SIZE:
+        raise HTTPException(413, 'Cetaris export exceeds 12 MB')
+    try:
+        with _db() as conn:
+            result=v31_reporting.stage(conn,row['id'],content,
+                file.filename or 'cetaris.xlsx',session['a'])
+    except ValueError as exc:
+        raise HTTPException(422,str(exc))
+    # Staging parses a file; it deliberately does not credit any WOs until
+    # technicians have been selected and an explicit import is confirmed.
+    roster_info=v31_roster.status(DB_FILE,include_rows=True)
+    result['tech_suggestions']=v31_reporting.technician_suggestions(
+        result['technicians'],roster_info['associates'],row['code'])
+    return result
+
+
+@app.post('/api/reporting/import')
+def reporting_import(payload:ReportingImport,request:Request):
+    _origin_check(request)
+    session,row=_report_access(request)
+    try:
+        with _db() as conn:
+            roster_info=v31_roster.status(DB_FILE,include_rows=True)
+            source_shifts=v31_reporting.roster_shift_map(
+                payload.technicians,roster_info['associates'])
+            summary=v31_reporting.import_selection(conn,row['id'],row['code'],
+                row['shift_day'],payload.technicians,payload.closure_reviews,
+                roster_shifts=source_shifts)
+            _invalidate_passdown(conn,row['id'])
+    except ValueError as exc:
+        raise HTTPException(422,str(exc))
+    return {'imported':True,'summary':summary}
+
+
+@app.post('/api/reporting/work-orders/{wo_number}')
+def reporting_work_order(wo_number:str,payload:ReportingWOEdit,request:Request):
+    _origin_check(request)
+    session,row=_report_access(request)
+    if not wo_number.strip() or len(wo_number)>100:
+        raise HTTPException(422,'Invalid work-order number')
+    data=payload.model_dump(exclude_none=True)
+    try:
+        with _db() as conn:
+            v31_reporting.update_wo(conn,row['id'],wo_number,data)
+            _invalidate_passdown(conn,row['id'])
+    except (KeyError,ValueError) as exc:
+        raise HTTPException(404 if isinstance(exc,KeyError) else 422,str(exc))
+    return {'updated':True,'wo_number':wo_number}
+
+
+@app.post('/api/reporting/draft')
+def reporting_draft(payload:ReportingDraft,request:Request):
+    _origin_check(request)
+    session,row=_report_access(request)
+    content=payload.model_dump()
+    if sum(len(x) for x in content['vendors']+content['ro'])>15000:
+        raise HTTPException(422,'Too much draft content')
+    with _db() as conn:
+        v31_reporting.save_draft(conn,row['id'],content)
+        _invalidate_passdown(conn,row['id'])
+    return {'saved':True,'shift_id':row['id']}
+
+
+@app.get('/api/history/legacy')
+def legacy_history(request: Request, limit: int = 50, offset: int = 0):
+    session, profile = who(request)
+    # Legacy source contains original shift IDs but not every login attempt.
+    return v31_legacy_history.history(PRIVATE,
+        None if profile.get('all_shifts') else session['a'],limit,offset)
+
+
+@app.get('/api/history/login-events')
+def new_login_history(request: Request, limit: int = 50, offset: int = 0):
+    session, profile = who(request)
+    limit = max(1,min(limit,100))
+    offset = max(0,offset)
+    admin = bool(profile.get('all_shifts'))
+    with _db() as conn:
+        if admin:
+            rows=conn.execute('SELECT * FROM login_events ORDER BY id DESC LIMIT ? OFFSET ?',
+                              (limit,offset)).fetchall()
+        else:
+            rows=conn.execute('SELECT * FROM login_events WHERE associate=? ORDER BY id DESC LIMIT ? OFFSET ?',
+                              (session['a'],limit,offset)).fetchall()
+    return {'events':[dict(row) for row in rows],'limit':limit,'offset':offset}
+, max_length=12)
+    action: Literal['start', 'resume']
+    code: Literal['S1', 'S2', 'S3', 'S4', 'S5'] | None = None
+    shift_id: int | None = Field(default=None, gt=0)
 
 
 @app.get('/api/entry')
