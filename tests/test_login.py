@@ -194,7 +194,8 @@ def test_login_popup_regex_and_manager_selector(client):
     assert 'v31-associate-dialog' in js
     assert 'v31-manager-shift-picker' in js
     assert 'manager_selection_required' in js
-    assert "intent:'select'" in js
+    assert "'/api/shifts/enter'" in js
+    assert "action: choice.kind" in js
     assert r'/^\\d{1,12}$/' not in js
     assert r'/^\d{1,12}$/' in js
     assert 'showManagerPicker()' in js
