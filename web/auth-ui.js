@@ -76,7 +76,10 @@
   const gateButton = $('#v31-gate-confirm');
   let chosen = null;
   $('#v31-gate-cancel').addEventListener('click', () => gate.close());
-  gate.addEventListener('close', () => { chosen = null; gateField.value = ''; gateError.hidden = true; });
+  gate.addEventListener('close', () => {
+    chosen = null; gateField.value = ''; gateError.hidden = true;
+    refreshEntry();
+  });
   gateField.addEventListener('input', () => { gateError.hidden = true; });
   const enterReport = () => {
     // Hide the two-pane login page during navigation to avoid a split-page flash.
@@ -152,9 +155,9 @@
     managerPicker.close();
     useDifferent();
   });
-  async function showManagerPicker() {
+  async function showManagerPicker(updatedAccount = null) {
     // A manager may leave this screen open while shifts change.
-    account = await api('/api/me');
+    account = updatedAccount || await api('/api/me');
     const list = $('#v31-manager-choices');
     list.replaceChildren();
     const errorNode = $('#v31-manager-error');
@@ -342,6 +345,7 @@
       }
       render();
     } catch (e) {
+      rosterHealth({roster_health:'unavailable'});
       error.textContent = 'Could not check active shifts: ' + e.message;
       error.hidden = false; show('login');
     }
@@ -349,17 +353,33 @@
   // Keep an unattended login display synchronized at shift handoff.
   // Do not disrupt an open identity confirmation or manager dialog.
   async function refreshEntry() {
-    if (signedIn || document.hidden || gate.open || managerPicker.open || pending) return;
+    if (document.hidden || gate.open || pending) return;
+    if (signedIn && !managerPicker.open) return;
     pending = true;
     try {
+      if (signedIn && managerPicker.open) {
+        const latestAccount = await api('/api/me');
+        if (JSON.stringify(latestAccount.catalog || []) !== JSON.stringify(account?.catalog || [])) {
+          await showManagerPicker(latestAccount);
+        } else {
+          account = latestAccount;
+        }
+        return;
+      }
       const latest = await api('/api/entry');
       const oldChoices = JSON.stringify([flow?.open, flow?.ready]);
       const newChoices = JSON.stringify([latest.open, latest.ready]);
       flow = latest;
       rosterHealth(latest);
       if (oldChoices !== newChoices) render();
-    } catch (_) {
-      rosterHealth({roster_health:'unavailable'});
+    } catch (error) {
+      if (managerPicker.open) {
+        const node = $('#v31-manager-error');
+        node.textContent = 'Could not refresh shift choices: ' + error.message;
+        node.hidden = false;
+      } else {
+        rosterHealth({roster_health:'unavailable'});
+      }
     } finally {
       pending = false;
     }
