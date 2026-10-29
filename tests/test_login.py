@@ -428,6 +428,8 @@ def test_login_entry_health_and_live_refresh_wiring(client, tmp_path, monkeypatc
     assert "document.addEventListener('visibilitychange'" in js
     assert "/api/shifts/enter" in js
     assert "Drax Sync Needs Attention" in js
+    assert "if (signedIn && managerPicker.open)" in js
+    assert "showManagerPicker(latestAccount)" in js
     html = client.get('/').text
     assert 'Version 3.1' in html and 'v1.0.0' not in html
     (tmp_path / 'mst-roster.csv').unlink()
