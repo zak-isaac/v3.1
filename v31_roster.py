@@ -72,7 +72,9 @@ def _normalize_number(raw):
 def _parse(file: Path, reserved: set):
     if file.suffix.lower() == ".csv":
         with file.open(encoding="utf-8-sig", newline="") as reader:
-            records = list(csv.DictReader(reader))
+            csv_rows = csv.DictReader(reader)
+            headers = csv_rows.fieldnames
+            records = list(csv_rows)
     elif file.suffix.lower() == ".xlsx":
         from openpyxl import load_workbook
         book = load_workbook(file, read_only=True, data_only=True)
@@ -81,15 +83,18 @@ def _parse(file: Path, reserved: set):
             keys = next(iterator, None)
             if not keys:
                 raise ValueError("Drax workbook has no header row")
+            headers = keys
             records = [dict(zip(keys, row)) for row in iterator]
         finally:
             book.close()
     else:
         raise ValueError("Roster source must be .xlsx or .csv")
-    if records and not {"name", "assoc. #", "shift", "job title"}.issubset(
-        {str(k).strip().casefold() for k in records[0]}
+    if not headers or not {"name", "assoc. #", "shift", "job title"}.issubset(
+        {str(k).strip().casefold() for k in headers if k is not None}
     ):
         raise ValueError("Drax columns Name, Assoc. #, Shift, Job Title are required")
+    if not records:
+        raise ValueError("Drax workbook has no associate rows; last good roster retained")
     result = {}
     for source_row in records:
         row = {str(key or "").strip().casefold(): value for key,value in source_row.items()}
@@ -99,12 +104,16 @@ def _parse(file: Path, reserved: set):
         name = str(row.get("name") or "").strip()
         if not name:
             continue
+        if num in result:
+            raise ValueError("Drax contains duplicate associate numbers; last good roster retained")
         result[num] = (
             num, name[:180], str(row.get("shift") or "").strip().upper()[:10],
             str(row.get("default id") or "").strip()[:120],
             str(row.get("job title") or "").strip()[:100],
             int(str(row.get("job title") or "").strip().upper() == "MST")
         )
+    if not result:
+        raise ValueError("No usable Drax associates found; last good roster retained")
     return result
 
 
@@ -141,7 +150,16 @@ def sync(private: Path, database: Path, reserved: set, force=False):
                 _meta(conn, "error", "")
                 return
             entries = _parse(source, reserved)
-            # Require a valid readable header even when workbook contains no MST.
+            # Avoid disabling most associates when OneDrive offers a truncated export.
+            prior_count = conn.execute(
+                "SELECT COUNT(*) FROM roster_associates WHERE source_active=1 AND manual=0"
+            ).fetchone()[0]
+            if (prior_count >= 10 and len(entries) * 2 < prior_count and
+                os.getenv("IND3_V31_APPROVE_ROSTER_REDUCTION") != "1"):
+                raise ValueError(
+                    "Drax source is unexpectedly smaller than the cached roster. "
+                    "Check OneDrive sync; deliberate large reductions require an approved reload."
+                )
             seen_at = datetime.now(_TZ).isoformat()
             for item in entries.values():
                 conn.execute("""INSERT INTO roster_associates
