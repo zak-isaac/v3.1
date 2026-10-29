@@ -357,6 +357,26 @@ async def headers(request: Request, call_next):
     return response
 
 
+def _inject_before_last(html: str, closing_tag: str, insertion: str) -> str:
+    """Insert `insertion` immediately before the LAST occurrence of
+    `closing_tag`, never via a blanket str.replace().
+
+    A served prototype page can legitimately contain the literal text of a
+    closing tag (e.g. '</body>' or '</head>') inside a JS string -- a
+    client-composed HTML report template, for instance. The real structural
+    closing tag is always the final one in a well-formed document, so
+    targeting only the last occurrence is safe regardless of what appears
+    earlier in inline script content. Bug found 2026-10-29: a naive
+    html.replace('</body>', ...) here once silently corrupted an inline
+    script that happened to contain that exact substring inside a JS
+    string, breaking every button wired after it on the page.
+    """
+    index = html.rfind(closing_tag)
+    if index < 0:
+        raise RuntimeError(f'Expected closing tag {closing_tag!r} not found in served page')
+    return html[:index] + insertion + html[index:]
+
+
 @app.get('/', response_class=HTMLResponse)
 @app.get('/index.html', response_class=HTMLResponse)
 def signin_page(request: Request):
@@ -373,7 +393,8 @@ def signin_page(request: Request):
                            '<script defer src="/web/roster-admin.js"></script>') + html[end + len('</script>'):]
     # Prevent the first-screen/two-pane flash while the client checks shift state.
     # Client removes this rule when the correct login, active or handoff screen is ready.
-    html = html.replace('</head>', '<link rel="stylesheet" href="/web/login-layout.css"><style id="v31-preload">body{visibility:hidden}html{background:#fff}</style></head>', 1)
+    html = _inject_before_last(html, '</head>',
+        '<link rel="stylesheet" href="/web/login-layout.css"><style id="v31-preload">body{visibility:hidden}html{background:#fff}</style>')
     return HTMLResponse(html)
 
 
@@ -383,11 +404,11 @@ def landing(request: Request):
     if not state(session, profile)['selected']:
         return RedirectResponse('/', status_code=303)
     html = (ROOT / 'prototypes' / 'shift-report.html').read_text(encoding='utf-8')
-    return HTMLResponse(html.replace('</body>',
+    return HTMLResponse(_inject_before_last(html, '</body>',
         '<script defer src="/web/workspace-auth.js"></script>'+
         '<script defer src="/web/roster-admin.js"></script>'+
         '<script defer src="/web/shift-history.js"></script>'+
-        '<script defer src="/web/shift-data.js"></script></body>'))
+        '<script defer src="/web/shift-data.js"></script>'))
 
 
 @app.get('/administration', response_class=HTMLResponse)
@@ -397,9 +418,9 @@ def administration_page(request: Request):
     if not profile.get('all_shifts'):
         raise HTTPException(403, 'Management access required')
     html = (ROOT / 'prototypes' / 'shift-report.html').read_text(encoding='utf-8')
-    return HTMLResponse(html.replace('</body>',
+    return HTMLResponse(_inject_before_last(html, '</body>',
         '<script defer src="/web/roster-admin.js"></script>'+
-        '<script defer src="/web/admin-standalone.js"></script></body>'))
+        '<script defer src="/web/admin-standalone.js"></script>'))
 
 
 class LoginRequest(BaseModel):

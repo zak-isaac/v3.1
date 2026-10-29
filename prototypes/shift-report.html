@@ -279,6 +279,48 @@ LOTO Verification: ${state.loto?'Verified':'Not verified'}${state.missingKey?`\n
 
 V3.1 LOCAL SHIFT REPORT — NO EMAIL SENT`;}
 function previewReport(){showModal('Shift Passdown Preview','Review the selected shift and imported work before creating the Outlook EML.',`<div class="preview-document">${esc(createReport())}</div>`,[{text:'Close',onClick:closeModal},{text:'Generate Outlook EML',kind:'btn-primary',onClick:()=>{closeModal();emlDownload();}}]);}
+function buildEmailHtml(){
+  const shift=window.__v31ShiftContext?.code||'Unassigned';
+  const inc=state.rows.filter(r=>!r.excluded);
+  const sec=(title,bodyHtml)=>`<p style="margin:16px 0 4px;font-family:Calibri,Arial,sans-serif;"><strong style="font-size:16px;">${title}</strong></p>${bodyHtml}`;
+  const bulletList=items=>{
+    const s='font-size:14px;font-family:Calibri,Arial,sans-serif;margin:4px 0;';
+    if(!items.length)return `<ul style="margin:0 0 4px;padding-left:20px;line-height:1.8;"><li style="${s}color:#555;">None</li></ul>`;
+    return `<ul style="margin:0 0 4px;padding-left:20px;line-height:1.8;">${items.map(i=>`<li style="${s}">${i}</li>`).join('')}</ul>`;
+  };
+  // Shift Happenings: MST notes first (general context), then PM count,
+  // then each imported asset entry -- same ordering as V3's production
+  // format_email_passdown_html().
+  const happenings=[];
+  if(state.notes&&state.notes.trim())happenings.push(`<p style="margin:6px 0;font-size:14px;">${esc(state.notes.trim())}</p>`);
+  if(state.pmCount)happenings.push(`<p style="margin:6px 0;font-size:14px;">${state.pmCount} PM${state.pmCount!==1?'s':''} completed this shift</p>`);
+  inc.forEach(r=>{
+    const heading=`${esc(r.asset||'Unspecified asset')} : ${esc(r.cause||'No service description')} (WO# ${esc(r.wo)})`;
+    const remark=r.remarks?esc(r.remarks):'No technician remarks';
+    happenings.push(`<div style="margin:8px 0 10px;"><strong style="font-size:14px;">${heading}</strong><ul style="margin:2px 0 0;padding-left:22px;"><li style="font-size:13px;white-space:pre-wrap;">${remark}</li></ul></div>`);
+  });
+  const rts=inc.filter(r=>r.status==='RTS').map(r=>`<strong>${esc(r.asset)}</strong> &mdash; Returned to Service`);
+  const oos=inc.filter(r=>r.status==='OOS').map(r=>`<strong>${esc(r.asset)}</strong>`);
+  const loto=state.loto
+    ?`<p style="font-size:14px;font-family:Calibri,Arial,sans-serif;margin-top:18px;"><strong style="color:#2a8703;">&#10003; All LOTO Keys Verified</strong></p>`
+    :`<p style="font-size:14px;font-family:Calibri,Arial,sans-serif;margin-top:18px;"><strong style="color:#b45309;">&#9888; LOTO Verification Pending</strong></p>`;
+  const missingKeyHtml=state.missingKey
+    ?`<p style="color:#c00;margin:2px 0;font-size:14px;font-family:Calibri,Arial,sans-serif;"><strong>Missing key:</strong> ${esc(state.missingKey)}</p>`:'';
+  // V3.1 does not yet have the real pending-PM data source wired (see
+  // README). Showing "none pending" would be a false claim -- the MST has
+  // no way to know if that's true. State it as unavailable instead, and
+  // remove this block entirely once Phase 2 wires the real V3 PM workflow.
+  const pmHtml=`<p style="margin:16px 0 2px;"><strong style="font-size:16px;">PM's Needing to be Completed</strong></p><p style="margin:0 0 6px;font-size:14px;color:#6b7280;font-style:italic;">Pending-PM tracking is not yet connected in V3.1 -- not shown.</p>`;
+  return '<html><body style="font-family:Calibri,Arial,sans-serif;font-size:14px;color:#111;max-width:700px;line-height:1.6;">'+
+    `<p style="margin:0 0 18px;font-size:18px;"><strong>${esc(shift)} End of Shift Passdown</strong></p>`+
+    sec('Vendors',bulletList(state.vendors.map(v=>esc(v))))+
+    sec('Shift Happenings',happenings.length?happenings.join(''):'<p>None</p>')+
+    sec('Reliable Operations',bulletList(state.ro.map(v=>esc(v))))+
+    pmHtml+
+    sec('Out of Service &mdash; Returned to Service (RTS)',bulletList(rts))+
+    sec('Current Out of Service',bulletList(oos))+
+    loto+missingKeyHtml+'</body></html>';
+}
 async function emlDownload(){
   await window.V31Reporting?.flushDraft();
   const report=createReport();
@@ -294,10 +336,10 @@ async function emlDownload(){
       const info=await response.json().catch(()=>({}));
       throw Error(info.detail||'Could not save this shift passdown.');
     }
-    const body=report.replace(/\r?\n/g,'\r\n');
     const shift=window.__v31ShiftContext?.code||'Unassigned';
+    const body=buildEmailHtml().replace(/\r?\n/g,'\r\n');
     const eml='To: \r\nSubject: IND3 - '+shift+' Shift Passdown - V3.1\r\n'+
-      'MIME-Version: 1.0\r\nContent-Type: text/plain; charset=UTF-8\r\n'+
+      'MIME-Version: 1.0\r\nContent-Type: text/html; charset=UTF-8\r\n'+
       'Content-Transfer-Encoding: 8bit\r\n\r\n'+body;
     const url=URL.createObjectURL(new Blob([eml],{type:'message/rfc822'}));
     const link=document.createElement('a');
