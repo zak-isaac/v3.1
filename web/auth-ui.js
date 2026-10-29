@@ -23,6 +23,17 @@
     {timeZone:zone,hour:'numeric',minute:'2-digit'}).format(new Date(iso));
   const timeRange = shift => timeLabel(shift.scheduled_start) + ' – ' + timeLabel(shift.scheduled_end);
   const grace = shift => 'Report window: ' + timeLabel(shift.opens_at) + ' – ' + timeLabel(shift.closes_at) + ' (+1 hour after shift)';
+  const rosterHealth = status => {
+    const health = status?.roster_health || 'unavailable';
+    const label = health === 'connected' ? 'Drax Synced' :
+      health === 'stale' ? 'Drax Sync Needs Attention' : 'Drax Not Connected';
+    for (const dot of document.querySelectorAll('.page-footer .online-dot')) {
+      const text = dot.nextElementSibling;
+      if (text && text.tagName === 'SPAN') text.textContent = label;
+      dot.style.backgroundColor = health === 'connected' ? '#28a962' :
+        health === 'stale' ? '#db8e19' : '#ba3c42';
+    }
+  };
   async function api(path, data) {
     const opt = {credentials:'same-origin',headers:{Accept:'application/json'}};
     if (data !== undefined) {
@@ -107,9 +118,11 @@
     gateButton.disabled = true; gateError.hidden = true;
     const choice = chosen;
     try {
-      await api('/api/login', {associate, intent:'select'});
-      await api(choice.kind === 'resume' ? '/api/shifts/resume' : '/api/shifts/start',
-        choice.kind === 'resume' ? {shift_id:choice.shift.id} : {code:choice.shift.code});
+      await api('/api/shifts/enter', {
+        associate, action: choice.kind,
+        ...(choice.kind === 'resume' ? {shift_id:choice.shift.id} : {code:choice.shift.code})
+      });
+      signedIn = true;
       enterReport();
     } catch (e) {
       gateError.textContent = e.message;
@@ -140,7 +153,8 @@
     useDifferent();
   });
   async function showManagerPicker() {
-    if (!account || account.role !== 'manager') account = await api('/api/me');
+    // A manager may leave this screen open while shifts change.
+    account = await api('/api/me');
     const list = $('#v31-manager-choices');
     list.replaceChildren();
     const errorNode = $('#v31-manager-error');
@@ -261,6 +275,7 @@
     }
   }
   function render() {
+    rosterHealth(flow);
     const open = flow?.open || [], ready = flow?.ready || [];
     // Treat two already-open shifts as a real overlap (e.g. S4+S5,
     // S1+S2). Previously this rendered only the Active Shift page.
@@ -315,6 +330,7 @@
   async function init() {
     try {
       flow = await api('/api/entry');
+      rosterHealth(flow);
       const current = await fetch('/api/me', {credentials:'same-origin'});
       if (current.ok) {
         account = await current.json(); signedIn = true;
@@ -330,5 +346,28 @@
       error.hidden = false; show('login');
     }
   }
+  // Keep an unattended login display synchronized at shift handoff.
+  // Do not disrupt an open identity confirmation or manager dialog.
+  async function refreshEntry() {
+    if (signedIn || document.hidden || gate.open || managerPicker.open || pending) return;
+    pending = true;
+    try {
+      const latest = await api('/api/entry');
+      const oldChoices = JSON.stringify([flow?.open, flow?.ready]);
+      const newChoices = JSON.stringify([latest.open, latest.ready]);
+      flow = latest;
+      rosterHealth(latest);
+      if (oldChoices !== newChoices) render();
+    } catch (_) {
+      rosterHealth({roster_health:'unavailable'});
+    } finally {
+      pending = false;
+    }
+  }
+  window.addEventListener('focus', () => { refreshEntry(); });
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) refreshEntry();
+  });
+  setInterval(refreshEntry, 30000);
   init();
 })();
