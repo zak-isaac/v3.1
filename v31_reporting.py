@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 
 from v31_cetaris import parse_excel, technician_counts, select_records, MAX_SIZE
 from v31_split import assign, _person_key
+import spelling_fix
 
 TZ=ZoneInfo("America/Indiana/Indianapolis")
 
@@ -351,7 +352,18 @@ def get_state(conn,shift_id):
     _table(conn)
     rows=[dict(x) for x in conn.execute(
         "SELECT * FROM report_wo WHERE shift_id=? ORDER BY id",(shift_id,))]
-    for r in rows:r["excluded"]=bool(r["excluded"])
+    for r in rows:
+        r["excluded"]=bool(r["excluded"])
+        # Display/report-only spelling cleanup (V3 spelling_fix, ported
+        # unchanged). The DB row above is never modified by this -- the
+        # Cetaris-original/MST-edited text stays the row of record, and
+        # reimport/edit-preservation logic in import_selection()/update_wo()
+        # is untouched. *_original lets a future UI offer a revert/compare
+        # view without any schema change.
+        r["cause_original"]=r["cause"]
+        r["remarks_original"]=r["remarks"]
+        r["cause"]=spelling_fix.correct_spelling(r["cause"])
+        r["remarks"]=spelling_fix.correct_spelling(r["remarks"])
     pm=[dict(x) for x in conn.execute(
         "SELECT * FROM report_pm WHERE shift_id=? ORDER BY wo_number",(shift_id,))]
     tech=conn.execute("SELECT selected_json FROM report_techs WHERE shift_id=?",(shift_id,)).fetchone()
