@@ -194,7 +194,8 @@ def test_login_popup_regex_and_manager_selector(client):
     assert 'v31-associate-dialog' in js
     assert 'v31-manager-shift-picker' in js
     assert 'manager_selection_required' in js
-    assert "intent:'select'" in js
+    assert "'/api/shifts/enter'" in js
+    assert "action: choice.kind" in js
     assert r'/^\\d{1,12}$/' not in js
     assert r'/^\d{1,12}$/' in js
     assert 'showManagerPicker()' in js
@@ -370,3 +371,76 @@ def test_management_chooser_admin_shortcut_and_shift_chooser_not_in_sidebar(clie
     sidebar=page.split('<aside class="sidebar">',1)[1].split('</aside>',1)[0]
     assert 'Choose Shift' not in sidebar
     assert 'Manage Drax Roster' not in sidebar
+
+
+def test_public_shift_start_popup_only_signs_in_after_validated_shift(client, monkeypatch):
+    freeze(monkeypatch, at(2026, 10, 27, 13))
+    rejected = client.post('/api/shifts/enter', json={
+        'associate': '111111', 'action': 'start', 'code': 'S2'})
+    assert rejected.status_code == 403
+    assert client.cookies.get(m.SESSION_COOKIE) is None
+    assert client.get('/api/me').status_code == 401
+    with m._db() as db:
+        assert db.execute('SELECT COUNT(*) FROM shifts').fetchone()[0] == 0
+    accepted = client.post('/api/shifts/enter', json={
+        'associate': '111111', 'action': 'start', 'code': 'S1'})
+    assert accepted.status_code == 200, accepted.text
+    assert accepted.json()['shift'] == 'S1'
+    selected = client.get('/api/me').json()['selected']
+    assert selected['id'] == accepted.json()['shift_id']
+
+
+def test_public_resume_popup_rejects_wrong_owner_without_cookie(client, monkeypatch):
+    freeze(monkeypatch, at(2026, 10, 27, 13))
+    assert sign_in(client, '111111').status_code == 200
+    shift_id = client.get('/api/me').json()['selected']['id']
+    assert client.post('/api/logout').status_code == 200
+    rejected = client.post('/api/shifts/enter', json={
+        'associate': '666666', 'action': 'resume', 'shift_id': shift_id})
+    assert rejected.status_code == 403
+    assert client.cookies.get(m.SESSION_COOKIE) is None
+    assert client.get('/api/me').status_code == 401
+    accepted = client.post('/api/shifts/enter', json={
+        'associate': '111111', 'action': 'resume', 'shift_id': shift_id})
+    assert accepted.status_code == 200, accepted.text
+    assert accepted.json()['shift_id'] == shift_id
+    assert client.get('/api/me').json()['selected']['id'] == shift_id
+
+
+def test_manager_public_popup_starts_selected_shift_without_prelogin(client, monkeypatch):
+    freeze(monkeypatch, at(2026, 10, 27, 13))
+    result = client.post('/api/shifts/enter', json={
+        'associate': '8972', 'action': 'start', 'code': 'S2'})
+    assert result.status_code == 200, result.text
+    assert result.json()['role'] == 'manager'
+    state = client.get('/api/me').json()
+    assert state['selected']['code'] == 'S2'
+    assert state['role'] == 'manager'
+
+
+def test_login_entry_health_and_live_refresh_wiring(client, tmp_path, monkeypatch):
+    state = client.get('/api/entry')
+    assert state.status_code == 200
+    assert state.json()['roster_health'] == 'connected'
+    js = client.get('/web/auth-ui.js').text
+    assert "setInterval(refreshEntry, 30000)" in js
+    assert "window.addEventListener('focus'" in js
+    assert "document.addEventListener('visibilitychange'" in js
+    assert "/api/shifts/enter" in js
+    assert "Drax Sync Needs Attention" in js
+    assert "if (signedIn && managerPicker.open)" in js
+    assert "showManagerPicker(latestAccount)" in js
+    html = client.get('/').text
+    assert 'Version 3.1' in html and 'v1.0.0' not in html
+    (tmp_path / 'mst-roster.csv').unlink()
+    m.v31_roster.sync(m.PRIVATE, m.DB_FILE, set(m.MANAGEMENT_ASSOCIATES), force=True)
+    assert client.get('/api/entry').json()['roster_health'] == 'stale'
+
+
+def test_workspace_hides_manager_controls_for_mst(client, monkeypatch):
+    freeze(monkeypatch, at(2026, 10, 27, 8))
+    assert sign_in(client, '111111').status_code == 200
+    js = client.get('/web/workspace-auth.js').text
+    assert "adminNav.hidden=context.role!=='manager'" in js
+    assert "adminMenu.hidden=context.role!=='manager'" in js
+    assert client.get('/administration').status_code == 403

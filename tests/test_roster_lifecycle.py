@@ -289,3 +289,64 @@ def test_new_database_has_no_overtime_schema(client):
         columns={row["name"] for row in db.execute("PRAGMA table_info(shifts)")}
     assert "overtime_grants" not in tables
     assert "is_ot" not in columns
+
+
+def test_header_only_drax_does_not_deactivate_last_good_roster(client, tmp_path, monkeypatch):
+    freeze(monkeypatch, at())
+    assert sign(client).status_code == 200
+    roster_file = tmp_path / "mst-roster.csv"
+    with roster_file.open("w", newline="", encoding="utf-8") as output:
+        csv.writer(output).writerow(["Name", "Assoc. #", "Default ID", "Shift", "Job Title"])
+    result = client.post("/api/admin/roster/reload", json={})
+    assert result.status_code == 200
+    assert "no associate rows" in result.json()["error"]
+    assert result.json()["entries"] == 3
+    assert "111111" in m.roster()
+
+
+def test_duplicate_drax_associate_numbers_are_rejected_without_changes(client, tmp_path, monkeypatch):
+    freeze(monkeypatch, at())
+    assert sign(client).status_code == 200
+    write_roster(tmp_path / "mst-roster.csv",
+                 extra=[["Duplicate MST", "111111", "another", "S2", "MST"]])
+    result = client.post("/api/admin/roster/reload", json={})
+    assert result.status_code == 200
+    assert "duplicate associate numbers" in result.json()["error"]
+    assert result.json()["entries"] == 3
+    assert m.roster()["111111"]["shift"] == "S1"
+
+
+def test_suspicious_large_roster_shrink_requires_approval(client, tmp_path, monkeypatch):
+    freeze(monkeypatch, at())
+    assert sign(client).status_code == 200
+    monkeypatch.delenv("IND3_V31_APPROVE_ROSTER_REDUCTION", raising=False)
+    extra = [[f"Extra Technician {n}", str(800000+n), f"x{n}", "S1", "MST"]
+             for n in range(15)]
+    write_roster(tmp_path / "mst-roster.csv", extra=extra)
+    expanded = client.post("/api/admin/roster/reload", json={})
+    assert expanded.status_code == 200
+    assert expanded.json()["entries"] == 18
+    write_roster(tmp_path / "mst-roster.csv")
+    reduced = client.post("/api/admin/roster/reload", json={})
+    assert reduced.status_code == 200
+    assert "unexpectedly smaller" in reduced.json()["error"]
+    assert reduced.json()["entries"] == 18
+    # The last good roster remains authoritative for local logins.
+    assert "800000" in m.roster()
+    monkeypatch.setenv("IND3_V31_APPROVE_ROSTER_REDUCTION", "1")
+    approved = client.post("/api/admin/roster/reload", json={})
+    assert approved.json()["error"] == ""
+    assert approved.json()["entries"] == 3
+    assert "800000" not in m.roster()
+
+
+def test_revoking_drax_mst_access_invalidates_open_session(client, tmp_path, monkeypatch):
+    freeze(monkeypatch, at())
+    assert sign(client, "111111").status_code == 200
+    assert client.get("/api/me").status_code == 200
+    with (tmp_path / "mst-roster.csv").open("w", newline="", encoding="utf-8") as out:
+        writer = csv.writer(out)
+        writer.writerow(["Name", "Assoc. #", "Default ID", "Shift", "Job Title"])
+        writer.writerow(["Synthetic MST B", "222222", "b22", "S2", "MST"])
+    roster_module.sync(m.PRIVATE, m.DB_FILE, set(m.MANAGEMENT_ASSOCIATES), force=True)
+    assert client.get("/api/me").status_code == 401

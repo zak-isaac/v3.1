@@ -320,8 +320,11 @@ def public_flow(now: datetime | None = None) -> dict:
     # Two active sessions also need the two-card handoff screen.
     screen = ('handoff' if len(opened)+len(ready) >= 2
               else 'active' if opened else 'login')
+    sync_status = v31_roster.status(DB_FILE)
+    sync_health = ('connected' if sync_status['last_synced'] and not sync_status['error']
+                   else 'stale' if sync_status['last_synced'] else 'unavailable')
     return {'screen': screen, 'open': opened, 'ready': ready, 'now': moment.isoformat(),
-            'grace_minutes': 60}
+            'grace_minutes': 60, 'roster_health': sync_health}
 
 
 def state(session: dict, profile: dict) -> dict:
@@ -364,6 +367,8 @@ def signin_page(request: Request):
     if session and state(session, roster()[session['a']])['selected']:
         return RedirectResponse('/shift-report.html', status_code=303)
     html = (ROOT / 'prototypes' / 'login-flow.html').read_text(encoding='utf-8')
+    # Preserve approved artwork while replacing stale prototype version labels.
+    html = html.replace('v1.0.0', 'V3.1').replace('Version 1.0.0', 'Version 3.1')
     # Keep the approved original page CSS and media; remove its demo-only JS.
     start = html.rfind('<script>')
     end = html.rfind('</script>')
@@ -415,9 +420,74 @@ class ShiftResume(BaseModel):
     shift_id: int = Field(gt=0)
 
 
+class ShiftEnter(BaseModel):
+    associate: str = Field(pattern=r'^\d{1,12}$', max_length=12)
+    action: Literal['start', 'resume']
+    code: Literal['S1', 'S2', 'S3', 'S4', 'S5'] | None = None
+    shift_id: int | None = Field(default=None, gt=0)
+
+
 @app.get('/api/entry')
 def entry_status():
     return public_flow()
+
+
+
+@app.post('/api/shifts/enter')
+def enter_shift(payload: ShiftEnter, request: Request, response: Response):
+    """Validate an associate and shift together for the public Start/Resume
+    popup. Rejected requests never create a login cookie or shift session.
+    """
+    _origin_check(request)
+    profile = roster().get(payload.associate)
+    if not profile:
+        raise HTTPException(401, 'Associate number not authorized for this local preview')
+    now = datetime.now(TZ)
+    expire_shifts(now)
+    if payload.action == 'resume':
+        if payload.shift_id is None or payload.code is not None:
+            raise HTTPException(422, 'Choose an existing shift to resume')
+        with _db() as conn:
+            row = conn.execute('SELECT * FROM shifts WHERE id=? AND open=1',
+                               (payload.shift_id,)).fetchone()
+        if row is None or eligible_date(row['code'], now) != date.fromisoformat(row['shift_day']):
+            raise HTTPException(404, 'Active shift is no longer available; refresh shift selection')
+        if not allowed(profile, row['code'], date.fromisoformat(row['shift_day']), payload.associate):
+            raise HTTPException(403, 'This shift is not assigned to the associate')
+        if not profile.get('all_shifts') and row['owner'] != payload.associate:
+            raise HTTPException(403, 'Only the shift starter or management may resume this report')
+        selected = entry(row)
+    else:
+        if payload.code is None or payload.shift_id is not None:
+            raise HTTPException(422, 'Choose a shift to start')
+        day = eligible_date(payload.code, now)
+        if day is None:
+            raise HTTPException(409, 'Shift reporting window is no longer active; refresh shift selection')
+        if not allowed(profile, payload.code, day, payload.associate):
+            raise HTTPException(403, 'This shift is not assigned to the associate')
+        with _db() as conn:
+            prior = conn.execute('SELECT * FROM shifts WHERE code=? AND shift_day=?',
+                                 (payload.code, day.isoformat())).fetchone()
+            if prior is None and now > shift_times(payload.code, day)[1]:
+                raise HTTPException(409, 'Cannot start a new shift after its scheduled end')
+            if prior is None and conn.execute(
+                    'SELECT COUNT(*) FROM shifts WHERE open=1').fetchone()[0] >= 2:
+                raise HTTPException(409, 'Two overlapping shifts are already active')
+            conn.execute('''INSERT OR IGNORE INTO shifts
+                (code,shift_day,owner,created_at) VALUES (?,?,?,?)''',
+                (payload.code,day.isoformat(),payload.associate,now.isoformat()))
+            row = conn.execute('SELECT * FROM shifts WHERE code=? AND shift_day=?',
+                               (payload.code,day.isoformat())).fetchone()
+            if not row['open']:
+                raise HTTPException(409, 'This shift was already ended')
+            if not profile.get('all_shifts') and row['owner'] != payload.associate:
+                raise HTTPException(403, 'This shift is already open under another MST')
+            selected = entry(row)
+    _set_cookie(response, payload.associate, selected['id'])
+    _record_login_event(payload.associate, 'popup_'+payload.action, selected['id'])
+    return {'destination': '/shift-report.html',
+            'role': 'manager' if profile.get('all_shifts') else 'mst',
+            'shift': selected['code'], 'shift_id': selected['id']}
 
 
 @app.post('/api/login')

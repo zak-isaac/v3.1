@@ -43,7 +43,7 @@ python -m uvicorn app:app --host 127.0.0.1 --port 8980
 
 **Option C (development only):** `python setup_mst_roster.py` creates a minimal private CSV assignment file. This is not a replacement for the official Drax source.
 
-Drax sync behavior: initial import at startup, background check every **5 minutes**, on-demand refresh as needed, plus **Reload Drax now** in management administration. The local SQLite cache stores source records, displays any source error, and keeps explicit management MST-status, shift, and display-name overrides. Records removed from a successfully reloaded Drax source are disabled; removed files do not silently erase the last cached snapshot.
+Drax sync behavior: initial import at startup, background check every **5 minutes**, on-demand refresh as needed, plus **Reload Drax now** in management administration. A missing, header-only, duplicate-ID, or unexpectedly reduced (more than 50%, where 10+ source records were previously active) roster is rejected while the last valid cache remains in place; Administration shows the sync error. A verified intentional bulk roster reduction can be accepted by temporarily setting `IND3_V31_APPROVE_ROSTER_REDUCTION=1` for a single manual reload under an authorized change window, then removing the flag. The local SQLite cache stores source records, displays any source error, and keeps explicit management MST-status, shift, and display-name overrides. Records removed from a successfully reloaded Drax source are disabled; removed files do not silently erase the last cached snapshot.
 
 The manager roster console is accessible both through **Manage Drax Roster** on the login shift-selector dialog and **Administration** in the report workspace. It supports reload, adding authorized local associates, enabling/disabling MST privileges, changing shift assignment, editing display names, resetting overrides, without modifying the original Drax source.
 
@@ -52,6 +52,7 @@ The manager roster console is accessible both through **Manage Drax Roster** on 
 - **MST:** Enter authorized associate number on the first login screen. V3.1 checks the Drax-backed role, date, ownership and assigned shift. It starts/resumes the MST's own shift and opens **Shift Report → Shift Happenings** directly.
 - **Management preview identifiers:** `8972` and `2759` go to the **S1–S5 shift-selection dialog**. Managers may start an eligible shift or resume an open one.
 - **Active Shift Detected / New Shift Ready:** Resume and Start ask for the associate number in a popup on the same screen. The selected shift ID is verified server-side, without bouncing back to the first login page.
+- **Live login screen:** Signed-out Active Shift and New Shift Ready choices refresh every 30 seconds and whenever the window becomes active, without interrupting an open login dialog. The Start/Resume popup verifies associate and shift together before issuing a cookie. Drax sync health and the V3.1 version appear in the login footer.
 - **Authorization:** A regular MST cannot resume or modify another associate's shift. Management can access eligible open sessions. **Overtime is disabled entirely in V3.1 for now.** MSTs are restricted to their Drax-assigned S1–S5 shift, and management can select from S1–S5.
 
 ### Reporting times (Indianapolis facility clock)

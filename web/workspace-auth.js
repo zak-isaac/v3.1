@@ -41,7 +41,10 @@
   if(userrole)userrole.textContent=(context.role==='manager'?'Management':(context.assigned_shift||'MST')+' · MST')+' · IND3';
   const accountMenu=$('#v31-menu-choose');
   if(accountMenu)accountMenu.hidden=context.role!=='manager';
+  const adminNav=document.querySelector('.main-nav [data-nav="admin"]');
+  if(adminNav)adminNav.hidden=context.role!=='manager';
   const adminMenu=$('#v31-menu-administration');
+  if(adminMenu)adminMenu.hidden=context.role!=='manager';
   adminMenu?.addEventListener('click',()=>{
     const menu=$('#account-menu');if(menu)menu.hidden=true;
     window.v31Navigate?.('admin');
