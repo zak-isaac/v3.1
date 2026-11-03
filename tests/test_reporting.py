@@ -602,7 +602,11 @@ def test_command_center_css_responsive_and_protects_original_ui_actions(client, 
     markup=client.get("/shift-report.html").text
     # Design changes must not remove functional import/report/administration controls.
     for element_id in ("replace-file","change-techs","view-audit",
-                       "save-draft","preview-report","generate-eml","end-shift",
+                       "preview-report","generate-eml","end-shift",
                        "v31-admin-screen","v31-signout","v31-sidebar-user"):
         assert f'id="{element_id}"' in markup
+    # Save Draft was removed deliberately: work orders/notes already autosave
+    # (650ms debounce via queueDraft/flushDraft) and the footer shows
+    # "Auto-save: On (local)", so a manual save button was dead weight.
+    assert 'id="save-draft"' not in markup
     assert '/web/walmart-2025.svg' in markup
