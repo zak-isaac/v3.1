@@ -43,6 +43,14 @@ async function refresh(){
   ' · Ignored '+snapshot.audit.ignored.length+
   ' · Next-day WOs '+(snapshot.audit.next_day||[]).length;
   audit.append(p);
+  // S3/S5 completeness guide: a quick before/after-midnight count so the
+  // MST can eyeball that everything they expect actually got pulled in.
+  const em=snapshot.audit.evening_morning;
+  if(em&&em.applicable){
+    const emLine=document.createElement('p');
+    emLine.textContent='Evening (before midnight): '+em.evening+' WO · Morning (after midnight): '+em.morning+' WO';
+    audit.append(emLine);
+  }
   for(const r of [...snapshot.audit.pending,...snapshot.audit.ignored].slice(0,35)){
     const line=document.createElement('p');
     line.textContent='WO# '+r.wo_number+' — '+r.reason;

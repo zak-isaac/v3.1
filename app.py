@@ -793,7 +793,7 @@ class ReportingDraft(BaseModel):
 def reporting_state(request: Request):
     session,row=_report_access(request)
     with _db() as conn:
-        data=v31_reporting.get_state(conn,row['id'])
+        data=v31_reporting.get_state(conn,row['id'],row['code'],row['shift_day'])
         data['draft']=v31_reporting.get_draft(conn,row['id'])
         shift_row=conn.execute("SELECT report_saved_at FROM shifts WHERE id=?",(row['id'],)).fetchone()
     # Reporting UI needs technician names / shift groups, never associate IDs.

@@ -13,7 +13,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from v31_cetaris import parse_excel, technician_counts, select_records, MAX_SIZE
-from v31_split import assign, _person_key
+from v31_split import assign, _person_key, parse_close
 import ai_remark_rewriter
 import html as _html
 import spelling_fix
@@ -67,6 +67,12 @@ def _table(conn):
         conn.execute("ALTER TABLE report_wo ADD COLUMN ai_suggestion TEXT NOT NULL DEFAULT ''")
     if "ai_status" not in wo_columns:
         conn.execute("ALTER TABLE report_wo ADD COLUMN ai_status TEXT NOT NULL DEFAULT 'none'")
+    if "work_at" not in wo_columns:
+        # The actual work-evidence timestamp (latest of last_complete_at /
+        # in_service_at / start_at) this WO was attributed on -- powers the
+        # S3/S5 evening-vs-morning completeness guide in the Import Audit.
+        # Not the same as imported_at (when the MST ran the import).
+        conn.execute("ALTER TABLE report_wo ADD COLUMN work_at TEXT NOT NULL DEFAULT ''")
     # Migration only adds tables; original V2/V3 archive and new V3.1 shifts stay intact.
 
 
@@ -247,6 +253,17 @@ def import_selection(conn, shift_id: int, shift_code: str, shift_day: str,
     # Exact reviewed V3 evidence, not administrative WO close timestamps.
     accepted,pending=assign(all_rows, selected, shift_code, shift_day,
                             roster_shifts=roster_shifts or {})
+    # Latest available work-evidence timestamp per WO -- not the attribution
+    # decision itself (that's assign()'s job), just a representative moment
+    # for the evening/morning completeness guide in the Import Audit.
+    wo_work_at={}
+    for r in accepted:
+        wo=str(r.get("wo_number") or "")
+        candidates=[parse_close(r.get(f)) for f in
+                    ("last_complete_at","in_service_at","start_at")]
+        moment=max((c for c in candidates if c), default=None)
+        if moment and (wo not in wo_work_at or moment>wo_work_at[wo]):
+            wo_work_at[wo]=moment
     # Do not silently include Completed non-PMs; MST must choose reminder.
     records,summary=select_records(accepted,selected,datetime.min,datetime.max,
                                     closure_reviews=closure_reviews or {})
@@ -283,14 +300,16 @@ def import_selection(conn, shift_id: int, shift_code: str, shift_day: str,
             continue
         fields=(row["asset"],row["category"],row["cause"],
                 "; ".join(row["techs"]),"; ".join(row["remarks"]),row["status"])
+        work_at=wo_work_at[wo].isoformat() if wo in wo_work_at else ""
         if existing:
             conn.execute("""UPDATE report_wo SET asset=?,category=?,cause=?,tech=?,
-                remarks=?,status=?,imported_at=? WHERE id=?""",(*fields,now,existing["id"]))
+                remarks=?,status=?,imported_at=?,work_at=? WHERE id=?""",
+                (*fields,now,work_at,existing["id"]))
             updated+=1
         else:
             conn.execute("""INSERT INTO report_wo
-               (shift_id,wo_number,asset,category,cause,tech,remarks,status,imported_at)
-               VALUES(?,?,?,?,?,?,?,?,?)""",(shift_id,wo,*fields,now))
+               (shift_id,wo_number,asset,category,cause,tech,remarks,status,imported_at,work_at)
+               VALUES(?,?,?,?,?,?,?,?,?,?)""",(shift_id,wo,*fields,now,work_at))
             added+=1
     for wo,row in pm_by_wo.items():
         owned=_existing_elsewhere(conn,shift_id,wo,'RTS')
@@ -414,7 +433,31 @@ def accept_ai_rewrite(conn,shift_id,wo_number,final_text):
     return True
 
 
-def get_state(conn,shift_id):
+def evening_morning_counts(rows, shift_code, shift_day):
+    """S3/S5 completeness guide, confirmed with Isaac 2026-11-03: a quick
+    sanity count so an MST can eyeball 'yes, all my WOs got pulled in' --
+    e.g. '10 WO before midnight, 9 WO after' for a Friday S5. Not applicable
+    to S1/S2/S4, which don't cross midnight.
+    """
+    if shift_code not in ("S3", "S5"):
+        return {"applicable": False}
+    if isinstance(shift_day, str):
+        shift_day = date.fromisoformat(shift_day)
+    evening = morning = 0
+    for r in rows:
+        if r.get("excluded") or not r.get("work_at"):
+            continue
+        moment = parse_close(r["work_at"])
+        if not moment:
+            continue
+        if moment.date() == shift_day:
+            evening += 1
+        else:
+            morning += 1
+    return {"applicable": True, "evening": evening, "morning": morning}
+
+
+def get_state(conn,shift_id,shift_code=None,shift_day=None):
     _table(conn)
     rows=[dict(x) for x in conn.execute(
         "SELECT * FROM report_wo WHERE shift_id=? ORDER BY id",(shift_id,))]
@@ -435,10 +478,13 @@ def get_state(conn,shift_id):
     tech=conn.execute("SELECT selected_json FROM report_techs WHERE shift_id=?",(shift_id,)).fetchone()
     audit=conn.execute("SELECT * FROM report_audit WHERE shift_id=?",(shift_id,)).fetchone()
     stage_data=stage_details(conn,shift_id)
+    evening_morning=(evening_morning_counts(rows,shift_code,shift_day)
+                     if shift_code and shift_day else {"applicable":False})
     return {"rows":rows,"pms":pm,"pm_count":len(pm),
             "technicians":json.loads(tech["selected_json"]) if tech else [],
             "stage":stage_data,
             "audit":{"summary":json.loads(audit["summary_json"]) if audit else {},
+                     "evening_morning":evening_morning,
                      "pending":json.loads(audit["pending_json"]) if audit else [],
                      "ignored":json.loads(audit["ignored_json"]) if audit else [],
                      "next_day":json.loads(audit["next_day_json"]) if audit else []}}
