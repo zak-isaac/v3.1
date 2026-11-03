@@ -261,7 +261,7 @@ function chooseTechs(){
     view.toast(n+' qualifying work orders/PMs saved to '+selectedShift+'.');
    }catch(e){feedback(e.message,'error');view.toast(e.message);}
   }}
- ]);
+ ],{wide:true});
  const body=document.querySelector('#modal-body');
  if(body)body.append(container);
 }
