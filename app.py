@@ -200,6 +200,7 @@ def _db() -> sqlite3.Connection:
         'closed_reason': "TEXT NOT NULL DEFAULT ''",
         'report_saved_at': "TEXT NOT NULL DEFAULT ''",
         'report_content': "TEXT NOT NULL DEFAULT ''",
+        'report_count': "INTEGER NOT NULL DEFAULT 0",
     }.items():
         if name not in columns:
             conn.execute(f"ALTER TABLE shifts ADD COLUMN {name} {declaration}")
@@ -424,6 +425,7 @@ def administration_page(request: Request):
     return HTMLResponse(_inject_before_last(html, '</body>',
         '<script defer src="/web/roster-admin.js"></script>'+
         '<script defer src="/web/facility-admin.js"></script>'+
+        '<script defer src="/web/shift-history.js"></script>'+
         '<script defer src="/web/admin-standalone.js"></script>'))
 
 
@@ -720,7 +722,7 @@ def save_shift_report(payload: ReportPayload, request: Request):
         body = payload.content.strip()
         if 'SHIFT HAPPENINGS' not in body or 'IND3' not in body:
             raise HTTPException(422, 'Passdown content is missing required sections')
-        conn.execute("""UPDATE shifts SET report_content=?, report_saved_at=?
+        conn.execute("""UPDATE shifts SET report_content=?, report_saved_at=?, report_count=report_count+1
                         WHERE id=?""",(body,now.isoformat(),session['s']))
     return {'saved':True, 'shift_id':session['s'], 'saved_at':now.isoformat()}
 
@@ -898,3 +900,65 @@ def new_login_history(request: Request, limit: int = 50, offset: int = 0):
             rows=conn.execute('SELECT * FROM login_events WHERE associate=? ORDER BY id DESC LIMIT ? OFFSET ?',
                               (session['a'],limit,offset)).fetchall()
     return {'events':[dict(row) for row in rows],'limit':limit,'offset':offset}
+
+
+@app.get('/api/history/shifts')
+def shift_history(request: Request, limit: int = 25, offset: int = 0):
+    """V3.1's own shift records (not the V2/V3 archive) for the Shift
+    History page: shift id/code/date/owner plus Happenings and Reports
+    counts, newest first. Non-management sees only their own shifts."""
+    session, profile = who(request)
+    limit = max(1, min(limit, 100))
+    offset = max(0, offset)
+    admin = bool(profile.get('all_shifts'))
+    names = roster()
+    with _db() as conn:
+        if admin:
+            total = conn.execute('SELECT COUNT(*) FROM shifts').fetchone()[0]
+            rows = conn.execute(
+                'SELECT * FROM shifts ORDER BY id DESC LIMIT ? OFFSET ?', (limit, offset)).fetchall()
+        else:
+            total = conn.execute(
+                'SELECT COUNT(*) FROM shifts WHERE owner=?', (session['a'],)).fetchone()[0]
+            rows = conn.execute(
+                'SELECT * FROM shifts WHERE owner=? ORDER BY id DESC LIMIT ? OFFSET ?',
+                (session['a'], limit, offset)).fetchall()
+        happenings = v31_reporting.happenings_counts(conn, [row['id'] for row in rows])
+    out = [{
+        'id': row['id'],
+        'code': row['code'],
+        'date': row['shift_day'],
+        'owner': names.get(row['owner'], {}).get('name', row['owner']),
+        'happenings': happenings.get(row['id'], 0),
+        'reports': row['report_count'],
+        'status': 'Open' if row['open'] else 'Closed',
+        'has_report': bool(row['report_content']),
+    } for row in rows]
+    return {'total': total, 'limit': limit, 'offset': offset, 'rows': out}
+
+
+@app.get('/api/history/shifts/{shift_id}/eml')
+def shift_history_eml(shift_id: int, request: Request):
+    """Regenerate a historical shift's passdown .eml from what actually
+    persists (report_wo/report_pm + the autosaved draft) -- see
+    v31_reporting.build_passdown_html() for exactly what that reconstructs
+    and what it can't (nothing is fabricated for fields that were truly
+    never saved)."""
+    session, profile = who(request)
+    admin = bool(profile.get('all_shifts'))
+    with _db() as conn:
+        row = conn.execute('SELECT * FROM shifts WHERE id=?', (shift_id,)).fetchone()
+        if row is None:
+            raise HTTPException(404, 'Shift not found')
+        if not admin and row['owner'] != session['a']:
+            raise HTTPException(403, 'Not your shift')
+        body = v31_reporting.build_passdown_html(conn, shift_id, row['code'])
+    facility = v31_facility.public_fields(v31_facility.load(PRIVATE))
+    dc = facility.get('distribution_center') or 'IND3'
+    eml = ('To: ' + facility.get('recipients', '') + '\r\n'
+           'Subject: ' + dc + ' - ' + row['code'] + ' Shift Passdown - ' + row['shift_day'] + '\r\n'
+           'MIME-Version: 1.0\r\nContent-Type: text/html; charset=UTF-8\r\n'
+           'Content-Transfer-Encoding: 8bit\r\n\r\n' + body.replace('\n', '\r\n'))
+    filename = f"IND3_{row['code']}_{row['shift_day']}_Shift_Passdown.eml"
+    return Response(content=eml, media_type='message/rfc822',
+                     headers={'Content-Disposition': f'attachment; filename="{filename}"'})

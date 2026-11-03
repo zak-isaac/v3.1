@@ -15,6 +15,7 @@ from zoneinfo import ZoneInfo
 from v31_cetaris import parse_excel, technician_counts, select_records, MAX_SIZE
 from v31_split import assign, _person_key
 import ai_remark_rewriter
+import html as _html
 import spelling_fix
 
 TZ=ZoneInfo("America/Indiana/Indianapolis")
@@ -458,3 +459,97 @@ def get_draft(conn,shift_id):
        shift_id INTEGER PRIMARY KEY,body_json TEXT NOT NULL,updated_at TEXT NOT NULL)""")
     row=conn.execute("SELECT body_json FROM report_drafts WHERE shift_id=?",(shift_id,)).fetchone()
     return json.loads(row["body_json"]) if row else {}
+
+
+def happenings_counts(conn, shift_ids):
+    """Non-excluded Shift Happenings (work order) count per shift_id, for
+    Shift History's summary table. {} for an empty shift_ids list."""
+    _table(conn)
+    if not shift_ids:
+        return {}
+    placeholders = ",".join("?" * len(shift_ids))
+    rows = conn.execute(
+        f"SELECT shift_id, COUNT(*) AS n FROM report_wo "
+        f"WHERE excluded=0 AND shift_id IN ({placeholders}) GROUP BY shift_id",
+        shift_ids)
+    return {r["shift_id"]: r["n"] for r in rows}
+
+
+def build_passdown_html(conn, shift_id, shift_code):
+    """Python mirror of the client-side buildEmailHtml() in shift-report.html,
+    used only so Shift History can regenerate a historical shift's EML after
+    the browser tab holding its live in-memory `state` is long gone. Rebuilt
+    from what actually persists: report_wo/report_pm (via get_state, same
+    spelling-corrected text the MST saw) plus report_drafts (vendors/ro/
+    notes/loto/missingKeys, via the existing autosave debounce). Section
+    wording/order must stay in lockstep with buildEmailHtml() -- update both
+    together if either changes."""
+    state = get_state(conn, shift_id)
+    draft = get_draft(conn, shift_id)
+    esc = _html.escape
+    inc = [r for r in state["rows"] if not r["excluded"]]
+
+    def sec(title, body_html):
+        return (f'<p style="margin:16px 0 4px;font-family:Calibri,Arial,sans-serif;">'
+                f'<strong style="font-size:16px;">{title}</strong></p>{body_html}')
+
+    def bullet_list(items):
+        s = "font-size:14px;font-family:Calibri,Arial,sans-serif;margin:4px 0;"
+        if not items:
+            return (f'<ul style="margin:0 0 4px;padding-left:20px;line-height:1.8;">'
+                     f'<li style="{s}color:#555;">None</li></ul>')
+        lis = "".join(f'<li style="{s}">{i}</li>' for i in items)
+        return f'<ul style="margin:0 0 4px;padding-left:20px;line-height:1.8;">{lis}</ul>'
+
+    happenings = []
+    notes = (draft.get("notes") or "").strip()
+    if notes:
+        happenings.append(f'<p style="margin:6px 0;font-size:14px;">{esc(notes)}</p>')
+    pm_count = state["pm_count"]
+    if pm_count:
+        happenings.append(
+            f'<p style="margin:6px 0;font-size:14px;">{pm_count} PM{"s" if pm_count!=1 else ""} '
+            f'completed this shift</p>')
+    for r in inc:
+        heading = (f'{esc(r["asset"] or "Unspecified asset")} : {esc(r["cause"] or "No service description")} '
+                   f'(WO# {esc(r["wo_number"])})')
+        remark = esc(r["remarks"]) if r["remarks"] else "No technician remarks"
+        happenings.append(
+            f'<div style="margin:8px 0 10px;"><strong style="font-size:14px;">{heading}</strong>'
+            f'<ul style="margin:2px 0 0;padding-left:22px;">'
+            f'<li style="font-size:13px;white-space:pre-wrap;">{remark}</li></ul></div>')
+
+    rts = [f'<strong>{esc(r["asset"])}</strong> &mdash; Returned to Service' for r in inc if r["status"] == "RTS"]
+    oos = [f'<strong>{esc(r["asset"])}</strong>' for r in inc if r["status"] == "OOS"]
+
+    loto_html = (
+        '<p style="font-size:14px;font-family:Calibri,Arial,sans-serif;margin-top:18px;">'
+        '<strong style="color:#2a8703;">&#10003; All LOTO Keys Verified</strong></p>'
+        if draft.get("loto") else
+        '<p style="font-size:14px;font-family:Calibri,Arial,sans-serif;margin-top:18px;">'
+        '<strong style="color:#b45309;">&#9888; LOTO Verification Pending</strong></p>')
+    missing_keys = draft.get("missingKeys") or []
+    missing_html = ""
+    if missing_keys:
+        label = "Missing key" + ("s" if len(missing_keys) > 1 else "")
+        missing_html = (f'<p style="color:#c00;margin:2px 0;font-size:14px;font-family:Calibri,Arial,sans-serif;">'
+                        f'<strong>{label}:</strong> {esc(", ".join(missing_keys))}</p>')
+    # V3.1 does not yet have the real pending-PM data source wired -- see
+    # buildEmailHtml()'s matching comment. Same honest "not shown", not a
+    # fabricated "none pending".
+    pm_html = ('<p style="margin:16px 0 2px;"><strong style="font-size:16px;">PM\'s Needing to be Completed</strong></p>'
+               '<p style="margin:0 0 6px;font-size:14px;color:#6b7280;font-style:italic;">'
+               'Pending-PM tracking is not yet connected in V3.1 -- not shown.</p>')
+    vendors = [esc(v) for v in (draft.get("vendors") or [])]
+    ro = [esc(v) for v in (draft.get("ro") or [])]
+    return (
+        '<html><body style="font-family:Calibri,Arial,sans-serif;font-size:14px;color:#111;'
+        'max-width:700px;line-height:1.6;">'
+        f'<p style="margin:0 0 18px;font-size:18px;"><strong>{esc(shift_code)} End of Shift Passdown</strong></p>'
+        + sec("Vendors", bullet_list(vendors))
+        + sec("Shift Happenings", "".join(happenings) if happenings else "<p>None</p>")
+        + sec("Reliable Operations", bullet_list(ro))
+        + pm_html
+        + sec("Out of Service &mdash; Returned to Service (RTS)", bullet_list(rts))
+        + sec("Current Out of Service", bullet_list(oos))
+        + loto_html + missing_html + '</body></html>')

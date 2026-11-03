@@ -171,6 +171,26 @@
           <p class="v31-admin-footnote">V3.1 is an independent local development application. Production roster and shift history remain protected.</p>
         </div>
       </section>
+      <section id="v31-history-screen" class="v31-admin" hidden aria-label="Shift History">
+        <header class="v31-admin-header">
+          <div><h1>Shift History</h1>
+          <p>Recorded shifts and passdown activity &mdash; most recent first. Existing shift records remain unchanged.</p></div>
+        </header>
+        <div id="v31-history-notice" role="status"></div>
+        <div class="v31-admin-card">
+          <div class="v31-admin-roster-wrap">
+            <table class="v31-admin-table">
+              <thead><tr><th>Shift ID</th><th>Date</th><th>Shift</th><th>Shift Owner</th>
+                <th>Happenings</th><th>Reports</th><th>Status</th><th>Actions</th></tr></thead>
+              <tbody id="v31-history-rows"></tbody>
+            </table>
+          </div>
+          <p id="v31-history-empty" class="v31-admin-help" hidden>No recorded shifts yet.</p>
+          <div class="v31-admin-header-actions" style="margin-top:14px">
+            <button id="v31-history-more" type="button" class="v31-ad-btn" hidden>Load more</button>
+          </div>
+        </div>
+      </section>
       <div id="placeholder-screen" hidden><div class="placeholder-card"><span class="placeholder-icon"><svg class="icon"><use href="#i-stack"/></svg></span><h1 id="placeholder-title">Shift History</h1><p id="placeholder-description">This screen is planned for a later frontend phase. For now, we're developing the approved Shift Report screen.</p><button id="back-to-report" class="btn btn-primary">Back to Shift Report</button></div></div>
     </main>
   </div>
@@ -392,17 +412,19 @@ $('#change-techs').addEventListener('click',()=>window.V31Reporting?.chooseTechs
 $$('[data-open]').forEach(b=>b.addEventListener('click',()=>b.dataset.open==='notes'?editNotes():editList(b.dataset.open)));
 const keyGrid=$('#missing-keys');for(let i=1;i<=20;i++){const label=document.createElement('label');label.className='loto-key-item';const cb=document.createElement('input');cb.type='checkbox';cb.className='loto-key';cb.value=`Key ${i}`;const span=document.createElement('span');span.textContent=`Key ${i}`;label.append(cb,span);keyGrid.append(label);}const toggle=$('#loto-toggle');function checkedKeys(){return $$('.loto-key',keyGrid).filter(c=>c.checked).map(c=>c.value);}function lotoSync(){state.loto=toggle.checked;state.missingKeys=checkedKeys();$('#loto-state').textContent=toggle.checked?'Verified':'Not verified';$('#loto-state').classList.toggle('missing',!toggle.checked);touch();}toggle.addEventListener('change',()=>{if(toggle.checked){$$('.loto-key',keyGrid).forEach(c=>c.checked=false);}lotoSync();});keyGrid.addEventListener('change',e=>{if(!e.target.classList.contains('loto-key'))return;if(e.target.checked)toggle.checked=false;lotoSync();const keys=checkedKeys();toast(keys.length?`${keys.length} key${keys.length>1?'s':''} marked missing`:'Missing-key selection cleared');});
 $('#preview-report').addEventListener('click',previewReport);$('#generate-eml').addEventListener('click',emlDownload);$('#end-shift').addEventListener('click',confirmEnd);
-const pNames={history:['Shift History','Shift History screen will be developed in a later frontend phase.'],analytics:['Analytics','The analytics frontend is planned for a later design phase.']};
+const pNames={analytics:['Analytics','The analytics frontend is planned for a later design phase.']};
 function navTo(page){
   $$('.nav-link').forEach(b=>b.classList.toggle('selected',b.dataset.nav===page));
   $('#report-screen').hidden=page!=='report';
-  $('#placeholder-screen').hidden=page==='report'||page==='admin';
+  $('#placeholder-screen').hidden=page==='report'||page==='admin'||page==='history';
   $('#v31-admin-screen').hidden=page!=='admin';
-  if(page!=='report'&&page!=='admin'){
+  $('#v31-history-screen').hidden=page!=='history';
+  if(page!=='report'&&page!=='admin'&&page!=='history'){
     $('#placeholder-title').textContent=pNames[page][0];
     $('#placeholder-description').textContent=pNames[page][1];
   }
   if(page==='admin')window.dispatchEvent(new Event('v31:administration'));
+  if(page==='history')window.dispatchEvent(new Event('v31:history'));
 }
 $$('.nav-link').forEach(b=>b.addEventListener('click',()=>navTo(b.dataset.nav)));
 $('#back-to-report').addEventListener('click',()=>navTo('report'));
