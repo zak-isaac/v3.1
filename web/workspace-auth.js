@@ -33,6 +33,8 @@
   if(anchor)anchor.append(bar);
   const username=$('#v31-user-name');
   if(username)username.textContent=context.name||'MST Associate';
+  const initial=$('#v31-user-initial');
+  if(initial)initial.textContent=(context.name||'?').trim().charAt(0).toUpperCase()||'?';
   const userrole=$('#v31-user-role');
   if(userrole)userrole.textContent=(context.role==='manager'?'Management':(context.assigned_shift||'MST')+' · MST')+' · IND3';
   const accountMenu=$('#v31-menu-choose');

@@ -140,6 +140,7 @@
   .sidebar{min-height:0;padding:9px 11px 12px}
   .sidebar-brand{display:none}
   .main-nav{flex-direction:row;gap:5px;overflow-x:auto}
+  .nav-section-label{display:none}
   .nav-separator{display:none}
   #v31-sidebar-controls{margin-top:8px}
   #v31-context-bar{padding:10px 1px;gap:8px}

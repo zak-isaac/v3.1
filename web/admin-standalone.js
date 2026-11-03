@@ -19,6 +19,8 @@ catch(_){window.location.replace('/');return;}
 if(who.role!=='manager'){window.location.replace('/');return;}
 const username=$('#v31-user-name');
 if(username)username.textContent=who.name||'Management';
+const initial=$('#v31-user-initial');
+if(initial)initial.textContent=(who.name||'?').trim().charAt(0).toUpperCase()||'?';
 const role=$('#v31-user-role');
 if(role)role.textContent='Management · IND3';
 const button=$('#account-button');

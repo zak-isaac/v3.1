@@ -55,6 +55,12 @@ body,.app{background:var(--cc-canvas)}
 .v31-brand-dept strong{font-size:15px;line-height:1.28;font-weight:800;color:#fff}
 .v31-brand-dept small{font-size:12px;color:#b7cce0;line-height:1.4}
 .main-nav{gap:5px}
+.nav-section-label{
+  font-size:10px;letter-spacing:.08em;text-transform:uppercase;
+  color:#7b9ac0;font-weight:780;
+  padding:14px 13px 2px;
+}
+.nav-section-label:first-child{padding-top:2px}
 .nav-link{
   min-height:45px;
   padding:10px 13px;
@@ -97,6 +103,7 @@ body,.app{background:var(--cc-canvas)}
   gap:11px;
 }
 .v31-user-avatar{height:35px;width:35px;background:#214b70;border-color:#6889a5}
+.v31-user-avatar #v31-user-initial{font-size:14px;font-weight:800;color:#fff}
 .v31-user-details strong{font-size:13px;font-weight:780}
 .v31-user-details small{font-size:11px;color:#c1d2e4}
 #v31-signout.v31-signout{
