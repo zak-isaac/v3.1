@@ -40,7 +40,7 @@ SESSION_COOKIE = 'ind3_v31_session'
 # Local-only development IDs, NOT secure identity verification.
 MANAGEMENT_ASSOCIATES = {
     '8972': {'name': 'Management', 'all_shifts': True, 'shift': None},
-    '2759': {'name': 'MST Management', 'all_shifts': True, 'shift': None},
+    '2759': {'name': 'Isaac Ssaku', 'all_shifts': True, 'shift': None},
 }
 SHIFT_RULES = {
     'S1': ('Day Shift', (5, 30), (16, 0), (0, 1, 2, 3)),
