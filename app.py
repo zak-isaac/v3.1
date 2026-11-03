@@ -750,7 +750,7 @@ class ReportingDraft(BaseModel):
     ro: list[str] = Field(default_factory=list,max_length=100)
     notes: str = Field(default='',max_length=3000)
     loto: bool = False
-    missingKey: str = Field(default='',max_length=100)
+    missingKeys: list[str] = Field(default_factory=list,max_length=20)
 
 
 @app.get('/api/reporting/state')

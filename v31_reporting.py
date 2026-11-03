@@ -1,7 +1,9 @@
 """Persistent, shift-bound Cetaris import for IND3 V3.1.
 
 Reuses reviewed V3 parsers, grouping and actual-technician shift attribution.
-No production V3 database or real roster is changed. No AI rewriting yet.
+No production V3 database or real roster is changed. Phase 2 adds an
+optional, human-reviewed local-AI rewrite suggestion on top of the
+Phase 1 deterministic spelling correction -- see ai_remark_rewriter.py.
 """
 from __future__ import annotations
 import json
@@ -12,6 +14,7 @@ from zoneinfo import ZoneInfo
 
 from v31_cetaris import parse_excel, technician_counts, select_records, MAX_SIZE
 from v31_split import assign, _person_key
+import ai_remark_rewriter
 import spelling_fix
 
 TZ=ZoneInfo("America/Indiana/Indianapolis")
@@ -53,6 +56,15 @@ def _table(conn):
         # Older V3.1 records already imported by technician selection keep their status.
         conn.execute("""UPDATE report_stage SET applied_at=uploaded_at
             WHERE EXISTS(SELECT 1 FROM report_techs t WHERE t.shift_id=report_stage.shift_id)""")
+    # Phase 2: AI rewrite review state. ai_status is one of 'none' | 'suggested'
+    # | 'accepted' | 'rejected'. Accepting a suggestion reuses the existing
+    # `edited` flag (see accept_ai_rewrite()) so the reimport-preservation
+    # guard in import_selection() protects it for free -- no new guard needed.
+    wo_columns={row["name"] for row in conn.execute("PRAGMA table_info(report_wo)")}
+    if "ai_suggestion" not in wo_columns:
+        conn.execute("ALTER TABLE report_wo ADD COLUMN ai_suggestion TEXT NOT NULL DEFAULT ''")
+    if "ai_status" not in wo_columns:
+        conn.execute("ALTER TABLE report_wo ADD COLUMN ai_status TEXT NOT NULL DEFAULT 'none'")
     # Migration only adds tables; original V2/V3 archive and new V3.1 shifts stay intact.
 
 
@@ -348,6 +360,58 @@ def update_wo(conn,shift_id,wo_number,data:dict):
     return True
 
 
+def request_ai_rewrite(conn,shift_id,wo_number):
+    """Ask the local AI engine for a professional rewrite of a WO's
+    CURRENT, already spelling-corrected remark. Never mutates `remarks` --
+    only stores the suggestion + review status for the MST to inspect via
+    the WO edit modal (see accept_ai_rewrite/reject_ai_rewrite). A failed
+    or unavailable AI engine is not an error here: the WO's ai_status is
+    set to 'none' again and the caller gets a clear reason, so ordinary
+    spelling correction and manual editing continue uninterrupted.
+    """
+    _table(conn)
+    row=conn.execute("SELECT * FROM report_wo WHERE shift_id=? AND wo_number=?",
+                     (shift_id,wo_number)).fetchone()
+    if not row:raise KeyError("Work order not found in this shift")
+    corrected_remark=spelling_fix.correct_spelling(row["remarks"])
+    result=ai_remark_rewriter.suggest_rewrite(corrected_remark,asset_id=row["asset"],wo_number=wo_number)
+    if result["ok"]:
+        conn.execute("UPDATE report_wo SET ai_suggestion=?,ai_status='suggested' WHERE id=?",
+                     (result["text"],row["id"]))
+    else:
+        conn.execute("UPDATE report_wo SET ai_status='none' WHERE id=?",(row["id"],))
+    return result
+
+
+def reject_ai_rewrite(conn,shift_id,wo_number):
+    """MST declined the suggestion. The current `remarks` value (spelling-
+    corrected or previously manually-edited text) is left completely
+    untouched -- only the review status changes."""
+    _table(conn)
+    row=conn.execute("SELECT id FROM report_wo WHERE shift_id=? AND wo_number=?",
+                     (shift_id,wo_number)).fetchone()
+    if not row:raise KeyError("Work order not found in this shift")
+    conn.execute("UPDATE report_wo SET ai_status='rejected' WHERE id=?",(row["id"],))
+    return True
+
+
+def accept_ai_rewrite(conn,shift_id,wo_number,final_text):
+    """MST accepted the suggestion, verbatim or after further edits --
+    `final_text` is whatever the MST actually approved, which the modal
+    always lets them inspect and modify before calling this. Reuses the
+    existing update_wo()/`edited` flag so this final text gets the exact
+    same reimport-survives-edits protection manual edits already have, and
+    flows through get_state()/createReport()/the EML identically.
+    """
+    text=(final_text or "").strip()
+    if not text:raise ValueError("Accepted rewrite text cannot be empty")
+    update_wo(conn,shift_id,wo_number,{"remarks":text})
+    row=conn.execute("SELECT id FROM report_wo WHERE shift_id=? AND wo_number=?",
+                     (shift_id,wo_number)).fetchone()
+    conn.execute("UPDATE report_wo SET ai_status='accepted' WHERE id=?",(row["id"],))
+    return True
+
+
 def get_state(conn,shift_id):
     _table(conn)
     rows=[dict(x) for x in conn.execute(
@@ -382,7 +446,7 @@ def save_draft(conn,shift_id,data):
     _table(conn)
     conn.execute("""CREATE TABLE IF NOT EXISTS report_drafts(
        shift_id INTEGER PRIMARY KEY, body_json TEXT NOT NULL,updated_at TEXT NOT NULL)""")
-    payload={k:data.get(k) for k in ("vendors","ro","notes","loto","missingKey")}
+    payload={k:data.get(k) for k in ("vendors","ro","notes","loto","missingKeys")}
     conn.execute("""INSERT INTO report_drafts(shift_id,body_json,updated_at)
       VALUES(?,?,?) ON CONFLICT(shift_id) DO UPDATE SET
       body_json=excluded.body_json,updated_at=excluded.updated_at""",

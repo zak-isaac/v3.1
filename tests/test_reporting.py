@@ -219,7 +219,7 @@ def test_draft_is_shift_scoped_and_wo_edit_invalidates_saved_passdown(client,mon
     assert client.get("/api/me").json()["report_saved"] is True
     assert client.post("/api/reporting/draft",
        json={"notes":"Waiting for a spare part","vendors":[],"ro":[],
-             "loto":False,"missingKey":""}).status_code==200
+             "loto":False,"missingKeys":[]}).status_code==200
     assert client.get("/api/me").json()["report_saved"] is False
     assert client.post("/api/shifts/end").status_code==409
     assert client.get("/api/reporting/state").json()["draft"]["notes"]=="Waiting for a spare part"
