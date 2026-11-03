@@ -1,11 +1,11 @@
-/* IND3 V3.1 Administration — Teams webhook + Facility & Email Settings.
+/* IND3 V3.1 Administration — Facility & Email Settings.
    Separate from roster-admin.js on purpose: roster CRUD and facility/email
    configuration are different responsibilities even though they share one
    Administration screen. */
 (() => {
   'use strict';
   const $ = id => document.getElementById(id);
-  if (!$('v31-webhook-save')) return;
+  if (!$('v31-facility-form')) return;
   const api = async (url, body) => {
     const opts = {credentials: 'same-origin', headers: {Accept: 'application/json'}};
     if (body !== undefined) {
@@ -24,11 +24,6 @@
     element.classList.toggle('error', error);
   };
   function applySettings(data) {
-    $('v31-webhook-url').value = data.teams_webhook || '';
-    const status = $('v31-webhook-status');
-    const active = !!data.teams_webhook;
-    status.className = 'v31-admin-status ' + (active ? 'good' : 'bad');
-    status.textContent = active ? 'Active' : 'Not configured';
     $('v31-facility-dc').value = data.distribution_center || 'IND3';
     $('v31-facility-recipients').value = data.recipients || '';
     $('v31-facility-sender').value = data.sender_name || 'IND3 Shift Passdown';
@@ -39,19 +34,6 @@
     catch (e) { /* Non-management sessions 403 here; the whole admin
                    content block is already hidden for them. */ }
   }
-  $('v31-webhook-save').addEventListener('click', async () => {
-    try {
-      applySettings(await api('/api/admin/settings/webhook',
-        {teams_webhook: $('v31-webhook-url').value.trim()}));
-      notify('Teams webhook saved.');
-    } catch (e) { notify(e.message, true); }
-  });
-  $('v31-webhook-clear').addEventListener('click', async () => {
-    try {
-      applySettings(await api('/api/admin/settings/webhook', {teams_webhook: ''}));
-      notify('Teams webhook cleared.');
-    } catch (e) { notify(e.message, true); }
-  });
   $('v31-facility-form').addEventListener('submit', e => {
     e.preventDefault();
     api('/api/admin/settings', {

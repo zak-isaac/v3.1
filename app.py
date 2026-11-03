@@ -676,10 +676,6 @@ class FacilitySettingsPayload(BaseModel):
     graph_client_id: str = Field(default='', max_length=120)
 
 
-class TeamsWebhookPayload(BaseModel):
-    teams_webhook: str = Field(default='', max_length=400)
-
-
 @app.get('/api/admin/settings')
 def admin_settings(request: Request):
     require_manager(request)
@@ -700,16 +696,6 @@ def admin_settings_save(payload: FacilitySettingsPayload, request: Request):
         'sender_name': payload.sender_name.strip() or 'IND3 Shift Passdown',
         'graph_client_id': payload.graph_client_id.strip(),
     })
-
-
-@app.post('/api/admin/settings/webhook')
-def admin_settings_webhook(payload: TeamsWebhookPayload, request: Request):
-    _origin_check(request)
-    require_manager(request)
-    webhook = payload.teams_webhook.strip()
-    if webhook and not webhook.startswith('https://'):
-        raise HTTPException(422, 'Teams webhook must be an https:// URL')
-    return v31_facility.save(PRIVATE, {'teams_webhook': webhook})
 
 
 @app.post('/api/shifts/report')

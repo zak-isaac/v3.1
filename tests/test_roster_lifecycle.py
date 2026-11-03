@@ -331,18 +331,3 @@ def test_facility_settings_require_management_and_round_trip(client, monkeypatch
     assert "graph_client_id" not in me["facility"]
 
 
-def test_teams_webhook_requires_https_and_persists_separately(client, monkeypatch):
-    freeze(monkeypatch, at())
-    assert sign(client).status_code == 200
-    bad = client.post("/api/admin/settings/webhook", json={"teams_webhook": "http://not-https.example"})
-    assert bad.status_code == 422
-    good = client.post("/api/admin/settings/webhook",
-                       json={"teams_webhook": "https://walmart.webhook.office.com/webhookb2/abc"})
-    assert good.status_code == 200
-    assert good.json()["teams_webhook"] == "https://walmart.webhook.office.com/webhookb2/abc"
-    client.post("/api/admin/settings", json={
-        "distribution_center": "IND3", "recipients": "a@wal-mart.com",
-        "sender_name": "IND3 Shift Passdown", "graph_client_id": ""})
-    after = client.get("/api/admin/settings").json()
-    assert after["teams_webhook"] == "https://walmart.webhook.office.com/webhookb2/abc"
-    assert after["recipients"] == "a@wal-mart.com"
