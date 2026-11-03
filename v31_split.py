@@ -19,28 +19,18 @@ def parse_close(value):
         return None
 
 
-def owner_for_close(value, day, confirmed_s5=False):
-    """Map a timestamp to S4, S5, or None; name retained for API compatibility."""
-    when = parse_close(value)
-    if when is None:
-        return None
-    if isinstance(day, str):
-        day = date.fromisoformat(day)
-    s4_start = datetime.combine(day, time(5, 30))
-    s4_end = datetime.combine(day, time(18, 0))
-    s5_end = datetime.combine(day + timedelta(days=1), time(6, 0))
-    grace_end = datetime.combine(day + timedelta(days=1), time(6, 30))
-    if s4_start <= when < s4_end:
-        return "S4"
-    if s4_end <= when < s5_end:
-        return "S5"
-    if s5_end <= when <= grace_end and confirmed_s5:
-        return "S5"
-    return None
 
 
 def _windows(when):
-    """Return all scheduled shift/date pairs covering a work timestamp."""
+    """Return all scheduled shift/date pairs covering a work timestamp.
+
+    Both overnight shifts (S3, S5) get the same 30-minute post-shift
+    completion grace -- see the 2026-11-03 fix note below. Non-overnight
+    shifts (S1/S2/S4) do not: their boundaries are either a same-day
+    handover already covered elsewhere (_choose_completion_owner's
+    explicit S4 17:30-18:00 carve-out) or an end-of-day stop with no
+    adjacent shift immediately expecting a continuation.
+    """
     found = []
     for day in (when.date() - timedelta(days=1), when.date()):
         if day.weekday() < 4:
@@ -50,12 +40,24 @@ def _windows(when):
         else:
             spec = (("S4", time(5, 30), time(18), False),
                     ("S5", time(17, 30), time(6), True))
+        # 2026-11-03 fix: S5 had an explicit 06:00-06:30 completion grace (a
+        # confirmed technician finishing just past the hard boundary still
+        # gets credited to the overnight shift they actually worked,
+        # resolved like any other overlap via roster/continuity evidence --
+        # never auto-granted). S3 had no equivalent, so a Thursday-night S3
+        # tech completing a WO at, say, 07:15 Friday had nowhere to land:
+        # rejected by S3 (past the hard 07:00 cutoff) and never considered
+        # for S1/S4 either, since those shifts' MST would have no reason to
+        # select an S3-home technician during their own import. The WO
+        # simply vanished from Shift Happenings for both shifts. Extending
+        # the same 30-minute grace to S3 closes that gap symmetrically.
+        overnight_grace = ("S3", "S5")
         for shift, start, end, overnight in spec:
             a = datetime.combine(day, start)
             b = datetime.combine(day + timedelta(days=1) if overnight else day, end)
             if a <= when < b:
                 found.append((shift, day.isoformat()))
-            elif shift == "S5" and b <= when <= b + timedelta(minutes=30):
+            elif shift in overnight_grace and b <= when <= b + timedelta(minutes=30):
                 found.append((shift, day.isoformat()))
     return found
 
