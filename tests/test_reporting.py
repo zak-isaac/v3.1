@@ -518,7 +518,6 @@ def test_shift_report_repositions_cetaris_and_uses_real_walmart_logo(client,monk
     assert 'S3 Shift Report' not in header  # Displayed shift comes from server.
     assert 'id="replace-file"' in header
     assert 'id="change-techs"' in header
-    assert 'id="view-audit"' in header
     assert 'id="progress-number"' in header
     assert 'id="v31-import-feedback"' in header
     assert 'id="progress-fill"' in header
@@ -602,7 +601,7 @@ def test_command_center_css_responsive_and_protects_original_ui_actions(client, 
     assert "overflow-y:auto" in css
     markup=client.get("/shift-report.html").text
     # Design changes must not remove functional import/report/administration controls.
-    for element_id in ("replace-file","change-techs","view-audit",
+    for element_id in ("replace-file","change-techs",
                        "preview-report","generate-eml","end-shift",
                        "v31-admin-screen","v31-signout","v31-sidebar-user"):
         assert f'id="{element_id}"' in markup

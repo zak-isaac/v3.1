@@ -75,12 +75,10 @@
 #replace-file.v31-cetaris-primary:hover{background:#a81b2b;box-shadow:0 3px 9px #981c2650}
 #replace-file.v31-cetaris-primary:focus-visible{outline:3px solid #ffc220;outline-offset:3px}
 #replace-file.v31-cetaris-primary:disabled{opacity:.55;cursor:progress}
-.v31-import-in-header #change-techs,
-.v31-import-in-header #view-audit{
+.v31-import-in-header #change-techs{
   border:1px solid #cbd9e7;background:#fff;color:#264e76;
 }
-.v31-import-in-header #change-techs:hover,
-.v31-import-in-header #view-audit:hover{background:#f1f6fa}
+.v31-import-in-header #change-techs:hover{background:#f1f6fa}
 .v31-import-in-header .import-check{background:#eef2f8;color:#3d6b91}
 #v31-import-feedback{
   grid-column:1 / -1;grid-row:3;

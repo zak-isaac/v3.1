@@ -32,40 +32,45 @@
     }
   }
 
-  function card(item) {
-    const who = esc(item.logged_by_name || 'Unknown');
-    const when = item.logged_at ? new Date(item.logged_at).toLocaleString() : '';
+  function openCard(item) {
     return `<div class="item-card" data-oos-id="${item.id}">
-      <div><strong>${esc(item.asset)}</strong><small>${esc(item.cause) || 'No cause specified'}</small>
-      <small>Logged by ${who}${when ? ' \u00b7 ' + esc(when) : ''} (${esc(item.logged_shift_code)})</small></div>
+      <div><strong>${esc(item.asset)}</strong>
+      <small>Logged by ${esc(item.logged_by_name || 'Unknown')} (${esc(item.logged_shift_code)})</small></div>
       <button type="button" class="btn btn-light btn-small" data-mark-rts="${item.id}">Mark RTS</button>
+    </div>`;
+  }
+
+  function rtsCard(item) {
+    return `<div class="item-card">
+      <div><strong>${esc(item.asset)}</strong><small>Returned to Service</small>
+      <small>Marked by ${esc(item.rts_by_name || 'Unknown')}</small></div>
+      <span class="status-pill rts">RTS</span>
     </div>`;
   }
 
   function render() {
     const node = root();
     if (!node) return;
-    const items = window.__v31ManualOOS?.open || [];
+    const open = window.__v31ManualOOS?.open || [];
+    const rts = window.__v31ManualOOS?.rts_this_shift || [];
     node.innerHTML = `<div class="pane-header">
-        <div><h3>Manually Reported</h3>
-        <p>Breakdown/OOS with no Cetaris work order behind it. Stays open across shifts until any associate marks it RTS.</p></div>
+        <div><h3>Manually Reported</h3></div>
         <button type="button" class="btn btn-primary" id="v31-oos-add-btn">+ Report Breakdown / OOS</button>
       </div>
       <form id="v31-oos-add-form" hidden>
         <div class="field"><label for="v31-oos-asset">Asset ID</label>
           <input id="v31-oos-asset" maxlength="120" required placeholder="e.g. CONV-12"></div>
-        <div class="field"><label for="v31-oos-cause">Cause</label>
-          <input id="v31-oos-cause" maxlength="500" placeholder="e.g. Jammed belt"></div>
-        <div class="field"><label for="v31-oos-notes">Notes (optional)</label>
-          <textarea id="v31-oos-notes" maxlength="1000"></textarea></div>
         <div style="display:flex;gap:8px;">
           <button type="submit" class="btn btn-primary">Save entry</button>
           <button type="button" class="btn btn-light" id="v31-oos-cancel">Cancel</button>
         </div>
         <p id="v31-oos-error" class="field-help" role="alert"></p>
       </form>
-      <div class="item-list" id="v31-oos-list">${items.length ? items.map(card).join('')
-        : '<p class="field-help">No open manually-reported Breakdown/OOS records.</p>'}</div>`;
+      <div class="item-list" id="v31-oos-list">${open.length ? open.map(openCard).join('')
+        : '<p class="field-help">No open manually-reported Breakdown/OOS records.</p>'}</div>
+      <div class="pane-header"><div><h3>Returned to Service (this shift)</h3></div></div>
+      <div class="item-list" id="v31-oos-rts-list">${rts.length ? rts.map(rtsCard).join('')
+        : '<p class="field-help">None marked RTS yet this shift.</p>'}</div>`;
 
     node.querySelector('#v31-oos-add-btn')?.addEventListener('click', () => {
       node.querySelector('#v31-oos-add-form').hidden = false;
@@ -83,11 +88,7 @@
       errorNode.textContent = '';
       if (!asset) { errorNode.textContent = 'Asset ID is required.'; return; }
       try {
-        await api('/api/oos', {
-          asset,
-          cause: node.querySelector('#v31-oos-cause').value.trim(),
-          notes: node.querySelector('#v31-oos-notes').value.trim(),
-        });
+        await api('/api/oos', {asset});
         await refresh();
         render();
       } catch (err) {
@@ -98,7 +99,7 @@
       btn.addEventListener('click', async () => {
         btn.disabled = true;
         try {
-          await api(`/api/oos/${btn.dataset.markRts}/rts`, {notes: ''});
+          await api(`/api/oos/${btn.dataset.markRts}/rts`, {});
           await refresh();
           render();
         } catch (err) {
