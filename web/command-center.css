@@ -87,6 +87,9 @@ body,.app{background:var(--cc-canvas)}
   font-size:10px;color:#96b3ce;
   font-weight:760;letter-spacing:.03em;margin-bottom:2px;
 }
+.v31-clock-widget{display:flex;flex-direction:column;gap:3px;padding-bottom:11px;margin-bottom:10px;border-bottom:1px solid #2c5272}
+.v31-clock-time{font-size:27px;font-weight:800;color:#fff;letter-spacing:.01em;line-height:1.1}
+.v31-clock-date{font-size:12px;color:#aac4dd;font-weight:600}
 .v31-sidebar-user{
   margin-top:auto;
   padding:14px 8px 9px;

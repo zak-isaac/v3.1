@@ -13,11 +13,6 @@
   };
   let context;
   try {context=await request('/api/me');}catch(e){return;}
-  const account = $('#account-button');
-  if (account) {
-    const label=account.querySelector('span:not(.avatar-icon)');
-    if(label) label.textContent=context.name;
-  }
   const reportTitle=document.querySelector('.shift-heading h1');
   const originalTitle=reportTitle?.textContent||'Shift Report';
   const reportText=$('.footer-tip span');
@@ -26,12 +21,13 @@
   bar.id='v31-context-bar';
   bar.setAttribute('aria-label','Selected shift');
   bar.innerHTML=
+    '<div class="v31-clock-widget"><div class="v31-clock-time" id="v31-sidebar-clock">—</div>'+
+      '<div class="v31-clock-date" id="v31-sidebar-today">—</div></div>'+
     '<div id="v31-context-label" class="v31-session-heading">Selected Shift</div>'+
     '<div class="v31-session-meta">'+
       '<div><strong>Shift Date</strong><span id="v31-sidebar-date">—</span></div>'+
       '<div><strong>Scheduled Hours</strong><span id="v31-sidebar-schedule">—</span></div>'+
       '<div><strong>Reporting Window</strong><span id="v31-sidebar-window">—</span></div>'+
-      '<div><strong>Current Time</strong><span id="v31-sidebar-clock">—</span></div>'+
     '</div>';
   const anchor=$('#v31-sidebar-controls');
   if(anchor)anchor.append(bar);
@@ -56,6 +52,8 @@
     {timeZone:'America/Indiana/Indianapolis',hour:'numeric',minute:'2-digit'}).format(new Date(iso));
   const fmtDay = iso => new Intl.DateTimeFormat('en-US',
     {timeZone:'America/Indiana/Indianapolis',weekday:'short',month:'short',day:'numeric',year:'numeric'}).format(new Date(iso));
+  const fmtFullDay = iso => new Intl.DateTimeFormat('en-US',
+    {timeZone:'America/Indiana/Indianapolis',weekday:'long',month:'long',day:'numeric',year:'numeric'}).format(new Date(iso));
   const draw=async()=>{
     context=await request('/api/me');
     window.__v31ShiftContext = context.selected || null;
@@ -78,6 +76,7 @@
     $('#v31-sidebar-window').textContent=
       fmtTime(context.selected.opens_at)+' – '+fmtTime(context.selected.closes_at);
     $('#v31-sidebar-clock').textContent=fmtTime(context.now);
+    $('#v31-sidebar-today').textContent=fmtFullDay(context.now);
     if(reportTitle) reportTitle.textContent=context.selected?`${context.selected.code} Shift Report`:originalTitle;
     const list=$('#v31-shift-list');list.replaceChildren();
     if(!context.shifts.length){
