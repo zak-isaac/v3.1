@@ -293,12 +293,18 @@ def test_shift_controls_and_brand_relocated_to_sidebar(client, monkeypatch):
     assert '.shift-meta{display:none!important}' in css.text
     js=client.get('/web/workspace-auth.js')
     assert js.status_code==200
-    # The sidebar clock/shift-detail card and Choose Shift were removed as
-    # clutter; only Sign Out remains a real sidebar control.
-    for item in ('v31-sidebar-date','v31-sidebar-schedule','v31-sidebar-window',
-                 'v31-sidebar-clock','v31-menu-choose'):
+    # The old shift-detail card (Shift Date/Scheduled Hours/Reporting Window)
+    # and Choose Shift were removed as clutter; a clock/date now lives in
+    # the brand block instead (replacing the IND3/dept text), and Sign Out
+    # remains the only other real sidebar control.
+    for item in ('v31-sidebar-date','v31-sidebar-schedule','v31-sidebar-window','v31-menu-choose'):
         assert item not in js.text
+    assert 'v31-sidebar-clock' in js.text
+    assert 'v31-sidebar-today' in js.text
     assert 'v31-signout' in js.text
+    brand = page.text.split('<div class="sidebar-brand"', 1)[1].split('</nav>', 1)[0]
+    assert 'MST Reliability Operations' not in brand
+    assert 'id="v31-sidebar-clock"' in brand
     admin=client.get('/web/roster-admin.js')
     assert admin.status_code==200
     assert "window.addEventListener('v31:administration'" in admin.text
@@ -314,10 +320,13 @@ def test_administration_is_full_management_workspace_without_selected_shift(clie
     for item in ('id="v31-admin-screen"', 'id="v31-admin-content"',
                  'id="v31-roster-rows"', 'id="v31-admin-add-form"',
                  'id="v31-sync-source"', 'id="v31-roster-search"',
+                 'id="v31-sidebar-clock"', 'id="v31-sidebar-today"',
                  '/web/admin-standalone.js', '/web/roster-admin.js',
                  '/web/administration.css'):
         assert item in page.text
     assert 'Manage Drax Roster</button>' not in page.text
+    admin_js=client.get('/web/admin-standalone.js').text
+    assert 'v31-sidebar-clock' in admin_js and 'v31-sidebar-today' in admin_js
     assert '/web/workspace-auth.js' not in page.text
     js=client.get('/web/roster-admin.js')
     assert js.status_code==200

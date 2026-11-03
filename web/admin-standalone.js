@@ -17,6 +17,19 @@ let who;
 try{who=await api('/api/me');}
 catch(_){window.location.replace('/');return;}
 if(who.role!=='manager'){window.location.replace('/');return;}
+const fmtTime=iso=>new Intl.DateTimeFormat('en-US',
+  {timeZone:'America/Indiana/Indianapolis',hour:'numeric',minute:'2-digit'}).format(new Date(iso));
+const fmtFullDay=iso=>new Intl.DateTimeFormat('en-US',
+  {timeZone:'America/Indiana/Indianapolis',weekday:'long',month:'long',day:'numeric',year:'numeric'}).format(new Date(iso));
+const tickClock=data=>{
+  const clock=$('#v31-sidebar-clock');if(clock)clock.textContent=fmtTime(data.now);
+  const today=$('#v31-sidebar-today');if(today)today.textContent=fmtFullDay(data.now);
+};
+tickClock(who);
+setInterval(async()=>{
+  if(document.hidden)return;
+  try{tickClock(await api('/api/me'));}catch(_){/* session may have expired; next click will redirect */}
+},60000);
 const username=$('#v31-user-name');
 if(username)username.textContent=who.name||'Management';
 const initial=$('#v31-user-initial');

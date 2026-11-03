@@ -27,10 +27,16 @@
     {timeZone:'America/Indiana/Indianapolis',hour:'numeric',minute:'2-digit'}).format(new Date(iso));
   const fmtDay = iso => new Intl.DateTimeFormat('en-US',
     {timeZone:'America/Indiana/Indianapolis',weekday:'short',month:'short',day:'numeric',year:'numeric'}).format(new Date(iso));
+  const fmtFullDay = iso => new Intl.DateTimeFormat('en-US',
+    {timeZone:'America/Indiana/Indianapolis',weekday:'long',month:'long',day:'numeric',year:'numeric'}).format(new Date(iso));
   const draw=async()=>{
     context=await request('/api/me');
     window.__v31ShiftContext = context.selected || null;
     window.__v31Facility = context.facility || null;
+    const clock=$('#v31-sidebar-clock');
+    if(clock)clock.textContent=fmtTime(context.now);
+    const today=$('#v31-sidebar-today');
+    if(today)today.textContent=fmtFullDay(context.now);
     if (!context.selected) {
       // Never keep displaying a fake or expired shift as the active report.
       window.location.replace('/');
@@ -69,7 +75,8 @@
   },true);
   $('#go-to-login')?.addEventListener('click',e=>{e.stopImmediatePropagation();signout();},true);
   await draw();
-  // Periodically refresh so an expired/closed shift (or reporting window
-  // grace period) redirects to login without needing a manual reload.
+  // Keeps the sidebar clock ticking and catches an expired/closed shift
+  // (or reporting-window grace period) so it redirects without needing a
+  // manual reload.
   setInterval(()=>{ if(!document.hidden) draw().catch(()=>{}); },60000);
 })();

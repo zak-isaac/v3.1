@@ -54,6 +54,10 @@ body,.app{background:var(--cc-canvas)}
 }
 .v31-brand-dept strong{font-size:15px;line-height:1.28;font-weight:800;color:#fff}
 .v31-brand-dept small{font-size:12px;color:#b7cce0;line-height:1.4}
+/* Clock widget lives inside sidebar-brand now (replacing the old IND3/
+   dept text block) -- sidebar-brand already supplies the separating
+   border below it, so drop the widget's own duplicate border here. */
+.sidebar-brand .v31-clock-widget{border-bottom:0;margin-bottom:0;padding-bottom:0;padding:0 3px}
 .main-nav{gap:5px}
 .nav-section-label{
   font-size:10px;letter-spacing:.08em;text-transform:uppercase;
