@@ -17,6 +17,7 @@ from v31_split import assign, _person_key
 import ai_remark_rewriter
 import html as _html
 import spelling_fix
+import v31_oos
 
 TZ=ZoneInfo("America/Indiana/Indianapolis")
 
@@ -521,6 +522,14 @@ def build_passdown_html(conn, shift_id, shift_code):
 
     rts = [f'<strong>{esc(r["asset"])}</strong> &mdash; Returned to Service' for r in inc if r["status"] == "RTS"]
     oos = [f'<strong>{esc(r["asset"])}</strong>' for r in inc if r["status"] == "OOS"]
+    # Manually-reported Breakdown/OOS (no Cetaris WO behind it at all).
+    # Historical regeneration only shows what was resolved *during this
+    # specific shift* (a stable fact tied to rts_shift_id) -- never the
+    # live/current globally-open list, which would drift for an archived
+    # shift's report every time something new goes down or comes back up.
+    for record in v31_oos.resolved_this_shift(conn, shift_id):
+        rts.append(f'<strong>{esc(record["asset"])}</strong> &mdash; '
+                   f'Returned to Service (manually reported)')
 
     loto_html = (
         '<p style="font-size:14px;font-family:Calibri,Arial,sans-serif;margin-top:18px;">'

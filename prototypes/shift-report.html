@@ -259,7 +259,8 @@ function listPane(kind){let list=kind==='vendors'?state.vendors:state.ro;let tit
 function pmTab(){return `<div class="secondary-pane"><div class="pane-header"><div><h3>Preventive Maintenance</h3><p>Qualified Cetaris PM WOs are counted once.</p></div></div><div class="item-list">${state.pms.length?state.pms.map(r=>`<div class="item-card"><div><strong>${esc(r.asset||'Asset not specified')} · WO# ${esc(r.wo_number)}</strong><small>${esc(r.tech||'')}</small></div><span class="status-pill rts">Completed</span></div>`).join(''):'<p class="field-help">No completed PM work orders imported yet.</p>'}</div></div>`;}
 function breakdownTab(){
   const items=state.rows.filter(r=>!r.excluded&&(r.status==='OOS'||r.category==='Breakdown'));
-  return `<div class="secondary-pane"><div class="pane-header"><div><h3>Breakdown / Out of Service</h3><p>Tracked from imported work orders. No manual duplicate entry is needed.</p></div></div><div class="item-list">${items.length ? items.map(r=>`<div class="item-card"><div><strong>${esc(r.asset)} · WO# ${esc(r.wo)}</strong><small>${esc(r.cause)}</small></div><span class="status-pill ${r.status.toLowerCase()}">${esc(r.status)}</span></div>`).join('') : '<p class="field-help">No breakdown or OOS records imported yet.</p>'}</div></div>`;
+  return `<div class="secondary-pane"><div id="v31-manual-oos-root">Loading breakdown/OOS records&hellip;</div>
+    <div class="pane-header"><div><h3>From Cetaris Import</h3><p>Tracked automatically from imported work orders.</p></div></div><div class="item-list">${items.length ? items.map(r=>`<div class="item-card"><div><strong>${esc(r.asset)} · WO# ${esc(r.wo)}</strong><small>${esc(r.cause)}</small></div><span class="status-pill ${r.status.toLowerCase()}">${esc(r.status)}</span></div>`).join('') : '<p class="field-help">No breakdown or OOS records imported yet.</p>'}</div></div>`;
 }
 function renderTab(){ $$('.tab').forEach(t=>{const yes=t.dataset.tab===selectedTab;t.classList.toggle('current',yes);t.setAttribute('aria-selected',String(yes));});$('#tab-content').innerHTML= selectedTab==='happenings'?workTab():selectedTab==='pm'?pmTab():selectedTab==='breakdown'?breakdownTab():listPane(selectedTab);if(selectedTab==='happenings'){
   const searchBox=$('#wo-search');
@@ -269,7 +270,8 @@ function renderTab(){ $$('.tab').forEach(t=>{const yes=t.dataset.tab===selectedT
     window.V31Reporting?.chooseTechs():$('#cetaris-picker').click());
   $('#v31-empty-audit')?.addEventListener('click',()=>{$('#audit').hidden=false;$('#audit').scrollIntoView({block:'nearest',behavior:'smooth'});});
   if(searchBox)populateRows();
-}else if(['vendors','ro'].includes(selectedTab)){$('#add-list-entry').addEventListener('click',()=>editList(selectedTab));$$('[data-list-edit]').forEach(b=>b.addEventListener('click',()=>editList(selectedTab,Number(b.dataset.listEdit))));}}
+}else if(['vendors','ro'].includes(selectedTab)){$('#add-list-entry').addEventListener('click',()=>editList(selectedTab));$$('[data-list-edit]').forEach(b=>b.addEventListener('click',()=>editList(selectedTab,Number(b.dataset.listEdit))));}
+else if(selectedTab==='breakdown'){window.dispatchEvent(new Event('v31:breakdown-tab'));}}
 function editList(kind,index=null){const isVendor=kind==='vendors';let list=isVendor?state.vendors:state.ro;let old=index===null?'':list[index];let name=isVendor?'Vendor':'RO';showModal(`${index===null?'Add':'Edit'} ${name}`,`Manual ${name.toLowerCase()} information to include in the passdown.`,`<div class="field"><label for="list-text">${name} details</label><textarea id="list-text" maxlength="1000" placeholder="Enter details about ${isVendor?'vendor service, follow-up, and status':'repair order, asset, and pending work'}">${esc(old)}</textarea></div>`,[{text:'Cancel',onClick:closeModal},...(index===null?[]:[{text:'Delete',onClick:()=>{list.splice(index,1);closeModal();updateMetrics();renderTab();touch();toast(`${name} entry deleted`);}}]),{text:index===null?'Add entry':'Save entry',kind:'btn-primary',onClick:()=>{const v=$('#list-text').value.trim();if(!v){toast('Enter details first');return;}if(index===null)list.push(v);else list[index]=v;closeModal();updateMetrics();renderTab();touch();toast(`${name} entry saved`);}}]);}
 function editNotes(){showModal('Shift Notes','Add final reporting notes, follow-ups, or reminders.',`<div class="field"><label for="notes-text">Shift notes</label><textarea id="notes-text" maxlength="3000" placeholder="Enter shift notes...">${esc(state.notes)}</textarea><span class="field-help">These notes remain inside this preview unless you export the sample EML.</span></div>`,[{text:'Cancel',onClick:closeModal},{text:'Save notes',kind:'btn-primary',onClick:()=>{state.notes=$('#notes-text').value;closeModal();touch();toast('Shift notes saved in preview');}}]);}
 function techModal(){
@@ -283,7 +285,14 @@ function techModal(){
   ]);
   $('#manual-techs').value=state.techs.join('\n');
 }
-function createReport(){const inc=state.rows.filter(r=>!r.excluded);return `IND3 — MST Reliability Operations
+function createReport(){const inc=state.rows.filter(r=>!r.excluded);
+  const manualOpen=window.__v31ManualOOS?.open||[];
+  const manualRts=window.__v31ManualOOS?.rts_this_shift||[];
+  const rtsLines=[...inc.filter(r=>r.status==='RTS').map(r=>`${r.asset} — Returned to Service`),
+    ...manualRts.map(m=>`${m.asset} — Returned to Service (manually reported)`)];
+  const oosLines=[...inc.filter(r=>r.status==='OOS').map(r=>r.asset),
+    ...manualOpen.map(m=>`${m.asset}${m.cause?' — '+m.cause:''} (manually reported)`)];
+  return `IND3 — MST Reliability Operations
 ${window.__v31ShiftContext?.code || 'Unassigned'} — Shift Report
 Date: ${window.__v31ShiftContext?.date || 'Not selected'}
 Technicians: ${state.techs.join('; ')||'None selected'}
@@ -302,6 +311,12 @@ ${state.vendors.join('\n')||'None'}
 
 RO
 ${state.ro.join('\n')||'None'}
+
+OUT OF SERVICE — RETURNED TO SERVICE (RTS)
+${rtsLines.join('\n')||'None'}
+
+CURRENT OUT OF SERVICE
+${oosLines.join('\n')||'None'}
 
 SHIFT NOTES
 ${state.notes||'None'}
@@ -332,6 +347,15 @@ function buildEmailHtml(){
   });
   const rts=inc.filter(r=>r.status==='RTS').map(r=>`<strong>${esc(r.asset)}</strong> &mdash; Returned to Service`);
   const oos=inc.filter(r=>r.status==='OOS').map(r=>`<strong>${esc(r.asset)}</strong>`);
+  // Manually-reported Breakdown/OOS -- no Cetaris WO behind these at all.
+  // "Current" OOS shows every globally-open record so a handoff always has
+  // full visibility, regardless of which shift originally logged it down.
+  (window.__v31ManualOOS?.open||[]).forEach(m=>{
+    oos.push(`<strong>${esc(m.asset)}</strong>${m.cause?' &mdash; '+esc(m.cause):''} (manually reported)`);
+  });
+  (window.__v31ManualOOS?.rts_this_shift||[]).forEach(m=>{
+    rts.push(`<strong>${esc(m.asset)}</strong> &mdash; Returned to Service (manually reported)`);
+  });
   const loto=state.loto
     ?`<p style="font-size:14px;font-family:Calibri,Arial,sans-serif;margin-top:18px;"><strong style="color:#2a8703;">&#10003; All LOTO Keys Verified</strong></p>`
     :`<p style="font-size:14px;font-family:Calibri,Arial,sans-serif;margin-top:18px;"><strong style="color:#b45309;">&#9888; LOTO Verification Pending</strong></p>`;

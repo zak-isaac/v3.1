@@ -29,6 +29,7 @@ import v31_legacy_history
 import v31_drax_bridge
 import v31_reporting
 import v31_facility
+import v31_oos
 
 ROOT = Path(__file__).resolve().parent
 PRIVATE = Path(os.environ.get('IND3_V31_PRIVATE_DIR', str(ROOT / '.local-data'))).resolve()
@@ -412,6 +413,7 @@ def landing(request: Request):
         '<script defer src="/web/roster-admin.js"></script>'+
         '<script defer src="/web/facility-admin.js"></script>'+
         '<script defer src="/web/shift-history.js"></script>'+
+        '<script defer src="/web/manual-oos.js"></script>'+
         '<script defer src="/web/shift-data.js"></script>'))
 
 
@@ -960,3 +962,70 @@ def shift_history_eml(shift_id: int, request: Request):
     filename = f"IND3_{row['code']}_{row['shift_day']}_Shift_Passdown.eml"
     return Response(content=eml, media_type='message/rfc822',
                      headers={'Content-Disposition': f'attachment; filename="{filename}"'})
+
+
+class ManualOOSCreate(BaseModel):
+    asset: str = Field(min_length=1, max_length=120)
+    cause: str = Field(default='', max_length=500)
+    notes: str = Field(default='', max_length=1000)
+
+
+class ManualOOSResolve(BaseModel):
+    notes: str = Field(default='', max_length=500)
+
+
+@app.post('/api/oos')
+def oos_create(payload: ManualOOSCreate, request: Request):
+    """Log an asset as Down/Degraded with no Cetaris WO behind it at all.
+    Requires an active shift so the report it came from is known, but the
+    record itself is global -- visible to every signed-in associate, not
+    scoped to this shift or this MST."""
+    _origin_check(request)
+    session, profile = who(request)
+    if not session['s']:
+        raise HTTPException(409, 'Choose a shift first')
+    with _db() as conn:
+        shift = conn.execute('SELECT code FROM shifts WHERE id=?', (session['s'],)).fetchone()
+        if shift is None:
+            raise HTTPException(409, 'Shift not found')
+        record = v31_oos.create(conn, asset=payload.asset.strip(), cause=payload.cause.strip(),
+            notes=payload.notes.strip(), logged_by=session['a'],
+            logged_by_name=profile.get('name', 'Associate'), shift_id=session['s'],
+            shift_code=shift['code'], now_iso=datetime.now(TZ).isoformat())
+    return record
+
+
+@app.get('/api/oos')
+def oos_list(request: Request):
+    """Currently-open manual OOS records (global, every associate sees the
+    same list) plus this session's own shift's resolved-this-shift list
+    (for that shift's own passdown RTS section and tab confirmation UI)."""
+    session, profile = who(request)
+    with _db() as conn:
+        open_items = v31_oos.list_records(conn, open_only=True)
+        resolved_this_shift = v31_oos.resolved_this_shift(conn, session['s']) if session['s'] else []
+    return {'open': open_items, 'resolved_this_shift': resolved_this_shift}
+
+
+@app.post('/api/oos/{oos_id}/rts')
+def oos_mark_rts(oos_id: int, payload: ManualOOSResolve, request: Request):
+    """Any signed-in associate can mark a manual OOS record RTS, not just
+    whoever logged it -- the actual fix might come from a different shift
+    or a different technician entirely than whoever first logged it down."""
+    _origin_check(request)
+    session, profile = who(request)
+    if not session['s']:
+        raise HTTPException(409, 'Choose a shift first')
+    with _db() as conn:
+        shift = conn.execute('SELECT code FROM shifts WHERE id=?', (session['s'],)).fetchone()
+        if shift is None:
+            raise HTTPException(409, 'Shift not found')
+        record, error = v31_oos.mark_rts(conn, oos_id, rts_by=session['a'],
+            rts_by_name=profile.get('name', 'Associate'), shift_id=session['s'],
+            shift_code=shift['code'], now_iso=datetime.now(TZ).isoformat(),
+            notes=payload.notes.strip())
+    if error == 'not_found':
+        raise HTTPException(404, 'Record not found')
+    if error == 'already_resolved':
+        raise HTTPException(409, 'Already marked RTS')
+    return record
