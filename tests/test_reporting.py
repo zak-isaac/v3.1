@@ -568,7 +568,8 @@ def test_command_center_layout_uses_full_width_metrics_and_real_empty_state(clie
     assert header < overview < cards < workspace
     assert markup.count('id="metric-work"')==1
     assert markup.count('id="metric-pms-completed"')==1
-    assert '<span>Shift Workspace</span>' in markup
+    # The old topbar account-button ('Shift Workspace' label) was removed;
+    # shift/user context now lives solely in the sidebar.
     assert 'Changes remain in this frontend preview' not in markup
     assert 'web/command-center.css' in markup
     script=markup[markup.rfind("<script>")+len("<script>"):markup.rfind("</script>")]

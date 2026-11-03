@@ -366,7 +366,9 @@ def test_management_chooser_admin_shortcut_and_shift_chooser_not_in_sidebar(clie
     assert ".v31-context-actions" not in adminjs
     page=client.get('/administration').text
     assert '<button id="v31-signout"' in page
-    assert 'Choose Shift</button>' in page  # Account-menu action, not sidebar.
+    # Choose Shift now lives in the sidebar itself (the separate topbar/
+    # account-menu was removed); it's just hidden by default and shown
+    # for management via JS based on role, not baked into static nav.
     sidebar=page.split('<aside class="sidebar">',1)[1].split('</aside>',1)[0]
-    assert 'Choose Shift' not in sidebar
+    assert 'id="v31-menu-choose"' in sidebar
     assert 'Manage Drax Roster' not in sidebar
