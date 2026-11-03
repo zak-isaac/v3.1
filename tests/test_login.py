@@ -323,6 +323,22 @@ def test_administration_is_full_management_workspace_without_selected_shift(clie
     assert 'v31:administration' in js.text
 
 
+def test_administration_has_teams_and_facility_email_settings(client,monkeypatch):
+    freeze(monkeypatch,at(2026,10,27,8))
+    assert sign_in(client,'8972').status_code==200
+    page=client.get('/administration')
+    assert page.status_code==200
+    for item in ('id="v31-webhook-url"', 'id="v31-webhook-save"', 'id="v31-webhook-clear"',
+                 'id="v31-facility-form"', 'id="v31-facility-dc"',
+                 'id="v31-facility-recipients"', 'id="v31-facility-sender"',
+                 'id="v31-facility-graph"', '/web/facility-admin.js'):
+        assert item in page.text
+    js=client.get('/web/facility-admin.js')
+    assert js.status_code==200
+    assert '/api/admin/settings' in js.text
+    assert 'v31:administration' in js.text
+
+
 def test_administration_requires_manager_and_protects_roster(client,monkeypatch):
     freeze(monkeypatch,at(2026,10,27,8))
     assert client.get('/administration').status_code==401

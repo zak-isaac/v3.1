@@ -292,3 +292,57 @@ def test_new_database_has_no_overtime_schema(client):
         columns={row["name"] for row in db.execute("PRAGMA table_info(shifts)")}
     assert "overtime_grants" not in tables
     assert "is_ot" not in columns
+
+
+def test_facility_settings_require_management_and_round_trip(client, monkeypatch):
+    freeze(monkeypatch, at())
+    assert sign(client, "111111").status_code == 200
+    assert client.get("/api/admin/settings").status_code == 403
+    assert client.post("/api/admin/settings", json={
+        "distribution_center": "IND3", "recipients": "a@wal-mart.com",
+        "sender_name": "x", "graph_client_id": ""}).status_code == 403
+    client.post("/api/logout", json={})
+
+    assert sign(client).status_code == 200
+    defaults = client.get("/api/admin/settings").json()
+    assert defaults["distribution_center"] == "IND3"
+    assert defaults["recipients"] == ""
+
+    saved = client.post("/api/admin/settings", json={
+        "distribution_center": "IND3",
+        "recipients": "mx-72@wal-mart.com, mt7-60@wal-mart.com ,",
+        "sender_name": "IND3 Shift Passdown",
+        "graph_client_id": "56d233d1-bd5c-429b-a8c2-3804a7422102"})
+    assert saved.status_code == 200
+    body = saved.json()
+    assert body["recipients"] == "mx-72@wal-mart.com,mt7-60@wal-mart.com"
+    assert body["graph_client_id"] == "56d233d1-bd5c-429b-a8c2-3804a7422102"
+
+    reloaded = client.get("/api/admin/settings").json()
+    assert reloaded["recipients"] == "mx-72@wal-mart.com,mt7-60@wal-mart.com"
+
+    bad = client.post("/api/admin/settings", json={
+        "distribution_center": "IND3", "recipients": "not-an-email",
+        "sender_name": "x", "graph_client_id": ""})
+    assert bad.status_code == 422
+
+    me = client.get("/api/me").json()
+    assert me["facility"]["recipients"] == "mx-72@wal-mart.com,mt7-60@wal-mart.com"
+    assert "graph_client_id" not in me["facility"]
+
+
+def test_teams_webhook_requires_https_and_persists_separately(client, monkeypatch):
+    freeze(monkeypatch, at())
+    assert sign(client).status_code == 200
+    bad = client.post("/api/admin/settings/webhook", json={"teams_webhook": "http://not-https.example"})
+    assert bad.status_code == 422
+    good = client.post("/api/admin/settings/webhook",
+                       json={"teams_webhook": "https://walmart.webhook.office.com/webhookb2/abc"})
+    assert good.status_code == 200
+    assert good.json()["teams_webhook"] == "https://walmart.webhook.office.com/webhookb2/abc"
+    client.post("/api/admin/settings", json={
+        "distribution_center": "IND3", "recipients": "a@wal-mart.com",
+        "sender_name": "IND3 Shift Passdown", "graph_client_id": ""})
+    after = client.get("/api/admin/settings").json()
+    assert after["teams_webhook"] == "https://walmart.webhook.office.com/webhookb2/abc"
+    assert after["recipients"] == "a@wal-mart.com"

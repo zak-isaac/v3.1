@@ -28,6 +28,7 @@ import v31_roster
 import v31_legacy_history
 import v31_drax_bridge
 import v31_reporting
+import v31_facility
 
 ROOT = Path(__file__).resolve().parent
 PRIVATE = Path(os.environ.get('IND3_V31_PRIVATE_DIR', str(ROOT / '.local-data'))).resolve()
@@ -341,7 +342,8 @@ def state(session: dict, profile: dict) -> dict:
             'assigned_shift': profile.get('shift'), 'selected': selected,
             'report_saved': bool(selected and selected.get('report_saved')),
             'shifts': available, 'open': opened, 'ready': ready, 'now': now.isoformat(),
-            'grace_minutes': 60, 'production_connected': False}
+            'grace_minutes': 60, 'production_connected': False,
+            'facility': v31_facility.public_fields(v31_facility.load(PRIVATE))}
 
 
 @app.middleware('http')
@@ -407,6 +409,7 @@ def landing(request: Request):
     return HTMLResponse(_inject_before_last(html, '</body>',
         '<script defer src="/web/workspace-auth.js"></script>'+
         '<script defer src="/web/roster-admin.js"></script>'+
+        '<script defer src="/web/facility-admin.js"></script>'+
         '<script defer src="/web/shift-history.js"></script>'+
         '<script defer src="/web/shift-data.js"></script>'))
 
@@ -420,6 +423,7 @@ def administration_page(request: Request):
     html = (ROOT / 'prototypes' / 'shift-report.html').read_text(encoding='utf-8')
     return HTMLResponse(_inject_before_last(html, '</body>',
         '<script defer src="/web/roster-admin.js"></script>'+
+        '<script defer src="/web/facility-admin.js"></script>'+
         '<script defer src="/web/admin-standalone.js"></script>'))
 
 
@@ -663,6 +667,50 @@ def admin_roster_edit(payload: AdminEditAssociate, request: Request):
     except ValueError as exc:
         raise HTTPException(409, str(exc))
     return v31_roster.status(DB_FILE, include_rows=True)
+
+
+class FacilitySettingsPayload(BaseModel):
+    distribution_center: str = Field(default='IND3', max_length=20)
+    recipients: str = Field(default='', max_length=2000)
+    sender_name: str = Field(default='IND3 Shift Passdown', max_length=120)
+    graph_client_id: str = Field(default='', max_length=120)
+
+
+class TeamsWebhookPayload(BaseModel):
+    teams_webhook: str = Field(default='', max_length=400)
+
+
+@app.get('/api/admin/settings')
+def admin_settings(request: Request):
+    require_manager(request)
+    return v31_facility.load(PRIVATE)
+
+
+@app.post('/api/admin/settings')
+def admin_settings_save(payload: FacilitySettingsPayload, request: Request):
+    _origin_check(request)
+    require_manager(request)
+    addresses = [a.strip() for a in payload.recipients.split(',') if a.strip()]
+    for address in addresses:
+        if '@' not in address or ' ' in address:
+            raise HTTPException(422, f'Invalid recipient email: {address}')
+    return v31_facility.save(PRIVATE, {
+        'distribution_center': payload.distribution_center.strip() or 'IND3',
+        'recipients': ','.join(addresses),
+        'sender_name': payload.sender_name.strip() or 'IND3 Shift Passdown',
+        'graph_client_id': payload.graph_client_id.strip(),
+    })
+
+
+@app.post('/api/admin/settings/webhook')
+def admin_settings_webhook(payload: TeamsWebhookPayload, request: Request):
+    _origin_check(request)
+    require_manager(request)
+    webhook = payload.teams_webhook.strip()
+    if webhook and not webhook.startswith('https://'):
+        raise HTTPException(422, 'Teams webhook must be an https:// URL')
+    return v31_facility.save(PRIVATE, {'teams_webhook': webhook})
+
 
 @app.post('/api/shifts/report')
 def save_shift_report(payload: ReportPayload, request: Request):
