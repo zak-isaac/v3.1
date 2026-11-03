@@ -23,21 +23,6 @@ const initial=$('#v31-user-initial');
 if(initial)initial.textContent=(who.name||'?').trim().charAt(0).toUpperCase()||'?';
 const role=$('#v31-user-role');
 if(role)role.textContent='Management · IND3';
-const button=$('#account-button');
-const display=button?.querySelector('span:not(.avatar-icon)');
-if(display)display.textContent=who.name||'Management';
-const choose=$('#v31-menu-choose');
-if(choose){
- choose.hidden=false;
- choose.addEventListener('click',()=>{
-   if(who.selected)window.location.assign('/shift-report.html?open-shift-chooser=1');
-   else window.location.assign('/?shift-selection=1');
- });
-}
-$('#v31-menu-administration')?.addEventListener('click',()=>{
-  $('#account-menu').hidden=true;
-  window.v31Navigate?.('admin');
-});
 $('#v31-signout')?.addEventListener('click',async()=>{
  try{await api('/api/logout',{});}
  finally{window.location.replace('/?shift-selection=1');}

@@ -282,7 +282,7 @@ def test_shift_controls_and_brand_relocated_to_sidebar(client, monkeypatch):
     assert client.post('/api/shifts/start',json={'code':'S1'}).status_code==200
     page=client.get('/shift-report.html')
     assert page.status_code==200
-    assert 'id="v31-sidebar-controls"' in page.text
+    assert 'id="v31-sidebar-controls"' not in page.text
     assert 'class="sidebar-brand"' in page.text
     assert 'class="v31-brand-logo"' in page.text
     assert 'data-nav="support"' not in page.text
@@ -293,10 +293,12 @@ def test_shift_controls_and_brand_relocated_to_sidebar(client, monkeypatch):
     assert '.shift-meta{display:none!important}' in css.text
     js=client.get('/web/workspace-auth.js')
     assert js.status_code==200
+    # The sidebar clock/shift-detail card and Choose Shift were removed as
+    # clutter; only Sign Out remains a real sidebar control.
     for item in ('v31-sidebar-date','v31-sidebar-schedule','v31-sidebar-window',
-                 'v31-sidebar-clock','v31-menu-choose','v31-signout'):
-        assert item in js.text
-    assert 'window.V31Reporting.refresh()' in js.text
+                 'v31-sidebar-clock','v31-menu-choose'):
+        assert item not in js.text
+    assert 'v31-signout' in js.text
     admin=client.get('/web/roster-admin.js')
     assert admin.status_code==200
     assert "window.addEventListener('v31:administration'" in admin.text
@@ -360,7 +362,7 @@ def test_stationary_sidebar_mst_identity_and_signout(client,monkeypatch):
     assert 'id="v31-user-name"' in markup
     assert markup.index('id="v31-user-name"') < markup.index('id="v31-signout"')
     assert 'id="v31-select-shift"' not in markup
-    assert 'id="v31-menu-choose"' in markup
+    assert 'id="v31-menu-choose"' not in markup
     layout=client.get('/web/workspace-layout.css')
     assert layout.status_code==200
     assert '.sidebar{height:100%;min-height:0!important;overflow:hidden' in layout.text
@@ -385,9 +387,7 @@ def test_management_chooser_admin_shortcut_and_shift_chooser_not_in_sidebar(clie
     assert ".v31-context-actions" not in adminjs
     page=client.get('/administration').text
     assert '<button id="v31-signout"' in page
-    # Choose Shift now lives in the sidebar itself (the separate topbar/
-    # account-menu was removed); it's just hidden by default and shown
-    # for management via JS based on role, not baked into static nav.
-    sidebar=page.split('<aside class="sidebar">',1)[1].split('</aside>',1)[0]
-    assert 'id="v31-menu-choose"' in sidebar
-    assert 'Manage Drax Roster' not in sidebar
+    # Choose Shift was removed entirely (clutter) -- not in the sidebar,
+    # and not anywhere else on the page either.
+    assert 'v31-menu-choose' not in page
+    assert 'Manage Drax Roster' not in page
