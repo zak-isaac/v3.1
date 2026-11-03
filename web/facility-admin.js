@@ -27,7 +27,6 @@
     $('v31-facility-dc').value = data.distribution_center || 'IND3';
     $('v31-facility-recipients').value = data.recipients || '';
     $('v31-facility-sender').value = data.sender_name || 'IND3 Shift Passdown';
-    $('v31-facility-graph').value = data.graph_client_id || '';
   }
   async function load() {
     try { applySettings(await api('/api/admin/settings')); }
@@ -40,7 +39,6 @@
       distribution_center: $('v31-facility-dc').value.trim(),
       recipients: $('v31-facility-recipients').value.trim(),
       sender_name: $('v31-facility-sender').value.trim(),
-      graph_client_id: $('v31-facility-graph').value.trim(),
     }).then(data => { applySettings(data); notify('Facility & email configuration saved.'); })
       .catch(e => notify(e.message, true));
   });

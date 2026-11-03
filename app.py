@@ -675,7 +675,6 @@ class FacilitySettingsPayload(BaseModel):
     distribution_center: str = Field(default='IND3', max_length=20)
     recipients: str = Field(default='', max_length=2000)
     sender_name: str = Field(default='IND3 Shift Passdown', max_length=120)
-    graph_client_id: str = Field(default='', max_length=120)
 
 
 @app.get('/api/admin/settings')
@@ -696,7 +695,6 @@ def admin_settings_save(payload: FacilitySettingsPayload, request: Request):
         'distribution_center': payload.distribution_center.strip() or 'IND3',
         'recipients': ','.join(addresses),
         'sender_name': payload.sender_name.strip() or 'IND3 Shift Passdown',
-        'graph_client_id': payload.graph_client_id.strip(),
     })
 
 

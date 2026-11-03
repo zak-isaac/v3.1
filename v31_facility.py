@@ -1,15 +1,14 @@
 """IND3 V3.1 facility & passdown email settings.
 
 Small JSON-backed config, independent of the Drax roster and shift data.
-Scope is deliberately limited for this pass: we persist the settings an
-Administration admin enters (distribution center, passdown recipients,
-sender display name, optional Graph client id) and expose a public
-subset for building the downloaded passdown .eml's To:/Subject headers.
+Scope is deliberately limited: we persist the settings an Administration
+admin enters (distribution center, passdown recipients, sender display
+name) and expose a public subset for building the downloaded passdown
+.eml's To:/Subject headers.
 
-Not yet wired in this pass (flagged, not silently skipped):
-  * Sending mail via Microsoft Graph instead of a local .eml download.
-The Graph client id field just persists its value for a future
-integration pass.
+Sending mail via Microsoft Graph instead of a local .eml download was
+considered and dropped -- not needed, and a half-configured integration
+with nothing behind it is worse than no integration at all.
 """
 from __future__ import annotations
 
@@ -22,7 +21,6 @@ DEFAULTS: dict = {
     "distribution_center": "IND3",
     "recipients": "",
     "sender_name": "IND3 Shift Passdown",
-    "graph_client_id": "",
 }
 
 
@@ -54,8 +52,7 @@ def save(private_dir: Path, settings: dict) -> dict:
 
 def public_fields(settings: dict) -> dict:
     """Subset safe to expose to any signed-in MST (not just management)
-    for populating the passdown email's To:/Subject and sender name --
-    the Graph client id stays management-only."""
+    for populating the passdown email's To:/Subject and sender name."""
     return {
         "distribution_center": settings.get("distribution_center", DEFAULTS["distribution_center"]),
         "recipients": settings.get("recipients", DEFAULTS["recipients"]),

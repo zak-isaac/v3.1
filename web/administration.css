@@ -61,7 +61,7 @@
 .v31-admin-wide-field{display:grid;gap:5px;font-size:11px;color:#586e85;font-weight:700;margin-bottom:12px}
 .v31-admin-wide-field input{background:#fff;color:#203e5a;border:1px solid #cad8e5;border-radius:8px;
  padding:9px 10px;font-size:12px;width:100%}
-#v31-facility-form{grid-template-columns:repeat(4,minmax(0,1fr))}
+#v31-facility-form{grid-template-columns:repeat(3,minmax(0,1fr))}
 #v31-facility-form .v31-admin-wide-field{grid-column:1/-1;margin-bottom:0}
 .v31-history-id{display:inline-block;background:#eaf2fe;color:#1864c4;padding:4px 10px;
  border-radius:7px;font-weight:800;font-size:12px}

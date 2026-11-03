@@ -300,7 +300,7 @@ def test_facility_settings_require_management_and_round_trip(client, monkeypatch
     assert client.get("/api/admin/settings").status_code == 403
     assert client.post("/api/admin/settings", json={
         "distribution_center": "IND3", "recipients": "a@wal-mart.com",
-        "sender_name": "x", "graph_client_id": ""}).status_code == 403
+        "sender_name": "x"}).status_code == 403
     client.post("/api/logout", json={})
 
     assert sign(client).status_code == 200
@@ -311,19 +311,18 @@ def test_facility_settings_require_management_and_round_trip(client, monkeypatch
     saved = client.post("/api/admin/settings", json={
         "distribution_center": "IND3",
         "recipients": "mx-72@wal-mart.com, mt7-60@wal-mart.com ,",
-        "sender_name": "IND3 Shift Passdown",
-        "graph_client_id": "56d233d1-bd5c-429b-a8c2-3804a7422102"})
+        "sender_name": "IND3 Shift Passdown"})
     assert saved.status_code == 200
     body = saved.json()
     assert body["recipients"] == "mx-72@wal-mart.com,mt7-60@wal-mart.com"
-    assert body["graph_client_id"] == "56d233d1-bd5c-429b-a8c2-3804a7422102"
+    assert "graph_client_id" not in body
 
     reloaded = client.get("/api/admin/settings").json()
     assert reloaded["recipients"] == "mx-72@wal-mart.com,mt7-60@wal-mart.com"
 
     bad = client.post("/api/admin/settings", json={
         "distribution_center": "IND3", "recipients": "not-an-email",
-        "sender_name": "x", "graph_client_id": ""})
+        "sender_name": "x"})
     assert bad.status_code == 422
 
     me = client.get("/api/me").json()

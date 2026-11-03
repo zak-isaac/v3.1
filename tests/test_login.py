@@ -341,8 +341,9 @@ def test_administration_has_facility_email_settings(client,monkeypatch):
     assert page.status_code==200
     for item in ('id="v31-facility-form"', 'id="v31-facility-dc"',
                  'id="v31-facility-recipients"', 'id="v31-facility-sender"',
-                 'id="v31-facility-graph"', '/web/facility-admin.js'):
+                 '/web/facility-admin.js'):
         assert item in page.text
+    assert 'id="v31-facility-graph"' not in page.text
     # Teams Notifications was deliberately removed -- half-built config UI
     # for a webhook that nothing actually posts to yet.
     assert 'Teams Notifications' not in page.text
