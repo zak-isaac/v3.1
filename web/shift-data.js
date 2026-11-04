@@ -41,15 +41,20 @@ async function refresh(){
     audit.append(emLine);
   }
   // Pending/ignored reason lines can run long -- keep them in their own
-  // scrollable strip.
-  const reasons=document.createElement('div');
-  reasons.className='audit-reasons';
-  for(const r of [...snapshot.audit.pending,...snapshot.audit.ignored].slice(0,35)){
-    const line=document.createElement('p');
-    line.textContent='WO# '+r.wo_number+' — '+r.reason;
-    reasons.append(line);
+  // scrollable strip. Only attach the wrapper when there is a real reason
+  // to show -- an always-appended empty div used to defeat the children
+  // -count check below, keeping the panel visibly empty.
+  const reasonItems=[...snapshot.audit.pending,...snapshot.audit.ignored].slice(0,35);
+  if(reasonItems.length){
+    const reasons=document.createElement('div');
+    reasons.className='audit-reasons';
+    for(const r of reasonItems){
+      const line=document.createElement('p');
+      line.textContent='WO# '+r.wo_number+' — '+r.reason;
+      reasons.append(line);
+    }
+    audit.append(reasons);
   }
-  audit.append(reasons);
   const pendingClosed=snapshot.audit.pending.filter(x=>
     String(x.reason||'').startsWith('Completed but not Closed'));
   if(pendingClosed.length){
