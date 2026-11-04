@@ -209,17 +209,12 @@ def _next_day_work_orders(rows, shift_day, selected, imported, pms, pending, ign
 
 
 def technician_suggestions(source_techs, roster_rows, shift_code):
-    """Suggest a V3-style technician selection from Drax, without inferring overtime.
+    """Preselect every uniquely matched active Drax associate on this shift.
 
-    Match normalized complete names (First Last / Last, First) exactly.
-    Never send employee identifiers to the reporting browser.
-    A duplicate/ambiguous Drax match is listed as unmatched, not preselected.
-
-    Every result carries a `match_reason` explaining why a technician was NOT
-    preselected (None when they were) -- a Job Title that isn't literally
-    "MST", a name spelled differently than Cetaris, an inactive record, or a
-    duplicate name are otherwise invisible to the MST and just show up as a
-    wall of unchecked boxes with no explanation.
+    Import preselection is based on the Drax-assigned shift, NEVER the
+    associate who opened the report or a literal MST Job Title.
+    Exact normalized name matching protects against accidental ownership;
+    ambiguous, unmatched and inactive people remain unchecked.
     """
     by_name={}
     by_name_any={}
@@ -228,7 +223,7 @@ def technician_suggestions(source_techs, roster_rows, shift_code):
         if not key:
             continue
         by_name_any.setdefault(key,[]).append(person)
-        if person.get('active') and person.get('is_mst'):
+        if person.get('active'):
             by_name.setdefault(key,[]).append(person)
     result=[]
     for tech in source_techs:
@@ -237,7 +232,7 @@ def technician_suggestions(source_techs, roster_rows, shift_code):
         matches=by_name.get(key,[])
         match=matches[0] if len(matches)==1 else None
         assigned=match.get('shift') if match else None
-        group=('assigned' if assigned == shift_code else
+        group=('assigned' if assigned==shift_code else
                'other_shift' if assigned else 'unmatched')
         reason=None
         if group=='unmatched':
@@ -245,11 +240,11 @@ def technician_suggestions(source_techs, roster_rows, shift_code):
             if not any_matches:
                 reason='No Drax associate with this name was found.'
             elif len(matches)>1:
-                reason='Multiple active MST Drax records share this name; confirm manually.'
-            elif not any(m.get('is_mst') for m in any_matches):
-                reason='Found in Drax, but their Job Title is not marked MST.'
-            elif not any(m.get('active') for m in any_matches):
+                reason='Multiple active Drax records share this name; confirm manually.'
+            elif not any(p.get('active') for p in any_matches):
                 reason='Found in Drax, but the record is inactive.'
+            elif match and not assigned:
+                reason='Active Drax record has no assigned shift.'
             else:
                 reason='Drax record found but could not be confirmed automatically.'
         result.append({'name':name,'count':tech['count'],
@@ -257,7 +252,6 @@ def technician_suggestions(source_techs, roster_rows, shift_code):
                        'preselected':group=='assigned',
                        'match_reason':reason})
     return result
-
 
 def import_selection(conn, shift_id: int, shift_code: str, shift_day: str,
                      technicians: list[str], closure_reviews: dict[str,str] | None = None,
