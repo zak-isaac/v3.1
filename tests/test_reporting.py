@@ -172,6 +172,47 @@ def test_pending_closure_remains_pending_on_manual_edit(client,monkeypatch):
     assert 'Pending closure — reimport after Cetaris closes' in ui
 
 
+def test_pm_needing_completion_upload_is_real_and_separate_from_completed_pm_count(client,monkeypatch):
+    clock(monkeypatch)
+    shift_id=enter(client)
+    csv=b"WO Number,WO Date / Time,PM Due Date,Promise Date / Time,Asset #\\n" \\
+        b"PM100,10/26/2026,10/27/2026,10/28/2026,CONV-1\\n" \\
+        b"PM200,10/26/2026,10/27/2026,10/28/2026,CONV-2\\n"
+    uploaded=client.post('/api/pm-needing-completion/upload',files={
+        'file':('pm-needing.csv',csv,'text/csv')
+    })
+    assert uploaded.status_code==200,uploaded.text
+    body=uploaded.json()
+    assert body['count']==2 and body['parsed'] is True
+    state=client.get('/api/reporting/state').json()
+    assert state['pm_count']==0
+    assert state['pm_needing_completion']['count']==2
+    downloaded=client.get('/api/pm-needing-completion/download')
+    assert downloaded.status_code==200 and downloaded.content==csv
+    with m._db() as conn:
+        import v31_reporting
+        html=v31_reporting.build_passdown_html(conn,shift_id,'S1')
+    assert 'PMs Needing Completion' in html
+    assert 'PM100' in html and 'PM200' in html and 'CONV-1' in html
+    cleared=client.delete('/api/pm-needing-completion')
+    assert cleared.status_code==200 and cleared.json()['removed']
+    assert client.get('/api/pm-needing-completion').json()['present'] is False
+
+
+def test_pm_report_rejects_unparseable_workbook_without_erasing_previous(client,monkeypatch):
+    clock(monkeypatch)
+    enter(client)
+    good=b'WO Number,PM Due Date,Asset #\\nPM101,10/27/2026,ASSET-1\\n'
+    saved=client.post('/api/pm-needing-completion/upload',files={'file':('good.csv',good,'text/csv')})
+    assert saved.status_code==200
+    bad=client.post('/api/pm-needing-completion/upload',files={
+        'file':('bad.csv',b'Wrong Heading\\nValue\\n','text/csv')
+    })
+    assert bad.status_code==422
+    old=client.get('/api/pm-needing-completion').json()
+    assert old['filename']=='good.csv' and old['count']==1
+
+
 def test_pm_counts_once_and_does_not_enter_shift_happenings(client,monkeypatch):
     clock(monkeypatch)
     enter(client)
