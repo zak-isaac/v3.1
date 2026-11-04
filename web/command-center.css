@@ -265,12 +265,9 @@ body,.app{background:var(--cc-canvas)}
   display:grid;
   grid-template-columns:minmax(0,1fr) 292px;
   gap:18px;
-  align-items:stretch;
-  flex:1 1 auto;
-  min-height:0;
-  overflow-y:auto;
+  align-items:start;
 }
-.left-area{min-width:0;gap:15px;display:flex;flex-direction:column;min-height:0}
+.left-area{min-width:0;gap:15px;display:flex;flex-direction:column}
 .work-area{
   border-radius:13px;
   border:1px solid var(--cc-line);
@@ -279,8 +276,6 @@ body,.app{background:var(--cc-canvas)}
   overflow:hidden;
   display:flex;
   flex-direction:column;
-  flex:1 1 160px;
-  flex-shrink:0;
 }
 .tabstrip{
   background:#f8fafc;
@@ -310,9 +305,7 @@ body,.app{background:var(--cc-canvas)}
 .tab:hover:not(.current){background:#eef4fa;color:#214b75}
 .tab-content{
   padding:13px 16px;
-  min-height:0;
-  flex:1 1 auto;
-  overflow-y:auto;
+  min-height:320px;
 }
 .v31-work-empty{
   min-height:0;
@@ -357,7 +350,7 @@ body,.app{background:var(--cc-canvas)}
 .v31-empty-footnote .icon{width:15px;height:15px;flex-shrink:0}
 .table-tools{gap:14px}
 .table-search,.category-filter{background:#fff;border-color:#d8e2eb;font-size:12px}
-.table-wrap{overflow:visible}
+.table-wrap{overflow:visible;max-height:none}
 .wo-table{font-size:12px}
 .wo-table th{
   background:#edf3f8;
@@ -376,8 +369,6 @@ body,.app{background:var(--cc-canvas)}
   gap:7px;
   min-width:0;
   background:#fff;
-  overflow-y:auto;
-  min-height:0;
 }
 .actions-heading{padding:0 3px 7px;border-bottom:1px solid #e8edf2;margin-bottom:0;color:var(--cc-ink)}
 .actions-heading h2{font-size:17px;letter-spacing:-.4px;margin:2px 0}
@@ -432,11 +423,8 @@ body,.app{background:var(--cc-canvas)}
   .overview-heading p{display:none}
 }
 @media(max-width:1030px){
-  .workspace-grid{grid-template-columns:1fr;flex:none;overflow:visible;min-height:0}
-  .left-area{flex:none}
-  .work-area{flex:none}
-  .tab-content{flex:none;overflow-y:visible}
-  .report-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;overflow-y:visible;flex-shrink:0}
+  .workspace-grid{grid-template-columns:1fr}
+  .report-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
   .actions-heading{grid-column:1/-1}
   .report-actions .loto-box{grid-column:1/-1}
   .tab-content{min-height:270px}
