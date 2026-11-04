@@ -475,7 +475,12 @@ def test_frontend_shift_data_controller_is_connected(client,monkeypatch):
     script=client.get("/web/shift-data.js")
     assert script.status_code==200
     assert "/api/reporting/stage" in script.text
-    assert "Next-Day Work Orders" in script.text
+    # The audit panel's Added/Updated/PM/Pending/Ignored/Next-day count
+    # summary and the Next-Day Work Orders section were removed as
+    # duplicates of the WO Review Items metric card; the backend audit
+    # data (audit.next_day etc.) still exists, just is not re-rendered here.
+    assert "Cetaris Import Audit" not in script.text
+    assert "Next-Day Work Orders" not in script.text
 
 
 def test_drax_assignments_resolve_s1_s2_overlap(client,monkeypatch,tmp_path):
