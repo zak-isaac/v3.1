@@ -214,25 +214,48 @@ def technician_suggestions(source_techs, roster_rows, shift_code):
     Match normalized complete names (First Last / Last, First) exactly.
     Never send employee identifiers to the reporting browser.
     A duplicate/ambiguous Drax match is listed as unmatched, not preselected.
+
+    Every result carries a `match_reason` explaining why a technician was NOT
+    preselected (None when they were) -- a Job Title that isn't literally
+    "MST", a name spelled differently than Cetaris, an inactive record, or a
+    duplicate name are otherwise invisible to the MST and just show up as a
+    wall of unchecked boxes with no explanation.
     """
     by_name={}
+    by_name_any={}
     for person in roster_rows:
-        if not person.get('active') or not person.get('is_mst'):
-            continue
         key=_person_key(person.get('name'))
-        if key:
+        if not key:
+            continue
+        by_name_any.setdefault(key,[]).append(person)
+        if person.get('active') and person.get('is_mst'):
             by_name.setdefault(key,[]).append(person)
     result=[]
     for tech in source_techs:
         name=tech['name']
-        matches=by_name.get(_person_key(name),[])
+        key=_person_key(name)
+        matches=by_name.get(key,[])
         match=matches[0] if len(matches)==1 else None
         assigned=match.get('shift') if match else None
         group=('assigned' if assigned == shift_code else
                'other_shift' if assigned else 'unmatched')
+        reason=None
+        if group=='unmatched':
+            any_matches=by_name_any.get(key,[])
+            if not any_matches:
+                reason='No Drax associate with this name was found.'
+            elif len(matches)>1:
+                reason='Multiple active MST Drax records share this name; confirm manually.'
+            elif not any(m.get('is_mst') for m in any_matches):
+                reason='Found in Drax, but their Job Title is not marked MST.'
+            elif not any(m.get('active') for m in any_matches):
+                reason='Found in Drax, but the record is inactive.'
+            else:
+                reason='Drax record found but could not be confirmed automatically.'
         result.append({'name':name,'count':tech['count'],
                        'group':group,'drax_shift':assigned,
-                       'preselected':group=='assigned'})
+                       'preselected':group=='assigned',
+                       'match_reason':reason})
     return result
 
 

@@ -219,7 +219,8 @@ function chooseTechs(){
      const content=document.createElement('span');
      const name=document.createElement('strong');name.textContent=person.name;
      const info=document.createElement('small');
-     info.textContent=person.count+' WOs'+(person.drax_shift?' · Drax '+person.drax_shift:' · Drax match unavailable');
+     info.textContent=person.count+' WOs'+(person.drax_shift?' · Drax '+person.drax_shift:
+       person.match_reason?' · '+person.match_reason:' · Drax match unavailable');
      content.append(name,info);label.append(checkbox,content);list.append(label);
      checkboxes.push({checkbox,label,group:group.key,name:person.name});
      checkbox.addEventListener('change',()=>updateCount());

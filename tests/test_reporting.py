@@ -472,10 +472,13 @@ def test_drax_preselects_matching_shift_msts_but_not_other_technicians(client,mo
     suggestions={t["name"]:t for t in response.json()["tech_suggestions"]}
     assert suggestions["Synthetic, A"]["group"]=="assigned"
     assert suggestions["Synthetic, A"]["preselected"] is True
+    assert suggestions["Synthetic, A"]["match_reason"] is None
     assert suggestions["Synthetic B"]["group"]=="other_shift"
     assert suggestions["Synthetic B"]["preselected"] is False
     assert suggestions["Synthetic C"]["group"]=="unmatched"
+    assert "not marked MST" in suggestions["Synthetic C"]["match_reason"]
     assert suggestions["Unknown Fourth"]["group"]=="unmatched"
+    assert "No Drax associate" in suggestions["Unknown Fourth"]["match_reason"]
     assert all("number" not in t for t in suggestions.values())
     state=client.get("/api/reporting/state").json()
     assert state["tech_suggestions"]==response.json()["tech_suggestions"]
@@ -488,6 +491,27 @@ def test_drax_preselects_matching_shift_msts_but_not_other_technicians(client,mo
     assert final["stage"]["imported"] is True
     assert {t["wo_number"] for t in final["rows"]}=={"D100","D200"}
     assert set(final["technicians"])=={"Synthetic, A","Synthetic B"}
+
+
+def test_technician_suggestions_explains_every_unmatched_case():
+    import v31_reporting
+    roster_rows=[
+        {"name":"Dup Person","shift":"S1","is_mst":True,"active":True},
+        {"name":"Dup Person","shift":"S2","is_mst":True,"active":True},
+        {"name":"Inactive Tech","shift":"S1","is_mst":True,"active":False},
+    ]
+    source=[{"name":"Dup Person","count":1},{"name":"Inactive Tech","count":1},
+            {"name":"Nobody Here","count":1}]
+    suggestions={t["name"]:t for t in v31_reporting.technician_suggestions(source,roster_rows,"S1")}
+    # Two active MST Drax records share this name -- never silently guess which one.
+    assert suggestions["Dup Person"]["group"]=="unmatched"
+    assert "Multiple active MST" in suggestions["Dup Person"]["match_reason"]
+    # Matches a real Drax record, but that record is inactive.
+    assert suggestions["Inactive Tech"]["group"]=="unmatched"
+    assert "inactive" in suggestions["Inactive Tech"]["match_reason"]
+    # No Drax record at all, active or not.
+    assert suggestions["Nobody Here"]["group"]=="unmatched"
+    assert "No Drax associate" in suggestions["Nobody Here"]["match_reason"]
 
 
 def test_cetaris_replacement_requires_import_confirmation_again(client,monkeypatch):
