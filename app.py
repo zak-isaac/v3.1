@@ -202,6 +202,8 @@ def _db() -> sqlite3.Connection:
         'report_saved_at': "TEXT NOT NULL DEFAULT ''",
         'report_content': "TEXT NOT NULL DEFAULT ''",
         'report_count': "INTEGER NOT NULL DEFAULT 0",
+        # Existing V3.1 shifts were MST-owned, so preserve their authorization.
+        'owner_role': "TEXT NOT NULL DEFAULT 'mst'",
     }.items():
         if name not in columns:
             conn.execute(f"ALTER TABLE shifts ADD COLUMN {name} {declaration}")
@@ -211,6 +213,22 @@ def _db() -> sqlite3.Connection:
         event TEXT NOT NULL,
         shift_id INTEGER,
         recorded_at TEXT NOT NULL
+    )''')
+    conn.execute('''CREATE TABLE IF NOT EXISTS shift_owner_transfers(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        shift_id INTEGER NOT NULL,
+        previous_owner TEXT NOT NULL,
+        new_owner TEXT NOT NULL,
+        transferred_at TEXT NOT NULL,
+        reason TEXT NOT NULL DEFAULT 'mst_relief'
+    )''')
+    conn.execute('''CREATE TABLE IF NOT EXISTS mst_overtime_grants(
+        associate TEXT NOT NULL,
+        code TEXT NOT NULL,
+        shift_day TEXT NOT NULL,
+        granted_by TEXT NOT NULL,
+        granted_at TEXT NOT NULL,
+        PRIMARY KEY(associate,code,shift_day)
     )''')
     conn.commit()
     return conn
@@ -279,8 +297,17 @@ def entry(row: sqlite3.Row) -> dict:
 
 
 def allowed(profile: dict, code: str, day: date | None = None, assoc: str | None = None) -> bool:
-    """Only the Drax-assigned shift for MST; S1–S5 for management."""
-    return bool(profile.get('all_shifts')) or profile.get('shift') == code
+    """Drax home shift, or separately approved dated MST overtime; managers unrestricted."""
+    if profile.get('all_shifts') or profile.get('shift') == code:
+        return True
+    # Other-shift access is an explicit, day-specific, management-approved
+    # privilege for MSTs only. A normal Drax shift never implies overtime.
+    if not profile.get('is_mst') or not assoc or day is None:
+        return False
+    with _db() as conn:
+        return conn.execute(
+            'SELECT 1 FROM mst_overtime_grants WHERE associate=? AND code=? AND shift_day=?',
+            (assoc,code,day.isoformat())).fetchone() is not None
 
 
 def shift_choices(profile: dict, now: datetime, associate: str | None = None) -> tuple[list[dict], list[dict]]:
@@ -310,8 +337,8 @@ def shift_choices(profile: dict, now: datetime, associate: str | None = None) ->
                                     'label': SHIFT_RULES[code][0], 'open': False,
                                     'action': 'start',
                                     **window_info(code, day)})
-    open_items.sort(key=lambda x: x['scheduled_start'])
-    ready_items.sort(key=lambda x: x['scheduled_start'])
+    open_items.sort(key=lambda x: (x['code'] != profile.get('shift'), x['scheduled_start']))
+    ready_items.sort(key=lambda x: (x['code'] != profile.get('shift'), x['scheduled_start']))
     return open_items, ready_items
 
 
@@ -338,7 +365,8 @@ def state(session: dict, profile: dict) -> dict:
         catalog.append(match if match else {'code': code, 'label': SHIFT_RULES[code][0],
                                               'action': 'unavailable', 'open': False})
     return {'name': profile.get('name', 'Associate'), 'associate': session['a'],
-            'role': 'manager' if profile.get('all_shifts') else 'mst',
+            'role': 'manager' if profile.get('all_shifts') else
+                    'mst' if profile.get('is_mst') else 'technician',
             'catalog': catalog,
             'all_shifts': bool(profile.get('all_shifts')),
             'assigned_shift': profile.get('shift'), 'selected': selected,
@@ -455,8 +483,8 @@ def login(payload: LoginRequest, request: Request, response: Response):
     profile = roster().get(payload.associate)
     if not profile:
         raise HTTPException(401, 'Associate number not authorized for this local preview')
-    # Original V3 policy: managers select; ordinary MSTs enter their own
-    # roster-assigned shift directly. An MST never chooses another shift.
+    # Drax-active associates enter their assigned shifts. Manager-approved
+    # MST overtime is the only non-management exception to that rule.
     if profile.get('all_shifts'):
         _set_cookie(response, payload.associate)
         _record_login_event(payload.associate, 'manager_signin')
@@ -466,10 +494,11 @@ def login(payload: LoginRequest, request: Request, response: Response):
         # Popup path: do not create/attach an MST shift before a choice is checked.
         _set_cookie(response, payload.associate)
         _record_login_event(payload.associate, 'popup_signin')
-        return {'destination': '/', 'selection_required': True, 'role': 'mst'}
+        return {'destination': '/', 'selection_required': True,
+                'role': 'mst' if profile.get('is_mst') else 'technician'}
     now = datetime.now(TZ)
     opened, ready = shift_choices(profile, now, payload.associate)
-    # An MST may enter only the Drax-assigned shift; management chooses S1–S5.
+    # Owners resume; other users may not silently take control of an open report.
     if opened:
         # Assigned shift already opened by this MST: resume that report.
         selected = opened[0]
@@ -480,19 +509,37 @@ def login(payload: LoginRequest, request: Request, response: Response):
             if conn.execute('SELECT COUNT(*) FROM shifts WHERE open=1').fetchone()[0] >= 2:
                 raise HTTPException(409, 'Two overlapping shifts are already active')
             conn.execute('''INSERT OR IGNORE INTO shifts
-                (code,shift_day,owner,created_at) VALUES (?,?,?,?)''',
-                (target['code'], target['date'], payload.associate, now.isoformat()))
+                (code,shift_day,owner,created_at,owner_role) VALUES (?,?,?,?,?)''',
+                (target['code'], target['date'], payload.associate, now.isoformat(),
+                 'mst' if profile.get('is_mst') else 'technician'))
             row = conn.execute('SELECT * FROM shifts WHERE code=? AND shift_day=?',
                                (target['code'], target['date'])).fetchone()
             if not row['open'] or row['owner'] != payload.associate:
-                raise HTTPException(409, 'This shift is already open under another MST. Contact management.')
+                raise HTTPException(409, 'This shift is already owned by another associate. Contact management.')
             selected = entry(row)
     else:
+        # A technician-owned active report can be explicitly taken over by an
+        # on-shift MST. Present a confirmation; do not change its owner here.
+        if profile.get('is_mst'):
+            with _db() as conn:
+                candidate = conn.execute(
+                    'SELECT * FROM shifts WHERE open=1 AND owner_role=? ORDER BY id DESC',
+                    ('technician',)).fetchall()
+            for row in candidate:
+                day = date.fromisoformat(row['shift_day'])
+                if (row['code'] == profile.get('shift') and
+                        eligible_date(row['code'], now) == day):
+                    _set_cookie(response, payload.associate)
+                    _record_login_event(payload.associate, 'takeover_prompt', row['id'])
+                    return {'destination': '/', 'role': 'mst',
+                            'takeover_required': True, 'shift_id':row['id'],
+                            'shift':row['code']}
         code = profile.get('shift')
-        raise HTTPException(409, f'{code} is outside its reporting window, or is open under another MST.')
+        raise HTTPException(409, f'{code} is outside its reporting window, or its report belongs to another associate.')
     _set_cookie(response, payload.associate, selected['id'])
-    _record_login_event(payload.associate, 'mst_signin', selected['id'])
-    return {'destination': '/shift-report.html', 'role': 'mst',
+    _record_login_event(payload.associate, 'mst_signin' if profile.get('is_mst') else 'technician_signin', selected['id'])
+    return {'destination': '/shift-report.html',
+            'role': 'mst' if profile.get('is_mst') else 'technician',
             'shift': selected['code']}
 
 
@@ -521,18 +568,62 @@ def start_shift(payload: ShiftChoice, request: Request, response: Response):
         if existing is None and conn.execute('SELECT COUNT(*) FROM shifts WHERE open=1').fetchone()[0] >= 2:
             raise HTTPException(409, 'Two overlapping shifts are already active')
         conn.execute('''INSERT OR IGNORE INTO shifts
-            (code,shift_day,owner,created_at) VALUES (?,?,?,?)''',
-            (payload.code, day.isoformat(), session['a'], now.isoformat()))
+            (code,shift_day,owner,created_at,owner_role) VALUES (?,?,?,?,?)''',
+            (payload.code, day.isoformat(), session['a'], now.isoformat(),
+             'management' if profile.get('all_shifts') else
+             'mst' if profile.get('is_mst') else 'technician'))
         row = conn.execute('SELECT * FROM shifts WHERE code=? AND shift_day=?',
                            (payload.code, day.isoformat())).fetchone()
         if not row['open']:
             raise HTTPException(409, 'This shift was already ended')
         if not profile.get('all_shifts') and row['owner'] != session['a']:
-            raise HTTPException(403, 'The shift belongs to another MST')
+            raise HTTPException(403, 'The shift belongs to another associate')
         selected = entry(row)
     _set_cookie(response, session['a'], selected['id'])
     _record_login_event(session['a'], 'start_shift', selected['id'])
     return selected
+
+
+@app.post('/api/shifts/takeover')
+def takeover_shift(payload: ShiftResume, request: Request, response: Response):
+    """Explicit MST relief of a non-MST-owned shift, with permanent audit.
+
+    Never allow an MST to take over another MST's report, and never silently
+    promote an associate who has not been marked MST in Drax/admin overrides.
+    """
+    _origin_check(request)
+    session, profile = who(request)
+    if profile.get('all_shifts') or not profile.get('is_mst'):
+        raise HTTPException(403, 'Only an assigned MST may take over a technician-owned shift')
+    now = datetime.now(TZ)
+    with _db() as conn:
+        row = conn.execute('SELECT * FROM shifts WHERE id=? AND open=1',
+                           (payload.shift_id,)).fetchone()
+        if row is None:
+            raise HTTPException(404, 'Active report not found')
+        day = date.fromisoformat(row['shift_day'])
+        if eligible_date(row['code'],now) != day:
+            raise HTTPException(409, 'Reporting window has ended')
+        # Even an MST with a *separate* overtime grant cannot take control of
+        # an off-shift technician's report. Relief requires the home shift.
+        if row['code'] != profile.get('shift'):
+            raise HTTPException(403, 'MST takeover is restricted to the Drax-assigned shift')
+        if row['owner_role'] != 'technician' or row['owner'] == session['a']:
+            raise HTTPException(409, 'Only a report currently owned by a non-MST technician can be taken over')
+        old_owner = row['owner']
+        updated = conn.execute(
+            "UPDATE shifts SET owner=?,owner_role='mst' WHERE id=? AND owner=? AND owner_role='technician' AND open=1",
+            (session['a'], row['id'], old_owner))
+        if updated.rowcount != 1:
+            raise HTTPException(409, 'Shift owner changed before takeover')
+        conn.execute('''INSERT INTO shift_owner_transfers
+            (shift_id,previous_owner,new_owner,transferred_at,reason)
+            VALUES (?,?,?,?,'mst_relief')''',
+            (row['id'],old_owner,session['a'],now.isoformat()))
+        selected = entry(row)
+    _set_cookie(response,session['a'],selected['id'])
+    _record_login_event(session['a'],'mst_takeover',selected['id'])
+    return {'taken_over':True,'shift_id':selected['id'],'shift':selected['code']}
 
 
 @app.post('/api/shifts/resume')
@@ -546,7 +637,10 @@ def resume_shift(payload: ShiftResume, request: Request, response: Response):
     if not allowed(profile, row['code'], date.fromisoformat(row['shift_day']), session['a']):
         raise HTTPException(403, 'Shift is not assigned to this associate')
     if not profile.get('all_shifts') and row['owner'] != session['a']:
-        raise HTTPException(403, 'Only the shift starter or management may resume this report')
+        if (profile.get('is_mst') and row['owner_role'] == 'technician'
+                and profile.get('shift') == row['code']):
+            raise HTTPException(409, 'MST takeover required')
+        raise HTTPException(403, 'Only the current shift owner or management may resume this report')
     _set_cookie(response, session['a'], row['id'])
     _record_login_event(session['a'], 'resume_shift', row['id'])
     return entry(row)
@@ -612,6 +706,49 @@ def require_manager(request: Request) -> dict:
     if not profile.get('all_shifts'):
         raise HTTPException(403, 'Management access required')
     return session
+
+
+class MstOvertimeGrant(BaseModel):
+    associate: str = Field(pattern=r'^\d{1,12}$')
+    code: Literal['S1','S2','S3','S4','S5']
+    shift_day: date
+    approved: bool = True
+
+
+@app.get('/api/admin/mst-overtime')
+def list_mst_overtime(request: Request):
+    """Management review of all explicitly approved dated MST overtime."""
+    require_manager(request)
+    with _db() as conn:
+        rows = conn.execute('''SELECT associate,code,shift_day,granted_by,granted_at
+            FROM mst_overtime_grants ORDER BY shift_day DESC,code,associate''').fetchall()
+    return {'grants':[dict(row) for row in rows]}
+
+
+@app.post('/api/admin/mst-overtime')
+def set_mst_overtime(payload: MstOvertimeGrant, request: Request):
+    """Management approves/revokes a specific MST and shift date only."""
+    _origin_check(request)
+    manager = require_manager(request)
+    target = roster().get(payload.associate)
+    if not target or target.get('all_shifts') or not target.get('is_mst'):
+        raise HTTPException(403, 'Overtime may be granted only to an active MST')
+    if payload.shift_day.weekday() not in SHIFT_RULES[payload.code][3]:
+        raise HTTPException(422, 'Shift is not scheduled on that date')
+    if target['shift'] == payload.code:
+        raise HTTPException(422, 'This is already the MST home shift')
+    with _db() as conn:
+        if payload.approved:
+            conn.execute('''INSERT OR REPLACE INTO mst_overtime_grants
+                (associate,code,shift_day,granted_by,granted_at)
+                VALUES (?,?,?,?,?)''',
+                (payload.associate,payload.code,payload.shift_day.isoformat(),
+                 manager['a'],datetime.now(TZ).isoformat()))
+        else:
+            conn.execute('DELETE FROM mst_overtime_grants WHERE associate=? AND code=? AND shift_day=?',
+                (payload.associate,payload.code,payload.shift_day.isoformat()))
+    return {'associate':payload.associate,'code':payload.code,
+            'shift_day':payload.shift_day.isoformat(),'approved':payload.approved}
 
 
 @app.get('/api/admin/roster')
@@ -751,7 +888,7 @@ def _report_access(request: Request):
         row = conn.execute('SELECT * FROM shifts WHERE id=? AND open=1',(shift_id,)).fetchone()
     if not row:
         raise HTTPException(409, 'Selected shift is no longer open')
-    if not allowed(profile,row['code']) or (
+    if not allowed(profile,row['code'],date.fromisoformat(row['shift_day']),session['a']) or (
         not profile.get('all_shifts') and row['owner'] != session['a']
     ):
         raise HTTPException(403, 'You are not authorized for this shift')
@@ -981,17 +1118,15 @@ def oos_create(payload: ManualOOSCreate, request: Request):
     record itself is global -- visible to every signed-in associate, not
     scoped to this shift or this MST."""
     _origin_check(request)
-    session, profile = who(request)
-    if not session['s']:
-        raise HTTPException(409, 'Choose a shift first')
+    session, shift = _report_access(request)
+    profile = roster()[session['a']]
     with _db() as conn:
-        shift = conn.execute('SELECT code FROM shifts WHERE id=?', (session['s'],)).fetchone()
-        if shift is None:
-            raise HTTPException(409, 'Shift not found')
         record = v31_oos.create(conn, asset=payload.asset.strip(), cause=payload.cause.strip(),
             notes=payload.notes.strip(), logged_by=session['a'],
             logged_by_name=profile.get('name', 'Associate'), shift_id=session['s'],
             shift_code=shift['code'], now_iso=datetime.now(TZ).isoformat())
+        # New OOS information changes the outgoing passdown.
+        _invalidate_passdown(conn, session['s'])
     return record
 
 
@@ -1000,7 +1135,7 @@ def oos_list(request: Request):
     """Currently-open manual OOS records (global, every associate sees the
     same list) plus this session's own shift's resolved-this-shift list
     (for that shift's own passdown RTS section and tab confirmation UI)."""
-    session, profile = who(request)
+    session, _shift = _report_access(request)
     with _db() as conn:
         open_items = v31_oos.list_records(conn, open_only=True)
         resolved_this_shift = v31_oos.resolved_this_shift(conn, session['s']) if session['s'] else []
@@ -1013,17 +1148,17 @@ def oos_mark_rts(oos_id: int, payload: ManualOOSResolve, request: Request):
     whoever logged it -- the actual fix might come from a different shift
     or a different technician entirely than whoever first logged it down."""
     _origin_check(request)
-    session, profile = who(request)
-    if not session['s']:
-        raise HTTPException(409, 'Choose a shift first')
+    session, shift = _report_access(request)
+    profile = roster()[session['a']]
     with _db() as conn:
-        shift = conn.execute('SELECT code FROM shifts WHERE id=?', (session['s'],)).fetchone()
-        if shift is None:
-            raise HTTPException(409, 'Shift not found')
         record, error = v31_oos.mark_rts(conn, oos_id, rts_by=session['a'],
             rts_by_name=profile.get('name', 'Associate'), shift_id=session['s'],
             shift_code=shift['code'], now_iso=datetime.now(TZ).isoformat(),
             notes=payload.notes.strip())
+        if error is None:
+            # A newly RTS asset must appear in a regenerated passdown before
+            # the shift can be ended.
+            _invalidate_passdown(conn, session['s'])
     if error == 'not_found':
         raise HTTPException(404, 'Record not found')
     if error == 'already_resolved':

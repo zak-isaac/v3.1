@@ -108,8 +108,14 @@
     const choice = chosen;
     try {
       await api('/api/login', {associate, intent:'select'});
-      await api(choice.kind === 'resume' ? '/api/shifts/resume' : '/api/shifts/start',
-        choice.kind === 'resume' ? {shift_id:choice.shift.id} : {code:choice.shift.code});
+      try {
+        await api(choice.kind === 'resume' ? '/api/shifts/resume' : '/api/shifts/start',
+          choice.kind === 'resume' ? {shift_id:choice.shift.id} : {code:choice.shift.code});
+      } catch (err) {
+        if (choice.kind !== 'resume' || err.message !== 'MST takeover required') throw err;
+        if (!window.confirm('This report was opened by a non-MST technician. Take over ownership as the assigned MST? The previous owner will no longer be able to edit it.')) return;
+        await api('/api/shifts/takeover', {shift_id:choice.shift.id});
+      }
       enterReport();
     } catch (e) {
       gateError.textContent = e.message;
@@ -301,6 +307,14 @@
       }
       if (answer.destination === '/shift-report.html') {
         enterReport(); return;
+      }
+      if (answer.takeover_required) {
+        if (window.confirm(answer.shift + ' was opened by a non-MST technician. Take ownership of this report as the assigned MST? This transfer will be recorded.')) {
+          await api('/api/shifts/takeover', {shift_id:answer.shift_id});
+          enterReport(); return;
+        }
+        error.textContent = 'Report ownership was not changed.';
+        error.hidden = false; show('login'); return;
       }
       flow = {open:account.open, ready:account.ready};
       render();

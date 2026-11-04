@@ -146,6 +146,17 @@
             <tbody id="v31-roster-rows"><tr><td colspan="5">Loading roster…</td></tr></tbody></table></div>
             <div id="v31-roster-count" class="v31-admin-help"></div>
           </section>
+          <section class="v31-admin-card" aria-labelledby="v31-ot-heading">
+            <div class="v31-admin-card-heading"><div><h2 id="v31-ot-heading">MST Overtime Approval</h2>
+            <p>Grant a specific MST permission to work a different shift on one date. Normal Drax shift restrictions still apply to everyone else.</p></div></div>
+            <form id="v31-ot-form" class="v31-admin-add-form">
+              <label>MST Associate Number<input id="v31-ot-associate" inputmode="numeric" pattern="[0-9]{1,12}" maxlength="12" required autocomplete="off"></label>
+              <label>Overtime Shift<select id="v31-ot-shift" required><option value="">Choose shift</option><option>S1</option><option>S2</option><option>S3</option><option>S4</option><option>S5</option></select></label>
+              <label>Shift Start Date<input id="v31-ot-date" type="date" required></label>
+              <button class="v31-ad-btn primary" type="submit">Approve MST Overtime</button>
+            </form>
+            <div id="v31-ot-grants" class="v31-admin-help" aria-live="polite">Loading active approvals…</div>
+          </section>
           <section class="v31-admin-card" aria-labelledby="v31-local-heading">
             <div class="v31-admin-card-heading"><div><h2 id="v31-local-heading">Add Local Associate</h2>
             <p>Temporary entries are stored in V3.1 only. Drax-sourced associates should be edited in the approved roster.</p></div></div>

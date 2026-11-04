@@ -50,10 +50,37 @@
       }
     }
   };
+  async function loadOvertime(){
+    const container=$('v31-ot-grants');
+    if(!container)return;
+    const result=await api('/api/admin/mst-overtime');
+    container.replaceChildren();
+    const grants=result.grants||[];
+    if(!grants.length){
+      container.textContent='No MST overtime approvals are currently saved.';
+      return;
+    }
+    for(const grant of grants){
+      const line=el('div',undefined,'v31-row-actions');
+      line.style.cssText='margin-top:9px;display:flex;align-items:center;gap:12px;flex-wrap:wrap';
+      line.append(el('span',grant.associate+' · '+grant.code+' · '+grant.shift_day));
+      const revoke=el('button','Revoke');
+      revoke.type='button';revoke.className='v31-ad-btn';
+      revoke.addEventListener('click',()=>busy(async()=>{
+        await api('/api/admin/mst-overtime',{
+          associate:grant.associate,code:grant.code,shift_day:grant.shift_day,approved:false
+        });
+        await loadOvertime();
+        notify('MST overtime approval revoked for '+grant.associate+'.');
+      }));
+      line.append(revoke);container.append(line);
+    }
+  }
   async function reload(force=false){
     details=await api(force?'/api/admin/roster/reload':'/api/admin/roster',
                       force?{}:undefined);
     draw();
+    await loadOvertime();
     if(force)notify(details.error?'Drax sync could not complete: '+details.error:
       'Drax roster refreshed successfully.',!!details.error);
   }
@@ -106,7 +133,8 @@
       });
       shiftCell.append(shift);
       const access=el('td');
-      access.append(el('span',person.is_mst?'MST Enabled':'Not MST',
+      access.append(el('span',person.is_mst?'MST · relief/OT':
+        person.active&&person.shift?'Shift access · technician':'Not MST',
                        'v31-admin-chip '+(person.is_mst?'mst':'other')));
       const source=el('td');
       source.append(el('span',person.manual?'Local entry':person.active?'Drax source':'Not in Drax',
@@ -120,7 +148,7 @@
       makeAction(person.is_mst?'Disable MST':'Enable MST',async()=>{
         details=await api('/api/admin/roster/override',
                    {number:person.number,is_mst:!person.is_mst});
-        draw();notify('MST access updated for '+person.name+'.');
+        draw();notify('MST privileges updated for '+person.name+'. Active Drax shift access is separate.');
       });
       makeAction('Edit Name',async()=>{
         const answer=window.prompt('Associate display name',person.name);
@@ -179,6 +207,21 @@
     $('v31-admin-reload')?.addEventListener('click',()=>busy(()=>reload(true)));
     $('v31-roster-search')?.addEventListener('input',e=>{
       currentSearch=e.target.value;if(details)drawPeople(details.associates||[]);
+    });
+    $('v31-ot-form')?.addEventListener('submit',e=>{
+      e.preventDefault();
+      busy(async()=>{
+        const associate=$('v31-ot-associate').value.trim();
+        const code=$('v31-ot-shift').value;
+        const shift_day=$('v31-ot-date').value;
+        if(!/^[0-9]{1,12}$/.test(associate)||!code||!shift_day){
+          notify('Provide an MST associate number, shift, and date.',true);return;
+        }
+        await api('/api/admin/mst-overtime',{associate,code,shift_day,approved:true});
+        $('v31-ot-form').reset();
+        await loadOvertime();
+        notify('MST overtime approved for '+associate+' on '+code+' · '+shift_day+'.');
+      });
     });
     $('v31-admin-add-form')?.addEventListener('submit',e=>{
       e.preventDefault();

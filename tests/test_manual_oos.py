@@ -104,6 +104,57 @@ def test_different_associate_can_see_and_resolve_a_globally_open_record(client, 
     assert resolved.json()["logged_by_name"] == "First Tech"
 
 
+def test_stale_technician_owner_cannot_edit_manual_oos_after_mst_relief(client, tmp_path, monkeypatch):
+    import csv
+    import v31_roster
+    clock(monkeypatch, day=26, hour=13)
+    with (tmp_path / "mst-roster.csv").open("w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["Name", "Assoc. #", "Shift", "Job Title"])
+        w.writerow(["Assigned Non-MST", "555001", "S1", "Associate"])
+        w.writerow(["Assigned MST", "555002", "S1", "MST"])
+    v31_roster.sync(tmp_path, tmp_path / "v31.sqlite3", set(m.MANAGEMENT_ASSOCIATES), force=True)
+
+    assert client.post('/api/login',json={'associate':'555001'}).status_code == 200
+    owner_cookie=client.cookies.get(m.SESSION_COOKIE)
+    oos_id=client.post('/api/oos',json={'asset':'TEST-001'}).json()['id']
+    shift_id=client.get('/api/me').json()['selected']['id']
+    client.post('/api/logout')
+
+    assert client.post('/api/login',json={'associate':'555002'}).json()['takeover_required']
+    assert client.post('/api/shifts/takeover',json={'shift_id':shift_id}).status_code == 200
+    mst_cookie=client.cookies.get(m.SESSION_COOKIE)
+    client.cookies.set(m.SESSION_COOKIE,owner_cookie)
+    assert client.get('/api/oos').status_code == 403
+    assert client.post('/api/oos',json={'asset':'TEST-002'}).status_code == 403
+    assert client.post(f'/api/oos/{oos_id}/rts',json={}).status_code == 403
+    client.cookies.set(m.SESSION_COOKIE,mst_cookie)
+    assert client.post(f'/api/oos/{oos_id}/rts',json={}).status_code == 200
+
+
+def test_manual_oos_requires_report_inside_shift_window(client, monkeypatch):
+    clock(monkeypatch, day=26, hour=10)
+    enter(client, 'S1')
+    clock(monkeypatch, day=26, hour=18)  # outside S1's 5 PM closing grace
+    assert client.post('/api/oos',json={'asset':'TEST-001'}).status_code == 409
+    assert client.get('/api/oos').status_code == 409
+
+
+def test_manual_oos_changes_invalidate_previous_passdown_before_end_shift(client, monkeypatch):
+    clock(monkeypatch, day=26, hour=13)
+    enter(client, 'S1')
+    draft = 'IND3 S1 SHIFT HAPPENINGS: Verified shift passdown before OOS.'
+    assert client.post('/api/shifts/report',json={'content':draft}).status_code == 200
+    oos = client.post('/api/oos',json={'asset':'TEST-001'})
+    assert oos.status_code == 200
+    assert client.post('/api/shifts/end').status_code == 409
+    assert client.post('/api/shifts/report',json={'content':draft}).status_code == 200
+    assert client.post(f"/api/oos/{oos.json()['id']}/rts",json={}).status_code == 200
+    assert client.post('/api/shifts/end').status_code == 409
+    assert client.post('/api/shifts/report',json={'content':draft}).status_code == 200
+    assert client.post('/api/shifts/end').status_code == 200
+
+
 def test_resolved_manual_oos_appears_in_regenerated_historical_eml(client, monkeypatch):
     clock(monkeypatch, day=26, hour=10)
     shift_id = enter(client, "S1")
