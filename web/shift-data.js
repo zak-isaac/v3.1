@@ -169,8 +169,8 @@ function chooseTechs(){
  if(!suggested.length){
    feedback('No technicians were identified in the staged Cetaris file.','warning');return;
  }
- // Existing confirmed selections survive reopening the modal. For a new
- // shift, preselect only exact, active Drax MST matches to this shift.
+ // Existing selections survive reopening. For a new staged import, preselect
+ // all uniquely matched active assigned Drax technicians, irrespective of role.
  const previously=(snapshot.technicians||[]).filter(n=>suggested.some(t=>t.name===n));
  const checked=new Set(snapshot.stage.imported?previously:
     previously.length?previously:suggested.filter(t=>t.preselected).map(t=>t.name));
@@ -182,7 +182,7 @@ function chooseTechs(){
  container.append(count);
  const hint=document.createElement('p');
  hint.style.cssText='margin:0;color:#627c93;font-size:12px;line-height:1.4';
- hint.textContent='Drax-assigned MSTs are checked automatically. Add extra technicians working overtime or assisting this shift. Selecting a technician does not automatically change work-order ownership.';
+ hint.textContent='Drax-assigned technicians are checked automatically. Add extra technicians working overtime or assisting this shift. Selecting a technician does not automatically change work-order ownership.';
  container.append(hint);
  const search=document.createElement('input');
  search.className='v31-roster-search';search.type='search';
@@ -190,17 +190,17 @@ function chooseTechs(){
  container.append(search);
  const tools=document.createElement('div');tools.className='v31-tech-tools';
  const selectAssigned=document.createElement('button');
- selectAssigned.type='button';selectAssigned.textContent='Select Drax Shift MSTs';
+ selectAssigned.type='button';selectAssigned.textContent='Select Drax Shift Technicians';
  const clear=document.createElement('button');
  clear.type='button';clear.textContent='Clear selection';
  tools.append(selectAssigned,clear);container.append(tools);
  const groups=[
-  {key:'assigned',title:'Assigned to '+selectedShift+' · Drax MSTs',
-   desc:'Preselected when their Cetaris name matches an active Drax MST on this shift.'},
+  {key:'assigned',title:'Assigned to '+selectedShift+' · Drax Technicians',
+   desc:'Preselected when their Cetaris name uniquely matches an active Drax associate assigned to this shift.'},
   {key:'other_shift',title:'Additional / Overtime Technicians',
-   desc:'Other Drax MST shifts. Select only if they actually worked this shift.'},
+   desc:'Other Drax shifts. Select only if they actually performed work on this shift.'},
   {key:'unmatched',title:'Other Cetaris Technicians',
-   desc:'Not matched uniquely to an active Drax MST. Confirm identity before selecting.'}
+   desc:'Not matched uniquely to an active Drax associate. Confirm identity before selecting.'}
  ];
  const groupNodes=[];
  const checkboxes=[];
@@ -248,7 +248,7 @@ function chooseTechs(){
  updateCount();
  const matched=suggested.filter(x=>x.preselected).length;
  const message=matched
-   ? matched+' matching Drax MSTs were preselected. Review others before importing.'
+   ? matched+' matching assigned Drax technicians were preselected. Review others before importing.'
    : 'No exact Drax technician matches for this shift. Check the roster connection and select actual technicians manually.';
  view.showModal('Select Shift Technicians',message,'',[
   {text:'Cancel',onClick:view.closeModal},
