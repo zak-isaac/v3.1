@@ -297,7 +297,7 @@ def entry(row: sqlite3.Row) -> dict:
 
 
 def allowed(profile: dict, code: str, day: date | None = None, assoc: str | None = None) -> bool:
-    """Only the Drax-assigned shift for MST; S1–S5 for management."""
+    """Drax home shift, or separately approved dated MST overtime; managers unrestricted."""
     if profile.get('all_shifts') or profile.get('shift') == code:
         return True
     # Other-shift access is an explicit, day-specific, management-approved
@@ -527,8 +527,8 @@ def login(payload: LoginRequest, request: Request, response: Response):
                     ('technician',)).fetchall()
             for row in candidate:
                 day = date.fromisoformat(row['shift_day'])
-                if (eligible_date(row['code'], now) == day and
-                        allowed(profile, row['code'], day, payload.associate)):
+                if (row['code'] == profile.get('shift') and
+                        eligible_date(row['code'], now) == day):
                     _set_cookie(response, payload.associate)
                     _record_login_event(payload.associate, 'takeover_prompt', row['id'])
                     return {'destination': '/', 'role': 'mst',
@@ -604,8 +604,10 @@ def takeover_shift(payload: ShiftResume, request: Request, response: Response):
         day = date.fromisoformat(row['shift_day'])
         if eligible_date(row['code'],now) != day:
             raise HTTPException(409, 'Reporting window has ended')
-        if not allowed(profile,row['code'],day,session['a']):
-            raise HTTPException(403, 'This shift is not assigned or approved for the MST')
+        # Even an MST with a *separate* overtime grant cannot take control of
+        # an off-shift technician's report. Relief requires the home shift.
+        if row['code'] != profile.get('shift'):
+            raise HTTPException(403, 'MST takeover is restricted to the Drax-assigned shift')
         if row['owner_role'] != 'technician' or row['owner'] == session['a']:
             raise HTTPException(409, 'Only a report currently owned by a non-MST technician can be taken over')
         old_owner = row['owner']
@@ -635,7 +637,8 @@ def resume_shift(payload: ShiftResume, request: Request, response: Response):
     if not allowed(profile, row['code'], date.fromisoformat(row['shift_day']), session['a']):
         raise HTTPException(403, 'Shift is not assigned to this associate')
     if not profile.get('all_shifts') and row['owner'] != session['a']:
-        if profile.get('is_mst') and row['owner_role'] == 'technician':
+        if (profile.get('is_mst') and row['owner_role'] == 'technician'
+                and profile.get('shift') == row['code']):
             raise HTTPException(409, 'MST takeover required')
         raise HTTPException(403, 'Only the current shift owner or management may resume this report')
     _set_cookie(response, session['a'], row['id'])
