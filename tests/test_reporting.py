@@ -175,9 +175,9 @@ def test_pending_closure_remains_pending_on_manual_edit(client,monkeypatch):
 def test_pm_needing_completion_upload_is_real_and_separate_from_completed_pm_count(client,monkeypatch):
     clock(monkeypatch)
     shift_id=enter(client)
-    csv=b"WO Number,WO Date / Time,PM Due Date,Promise Date / Time,Asset #\n" \\
-        b"PM100,10/26/2026,10/27/2026,10/28/2026,CONV-1\n" \\
-        b"PM200,10/26/2026,10/27/2026,10/28/2026,CONV-2\n"
+    csv=(b"WO Number,WO Date / Time,PM Due Date,Promise Date / Time,Asset #\n"
+         b"PM100,10/26/2026,10/27/2026,10/28/2026,CONV-1\n"
+         b"PM200,10/26/2026,10/27/2026,10/28/2026,CONV-2\n")
     uploaded=client.post('/api/pm-needing-completion/upload',files={
         'file':('pm-needing.csv',csv,'text/csv')
     })
