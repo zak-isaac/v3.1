@@ -16,11 +16,12 @@
   const reportText=$('.footer-tip span');
   if(reportText) reportText.textContent='Work orders and notes are saved to the selected V3.1 shift.';
   const username=$('#v31-user-name');
-  if(username)username.textContent=context.name||'MST Associate';
+  if(username)username.textContent=context.name||'Shift Associate';
   const initial=$('#v31-user-initial');
   if(initial)initial.textContent=(context.name||'?').trim().charAt(0).toUpperCase()||'?';
   const userrole=$('#v31-user-role');
-  if(userrole)userrole.textContent=(context.role==='manager'?'Management':(context.assigned_shift||'MST')+' · MST')+' · IND3';
+  if(userrole)userrole.textContent=(context.role==='manager'?'Management':
+    (context.assigned_shift||'Shift')+' · '+(context.role==='mst'?'MST':'Technician'))+' · IND3';
   const fmtTime = iso => new Intl.DateTimeFormat('en-US',
     {timeZone:'America/Indiana/Indianapolis',hour:'numeric',minute:'2-digit'}).format(new Date(iso));
   const fmtDay = iso => new Intl.DateTimeFormat('en-US',
