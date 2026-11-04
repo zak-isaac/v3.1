@@ -32,6 +32,7 @@ import v31_facility
 import v31_oos
 import v31_pm_needing_completion as v31_pm
 import v31_report_export
+import v31_analytics
 import ai_remark_rewriter
 
 ROOT = Path(__file__).resolve().parent
@@ -449,7 +450,8 @@ def landing(request: Request):
         '<script defer src="/web/shift-history.js"></script>'+
         '<script defer src="/web/manual-oos.js"></script>'+
         '<script defer src="/web/shift-data.js"></script>'+
-        '<script defer src="/web/pm-needing-completion.js"></script>'))
+        '<script defer src="/web/pm-needing-completion.js"></script>'+
+        '<script defer src="/web/analytics.js"></script>'))
 
 
 @app.get('/administration', response_class=HTMLResponse)
@@ -463,7 +465,8 @@ def administration_page(request: Request):
         '<script defer src="/web/roster-admin.js"></script>'+
         '<script defer src="/web/facility-admin.js"></script>'+
         '<script defer src="/web/shift-history.js"></script>'+
-        '<script defer src="/web/admin-standalone.js"></script>'))
+        '<script defer src="/web/admin-standalone.js"></script>'+
+        '<script defer src="/web/analytics.js"></script>'))
 
 
 class LoginRequest(BaseModel):
@@ -1207,6 +1210,16 @@ def reporting_resolve_carryover(payload:CarryOverDecision,request:Request):
     except KeyError as exc:
         raise HTTPException(409,str(exc))
     return result
+
+
+@app.get('/api/analytics/summary')
+def analytics_summary(request:Request,
+                      period:Literal['7d','30d','90d','all']='30d'):
+    """Actual recorded V3.1 shift metrics only; no fake uptime or V2/V3 mixing."""
+    session,profile=who(request)
+    scope=None if profile.get('all_shifts') else session['a']
+    with _db() as conn:
+        return v31_analytics.summarize(conn,scope,period,datetime.now(TZ).date())
 
 
 @app.get('/api/history/legacy')
