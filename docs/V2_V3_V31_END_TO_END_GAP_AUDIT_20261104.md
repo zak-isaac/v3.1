@@ -55,6 +55,10 @@
 15. Add analytics and relevant PDF/DOCX exports if operationally needed; do not expose deprecated V2 write routes.
 16. Improve staging provenance, UI error messages, and explicit one-hour grace/cross-midnight tests using synthetic records and a same-input V3/V3.1 parity harness.
 
+### Additional frontend integration findings
+- **End Shift has two UI handlers:** web/workspace-auth.js installs a capture-phase listener with stopImmediatePropagation() and a native confirm dialog, so the styled confirmEnd() modal in prototypes/shift-report.html generally does not run. This is explicitly documented by tests/test_browser_end_shift.py. Consolidate to one approved confirmation flow and execute it in real-browser CI.
+- **Overtime screen behavior needs browser acceptance:** management grant is verified by the API and backed by the dated grant table, but direct first-screen login can automatically enter an eligible overtime shift. Confirm users can deliberately select/decline an approved off-shift report when home and overtime windows overlap; do not silently make a cross-shift report the default.
+
 ## Special decisions still pending
 - **MST on-site question**: User proposed asking whether an MST is onsite before a non-MST starts a report. Not implemented: a self-reported Yes/No does not establish real staffing or authorization. Decide who verifies staffing, when to ask, what happens if staffing changes midshift, and whether it is informational or blocking.
 - **MST approved overtime vs strict home shift**: PR #14 allows different-shift access ONLY with a date/shift-specific management grant and ONLY inside that reporting window. It never permits takeover of an already-owned off-shift report. All routine access remains home-shift-only; review operational approval policy before merging.
