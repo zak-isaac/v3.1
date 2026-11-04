@@ -1078,6 +1078,90 @@ def reporting_draft(payload:ReportingDraft,request:Request):
     return {'saved':True,'shift_id':row['id']}
 
 
+class ManualHappening(BaseModel):
+    asset: str = Field(min_length=1,max_length=120)
+    cause: str = Field(min_length=1,max_length=4000)
+    remarks: str = Field(default='',max_length=5000)
+    category: Literal['Breakdown','Process Interruption','Proactive Repair','Work Request'] = 'Proactive Repair'
+    status: Literal['RTS','OOS','PENDING'] = 'PENDING'
+    wo_reference: str = Field(default='',max_length=100)
+
+
+@app.post('/api/reporting/manual')
+def reporting_manual(payload:ManualHappening,request:Request):
+    """Log real corrective/proactive work not present in a Cetaris export."""
+    _origin_check(request)
+    session,row=_report_access(request)
+    profile=roster()[session['a']]
+    with _db() as conn:
+        linked_oos=None
+        if payload.status=='OOS':
+            active=next((x for x in v31_oos.list_records(conn)
+                         if x['asset'].casefold()==payload.asset.strip().casefold()),None)
+            if active:
+                linked_oos=active['id']
+            else:
+                entry=v31_oos.create(conn,asset=payload.asset.strip(),
+                    cause=payload.cause.strip(),notes=payload.remarks.strip(),
+                    logged_by=session['a'],logged_by_name=profile['name'],
+                    shift_id=row['id'],shift_code=row['code'],
+                    now_iso=datetime.now(TZ).isoformat())
+                linked_oos=entry['id']
+        manual=v31_reporting.add_manual_happening(conn,row['id'],
+            asset=payload.asset,cause=payload.cause,remarks=payload.remarks,
+            category=payload.category,status=payload.status,
+            technician=profile.get('name','Shift Associate'),
+            reference_wo=payload.wo_reference,manual_oos_id=linked_oos)
+        _invalidate_passdown(conn,row['id'])
+    return manual
+
+
+class CarryOverFlag(BaseModel):
+    wo_number: str = Field(min_length=1,max_length=100)
+    enabled: bool = True
+
+
+class CarryOverDecision(BaseModel):
+    source_row_id: int = Field(gt=0)
+    action: Literal['adopt','dismiss']
+
+
+@app.get('/api/reporting/carryovers')
+def reporting_carryovers(request:Request):
+    _session,row=_report_access(request)
+    with _db() as conn:
+        rows=v31_reporting.available_carry_overs(conn,row['id'],row['shift_day'])
+    return {'available':rows}
+
+
+@app.post('/api/reporting/carryovers/flag')
+def reporting_flag_carryover(payload:CarryOverFlag,request:Request):
+    _origin_check(request)
+    _session,row=_report_access(request)
+    try:
+        with _db() as conn:
+            result=v31_reporting.flag_carry_over(conn,row['id'],
+                payload.wo_number,payload.enabled)
+            _invalidate_passdown(conn,row['id'])
+    except KeyError as exc:
+        raise HTTPException(404,str(exc))
+    return result
+
+
+@app.post('/api/reporting/carryovers/decision')
+def reporting_resolve_carryover(payload:CarryOverDecision,request:Request):
+    _origin_check(request)
+    session,row=_report_access(request)
+    try:
+        with _db() as conn:
+            result=v31_reporting.resolve_carry_over(conn,row['id'],
+                 row['shift_day'],payload.source_row_id,payload.action,session['a'])
+            _invalidate_passdown(conn,row['id'])
+    except KeyError as exc:
+        raise HTTPException(409,str(exc))
+    return result
+
+
 @app.get('/api/history/legacy')
 def legacy_history(request: Request, limit: int = 50, offset: int = 0):
     session, profile = who(request)
