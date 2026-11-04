@@ -32,6 +32,7 @@ import v31_facility
 import v31_oos
 import v31_pm_needing_completion as v31_pm
 import v31_report_export
+import ai_remark_rewriter
 
 ROOT = Path(__file__).resolve().parent
 PRIVATE = Path(os.environ.get('IND3_V31_PRIVATE_DIR', str(ROOT / '.local-data'))).resolve()
@@ -1076,6 +1077,52 @@ def reporting_draft(payload:ReportingDraft,request:Request):
         v31_reporting.save_draft(conn,row['id'],content)
         _invalidate_passdown(conn,row['id'])
     return {'saved':True,'shift_id':row['id']}
+
+
+class AIApproval(BaseModel):
+    text: str = Field(min_length=1,max_length=5000)
+
+
+@app.get('/api/reporting/ai/status')
+def reporting_ai_status(request:Request):
+    _report_access(request)
+    return ai_remark_rewriter.check_ai_available()
+
+
+@app.post('/api/reporting/work-orders/{wo_number}/ai/suggest')
+def reporting_ai_suggest(wo_number:str,request:Request):
+    _origin_check(request)
+    _session,row=_report_access(request)
+    with _db() as conn:
+        result=v31_reporting.request_ai_rewrite(conn,row['id'],wo_number)
+    return result
+
+
+@app.post('/api/reporting/work-orders/{wo_number}/ai/accept')
+def reporting_ai_accept(wo_number:str,payload:AIApproval,request:Request):
+    _origin_check(request)
+    _session,row=_report_access(request)
+    with _db() as conn:
+        saved=conn.execute(
+            'SELECT ai_status FROM report_wo WHERE shift_id=? AND wo_number=?',
+            (row['id'],wo_number)).fetchone()
+        if not saved or saved['ai_status']!='suggested':
+            raise HTTPException(409,'No reviewable local AI suggestion available')
+        v31_reporting.accept_ai_rewrite(conn,row['id'],wo_number,payload.text)
+        _invalidate_passdown(conn,row['id'])
+    return {'accepted':True,'wo_number':wo_number}
+
+
+@app.post('/api/reporting/work-orders/{wo_number}/ai/reject')
+def reporting_ai_reject(wo_number:str,request:Request):
+    _origin_check(request)
+    _session,row=_report_access(request)
+    with _db() as conn:
+        try:
+            v31_reporting.reject_ai_rewrite(conn,row['id'],wo_number)
+        except KeyError as exc:
+            raise HTTPException(404,str(exc))
+    return {'rejected':True}
 
 
 class ManualHappening(BaseModel):
