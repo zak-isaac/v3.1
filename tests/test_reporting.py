@@ -172,6 +172,79 @@ def test_pending_closure_remains_pending_on_manual_edit(client,monkeypatch):
     assert 'Pending closure — reimport after Cetaris closes' in ui
 
 
+def test_manual_proactive_pm_discovery_survives_cetaris_reimport(client,monkeypatch):
+    clock(monkeypatch)
+    enter(client)
+    added=client.post('/api/reporting/manual',json={
+        'asset':'VOIDFILL-02','cause':'Found loose drive connection during PM',
+        'remarks':'Tightened connection; inspected and tested','category':'Proactive Repair',
+        'status':'RTS','wo_reference':''
+    })
+    assert added.status_code==200,added.text
+    manual_id=added.json()['wo_number']
+    assert manual_id.startswith('MANUAL-')
+    assert upload(client,[row('FRESH123')]).status_code==200
+    assert import_techs(client,['Synthetic A']).status_code==200
+    state=client.get('/api/reporting/state').json()
+    by={r['wo_number']:r for r in state['rows']}
+    assert by[manual_id]['is_manual']==1
+    assert not by[manual_id]['excluded'] and not by[manual_id]['selection_hidden']
+    assert by[manual_id]['category']=='Proactive Repair'
+    assert by[manual_id]['status']=='RTS'
+    assert 'FRESH123' in by
+    assert 'v31-add-manual' in client.get('/shift-report.html').text
+
+
+def test_manual_oos_creation_uses_global_equipment_tracking(client,monkeypatch):
+    clock(monkeypatch)
+    enter(client)
+    data=client.post('/api/reporting/manual',json={
+        'asset':'CONV-55','cause':'Mechanical obstruction found during PM',
+        'category':'Breakdown','status':'OOS'
+    })
+    assert data.status_code==200,data.text
+    active=client.get('/api/oos').json()['open']
+    assert [x['asset'] for x in active]==['CONV-55']
+    shift_id=client.get('/api/me').json()['selected']['id']
+    with m._db() as conn:
+        import v31_reporting
+        html=v31_reporting.build_passdown_html(conn,shift_id,'S1')
+    assert html.count('CONV-55')>=1
+
+
+def test_flagged_carryover_requires_adoption_or_dismissal_after_previous_shift_ends(client,monkeypatch):
+    clock(monkeypatch,day=26,hour=10)
+    enter(client,'S1')
+    created=client.post('/api/reporting/manual',json={
+        'asset':'CONV-73','cause':'Awaiting replacement part','status':'PENDING'
+    })
+    assert created.status_code==200,created.text
+    wo=created.json()['wo_number']
+    flag=client.post('/api/reporting/carryovers/flag',
+                     json={'wo_number':wo,'enabled':True})
+    assert flag.status_code==200
+    assert client.post('/api/shifts/report',json={}).status_code==200
+    assert client.post('/api/shifts/end',json={}).status_code==200
+    client.post('/api/logout')
+    clock(monkeypatch,day=26,hour=13)
+    enter(client,'S2')
+    available=client.get('/api/reporting/carryovers').json()['available']
+    assert len(available)==1 and available[0]['asset']=='CONV-73'
+    adopt=client.post('/api/reporting/carryovers/decision',json={
+        'source_row_id':available[0]['id'],'action':'adopt'
+    })
+    assert adopt.status_code==200,adopt.text
+    state=client.get('/api/reporting/state').json()
+    adopted=[x for x in state['rows'] if x['is_manual'] and x['source_shift_id']]
+    assert len(adopted)==1 and adopted[0]['status']=='PENDING'
+    assert 'Carry-over follow-up' in adopted[0]['cause']
+    assert client.get('/api/reporting/carryovers').json()['available']==[]
+    repeat=client.post('/api/reporting/carryovers/decision',json={
+        'source_row_id':available[0]['id'],'action':'adopt'
+    })
+    assert repeat.status_code==409
+
+
 def test_pm_needing_completion_upload_is_real_and_separate_from_completed_pm_count(client,monkeypatch):
     clock(monkeypatch)
     shift_id=enter(client)
