@@ -31,7 +31,7 @@
 .sidebar{overflow:hidden;overscroll-behavior:none}
 .shift-header{
   display:grid;grid-template-columns:minmax(0,1fr) minmax(200px,290px);
-  grid-template-rows:auto auto;align-items:center;
+  grid-template-rows:auto auto auto;align-items:center;
   gap:13px 18px;min-height:0;padding:16px 18px;
 }
 .shift-header .progress-area{
@@ -46,7 +46,7 @@
 .v31-import-in-header .import-card{
   box-shadow:none;border:0;background:transparent;
   padding:0;min-height:0;display:flex;
-  justify-content:space-between;align-items:center;
+  justify-content:flex-start;align-items:center;
   gap:12px;
 }
 .v31-import-in-header .import-text{flex:1 1 220px;min-width:150px;gap:8px}
@@ -56,11 +56,18 @@
 .v31-import-in-header .import-text small{
   font-size:11px;word-break:break-word;color:#688098
 }
-.v31-import-in-header .import-actions{
-  display:flex;align-items:center;justify-content:flex-end;
-  gap:8px;flex-wrap:wrap;
+/* Import Cetaris/Change Technicians used to live inside .import-card
+   itself; they now share one unified action row (below) with Generate
+   Passdown/End Shift, so every shift-level action lives in one place
+   instead of being split between the header and a separate footer bar. */
+.v31-header-actions{
+  grid-column:1/-1;grid-row:2;
+  display:flex;align-items:center;justify-content:space-between;
+  gap:10px;flex-wrap:wrap;
+  padding-top:12px;border-top:1px solid var(--line);
 }
-.v31-import-in-header .import-actions .btn{
+.v31-header-actions-group{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.v31-header-actions .btn{
   border-radius:8px;min-height:40px;font-size:12px;
   padding:9px 13px;font-weight:750;white-space:nowrap;
 }
@@ -73,13 +80,13 @@
 #replace-file.v31-cetaris-primary:hover{background:#a81b2b;box-shadow:0 3px 9px #981c2650}
 #replace-file.v31-cetaris-primary:focus-visible{outline:3px solid #ffc220;outline-offset:3px}
 #replace-file.v31-cetaris-primary:disabled{opacity:.55;cursor:progress}
-.v31-import-in-header #change-techs{
+.v31-header-actions #change-techs{
   border:1px solid #cbd9e7;background:#fff;color:#264e76;
 }
-.v31-import-in-header #change-techs:hover{background:#f1f6fa}
+.v31-header-actions #change-techs:hover{background:#f1f6fa}
 .v31-import-in-header .import-check{background:#eef2f8;color:#3d6b91}
 #v31-import-feedback{
-  grid-column:1 / -1;grid-row:2;
+  grid-column:1 / -1;grid-row:3;
   display:none;border:1px solid #c9d9e7;border-radius:8px;
   padding:9px 12px;margin-top:9px;background:#f2f7fb;
   font-size:12px;line-height:1.45;color:#214e73;
@@ -110,7 +117,6 @@
 @media(max-width:1300px){
   .shift-header{grid-template-columns:minmax(0,1fr) minmax(175px,240px)}
   .v31-import-in-header .import-card{flex-wrap:wrap}
-  .v31-import-in-header .import-actions{justify-content:flex-start;width:100%}
 }
 @media(max-width:840px){
   .shift-header{grid-template-columns:minmax(0,1fr) minmax(155px,220px);padding:13px}
@@ -121,7 +127,9 @@
   .shift-header{grid-template-columns:1fr}
   .shift-header .progress-area{grid-column:1;grid-row:1;max-width:none}
   .shift-header .v31-import-in-header{grid-column:1;grid-row:2}
-  #v31-import-feedback{grid-row:3}
-  .v31-import-in-header .import-actions{display:grid;grid-template-columns:1fr}
-  .v31-import-in-header .import-actions .btn{justify-content:center}
+  .v31-header-actions{grid-row:3}
+  #v31-import-feedback{grid-row:4}
+  .v31-header-actions{flex-direction:column;align-items:stretch}
+  .v31-header-actions-group{display:grid;grid-template-columns:1fr}
+  .v31-header-actions .btn{justify-content:center}
 }

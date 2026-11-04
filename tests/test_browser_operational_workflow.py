@@ -111,10 +111,12 @@ def test_real_browser_manual_pm_breakdown_passdown_and_end_shift(live_server):
         assert 'CONV-BROWSER' in eml
         assert 'Manual OOS hold' in eml
 
-        # A repeat preview cannot invalidate an unchanged saved EML.
-        page.locator('#preview-report').click()
-        page.locator('#v31-server-report-preview').wait_for(timeout=10000)
-        page.locator('#modal-actions').get_by_role('button',name='Close').click()
+        # A repeat preview cannot invalidate an unchanged saved EML. The
+        # Preview Report button was removed from the UI, but the underlying
+        # server render must still be side-effect-free -- hit it directly.
+        preview=page.evaluate("""async () => (await (await fetch(
+          '/api/shifts/report/preview',{credentials:'same-origin'})).json())""")
+        assert 'VOIDFILL-UI' in preview['html']
         review=page.evaluate("""async () => (await (await fetch(
           '/api/shifts/end/readiness',{credentials:'same-origin'})).json())""")
         assert review['ready'] is True,review

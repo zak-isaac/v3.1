@@ -59,6 +59,11 @@ async function refresh(){
     button.onclick=()=>reviewCompleted(pendingClosed);
     audit.append(button);
   }
+  // Nothing to show (no Cetaris import yet, or a clean import with no
+  // evening/morning split, pending reviews, or ignored records) -- an
+  // empty bordered box with no content is just visual clutter.
+  const panel=document.querySelector('#audit');
+  if(panel)panel.hidden=audit.children.length===0;
  }
  const label=document.querySelector('#v31-import-btn-label');
  if(label)label.textContent=snapshot.stage.staged?'Replace Cetaris File':'Import Cetaris';

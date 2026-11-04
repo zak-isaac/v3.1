@@ -5,8 +5,11 @@
 - 'WO Review Items' metric card replaced by the S3/S5 evening/morning
   completeness guide (falls back to the old pending-review count for
   non-overnight shifts, since that information still has real value).
-- The standalone 'Import Audit' button(s) are gone; the audit panel is
-  always visible instead of hidden behind a click.
+- The standalone 'Import Audit' button(s) are gone; the audit panel has no
+  manual click-to-reveal gate -- it renders automatically whenever there is
+  real audit content, and 2026-11-04 refined this further: it also
+  auto-collapses (not merely empty-looking) when there is nothing to show,
+  instead of occupying space as a visibly empty box.
 - LOTO's 20-key checklist is collapsed behind a dropdown toggle by default.
 """
 from fastapi.testclient import TestClient
@@ -33,9 +36,11 @@ def test_import_audit_button_and_toggle_are_gone(client, monkeypatch):
     assert 'id="view-audit"' not in markup
     assert 'id="v31-empty-audit"' not in markup
     assert 'id="audit-close"' not in markup
-    # The audit panel itself must render without a hidden gate now.
+    # No manual toggle exists; JS (not a click handler) owns visibility by
+    # auto-collapsing the panel when there is nothing real to show yet --
+    # confirmed server-side by the static placeholder starting hidden.
     panel = markup.split('id="audit"', 1)[1][:60]
-    assert "hidden" not in panel
+    assert "hidden" in panel
 
 
 def test_metric_card_replaces_wo_review_items_with_day_night_guide(client, monkeypatch):

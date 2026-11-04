@@ -3,9 +3,9 @@
 - Shift Happenings shows corrected remarks.
 - The original Cetaris remark is preserved and recoverable.
 - A manual MST edit is respected -- a reimport must never discard it.
-- Preview Report and the downloaded Outlook EML show the same underlying
-  facts (same WO, same corrected/edited text), not independently-drifted
-  copies.
+- The server-rendered preview snapshot and the downloaded Outlook EML show
+  the same underlying facts (same WO, same corrected/edited text), not
+  independently-drifted copies.
 - HTML escaping and Unicode content survive intact into the EML.
 """
 import base64
@@ -179,18 +179,19 @@ def test_manual_edit_survives_reimport_and_matches_in_preview_and_eml(page_ctx):
         "Manual edit must survive reimport, corrected for display (recieved->received)"
     assert "Completely different raw text" not in row2["remarks"]
 
-    # 4. Preview Report and the downloaded EML must show the SAME final
-    # (edited + corrected) text -- not independently-derived copies. Drive
-    # this through the real user flow: open Preview, read it, then use the
-    # modal's own "Generate Outlook EML" button.
-    page.locator("#preview-report").click()
-    page.locator('#v31-server-report-preview').wait_for(timeout=10000)
-    preview_text = page.evaluate("document.querySelector('#v31-server-report-preview')?.srcdoc")
+    # 4. The server-rendered preview snapshot and the downloaded EML must
+    # show the SAME final (edited + corrected) text -- not independently
+    # -derived copies. The Preview Report button was removed from the UI,
+    # so hit the same server render it used to drive directly, then
+    # generate the EML through the real header button.
+    preview = page.evaluate("""async () => (await (await fetch(
+      '/api/shifts/report/preview',{credentials:'same-origin'})).json())""")
+    preview_text = preview["html"]
     assert "MST confirmed: unit received full service." in preview_text
     assert "9601" in preview_text
 
     with page.expect_download() as download_info:
-        page.get_by_role("button", name="Generate Outlook EML").click()
+        page.locator("#generate-eml").click()
     eml_content = download_info.value.path().read_text(encoding="utf-8")
     assert "MST confirmed: unit received full service." in eml_content
     assert "9601" in eml_content
