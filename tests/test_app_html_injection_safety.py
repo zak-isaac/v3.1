@@ -53,7 +53,7 @@ def test_served_shift_report_page_is_not_corrupted_by_its_own_eml_template(clien
     assert page.rstrip().endswith("</html>")
     last_body = page.rfind("</body>")
     before_last_body = page[:last_body]
-    assert before_last_body.endswith('<script defer src="/web/pm-needing-completion.js"></script>')
+    assert before_last_body.endswith('<script defer src="/web/analytics.js"></script>')
 
     # The inline script must still be syntactically whole -- its own
     # function definitions must all still be present and not truncated.
