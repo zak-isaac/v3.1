@@ -108,7 +108,8 @@ def test_full_s1_journey_login_through_end_shift(client, tmp_path, monkeypatch):
     saved = client.post("/api/shifts/report", json={"content": report_text})
     assert saved.status_code == 200, saved.text
     read_back = client.get("/api/shifts/report")
-    assert read_back.json()["content"] == report_text
+    assert "8001" in read_back.json()["content"] and "8003" in read_back.json()["content"]
+    assert "<html>" in read_back.json()["content"]  # Server-generated, not caller-supplied text
 
     # --- Phase 6: End Shift must actually close the session server-side
     ended = client.post("/api/shifts/end", json={})
