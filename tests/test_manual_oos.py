@@ -135,7 +135,7 @@ def test_stale_technician_owner_cannot_edit_manual_oos_after_mst_relief(client, 
 def test_manual_oos_requires_report_inside_shift_window(client, monkeypatch):
     clock(monkeypatch, day=26, hour=10)
     enter(client, 'S1')
-    clock(monkeypatch, day=26, hour=17, minute=1)
+    clock(monkeypatch, day=26, hour=18)  # outside S1's 5 PM closing grace
     assert client.post('/api/oos',json={'asset':'TEST-001'}).status_code == 409
     assert client.get('/api/oos').status_code == 409
 
