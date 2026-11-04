@@ -25,6 +25,24 @@ TZ=ZoneInfo("America/Indiana/Indianapolis")
 
 
 def _table(conn):
+    # This module is called by several concurrent browser requests on first
+    # page load. Only run SQLite DDL/migrations when an old schema actually
+    # needs them; repeated executescript() commits and schema locks can race
+    # an in-flight Cetaris upload and occasionally return HTTP 500.
+    expected={
+        "report_stage":{"applied_at","prior_techs_json"},
+        "report_techs":{"selected_json"},
+        "report_wo":{"ai_status","is_manual","selection_hidden","source_techs_json","work_at"},
+        "report_pm":{"selection_hidden","source_techs_json"},
+        "report_audit":{"next_day_json"},
+        "carry_over_decisions":{"id"}
+    }
+    current={r["name"] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'")}
+    if all(table in current and columns.issubset({
+        r["name"] for r in conn.execute(f"PRAGMA table_info({table})")
+    }) for table,columns in expected.items()):
+        return
     conn.executescript("""
     CREATE TABLE IF NOT EXISTS report_stage (
       shift_id INTEGER PRIMARY KEY, filename TEXT NOT NULL,
