@@ -550,23 +550,45 @@ async function emlDownload(){
   }catch(error){toast(error.message);}
   finally{generate.disabled=false;}
 }
-function confirmEnd(){showModal('End this shift?','This closes the shift in the real V3.1 database. A saved passdown is required first.',`<p>End the <strong>${esc(window.__v31ShiftContext?.code||'selected')}</strong> shift?</p><p class="field-help">This cannot be undone from this screen. Generate and save the passdown first if you have not already.</p>`,[{text:'Cancel',onClick:closeModal},{text:'End shift',kind:'btn-end',onClick:async()=>{
-  const endButton=$('#end-shift');if(endButton)endButton.disabled=true;
+async function confirmEnd(){
   try{
-    const response=await fetch('/api/shifts/end',{method:'POST',credentials:'same-origin',
-      headers:{'Content-Type':'application/json'},body:JSON.stringify({})});
-    if(!response.ok){
-      const info=await response.json().catch(()=>({}));
-      throw Error(info.detail||'Could not end this shift.');
-    }
-    state.ended=true;
-    closeModal();toast('Shift ended.');
-    setTimeout(()=>{window.location.href='/';},1200);
-  }catch(error){
-    if(endButton)endButton.disabled=false;
-    closeModal();toast(error.message);
-  }
-}}]);}
+    // The backend checks EML hash, recent staged import and outstanding work
+    // before permitting a final close. This is not just a modal decoration.
+    const response=await fetch('/api/shifts/end/readiness',{credentials:'same-origin'});
+    const readiness=await response.json().catch(()=>({}));
+    if(!response.ok)throw Error(readiness.detail||'Cannot check End Shift readiness.');
+    const items=(items)=>'<ul style="padding-left:19px;margin:10px 0">'+items.map(x=>'<li>'+esc(x)+'</li>').join('')+'</ul>';
+    const blocked=readiness.blockers||[];
+    const warning=readiness.warnings||[];
+    const body='<p>End the <strong>'+esc(window.__v31ShiftContext?.code||'selected')+'</strong> shift?</p>'+
+      (blocked.length?'<p><strong>Must resolve before End Shift:</strong></p>'+items(blocked):'')+
+      (warning.length?'<p><strong>Outstanding items for your passdown:</strong></p>'+items(warning)+
+        '<label style="display:flex;align-items:flex-start;gap:8px;margin-top:12px"><input type="checkbox" id="v31-end-ack" style="margin-top:4px"> I reviewed these items and confirm they are documented for the incoming shift.</label>':'')+
+      '<p class="field-help">This action closes this shift only. Other overlapping shifts remain active.</p>';
+    const buttons=[{text:'Cancel',onClick:closeModal}];
+    if(!blocked.length)buttons.push({text:'End shift',kind:'btn-end',onClick:async()=>{
+      if(warning.length&&!$('#v31-end-ack')?.checked){
+        toast('Review and acknowledge outstanding items before closing this shift.');return;
+      }
+      const endButton=$('#end-shift');if(endButton)endButton.disabled=true;
+      try{
+        const result=await fetch('/api/shifts/end',{method:'POST',credentials:'same-origin',
+          headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({acknowledge_warnings:!!warning.length})});
+        if(!result.ok){
+          const detail=await result.json().catch(()=>({}));
+          throw Error(detail.detail||'Could not end this shift.');
+        }
+        state.ended=true;closeModal();toast('Shift ended. Report and review saved.');
+        setTimeout(()=>{window.location.href='/';},1200);
+      }catch(error){
+        if(endButton)endButton.disabled=false;toast(error.message);
+      }
+    }});
+    showModal('End this shift?',blocked.length?'Finish required items before closing.':
+              'Review the report and outstanding items.',body,buttons,{wide:true});
+  }catch(error){toast(error.message);}
+}
 function showInfo(){showModal('Frontend Design Preview','Separate from live IND3 V3.',`<p>This V3.1 local app uses a separate shift database and actual Cetaris imports. It does not modify the live production V3 application.</p><p><strong>Included UI interactions:</strong> editing and excluding work orders, tabbed views, file selectors, technician selections, report text entry, LOTO verification with 20 keys, draft status, report preview, example EML export and End Shift.</p><p>Cetaris XLSX/CSV parsing is connected. Ambiguous ownership remains in Import Audit; pending PM parsing and AI rewrite are not connected yet.</p>`,[{text:'Got it',onClick:closeModal}]);}
 // Wiring
 $$('.tab').forEach(t=>t.addEventListener('click',()=>{selectedTab=t.dataset.tab;renderTab();}));
