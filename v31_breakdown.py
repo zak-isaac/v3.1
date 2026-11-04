@@ -19,6 +19,12 @@ def _now():
     return datetime.now(TZ).isoformat()
 
 def ensure(conn):
+    # Avoid executescript()'s implicit COMMIT during report imports.
+    # The only reason to run DDL is upgrading a missing historical table.
+    existing={r['name'] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'")}
+    if {'breakdown_state','breakdown_manual_holds','breakdown_rts_events'} <= existing:
+        return
     conn.executescript("""CREATE TABLE IF NOT EXISTS breakdown_state(
         wo_number TEXT PRIMARY KEY,asset TEXT NOT NULL,status TEXT NOT NULL,
         updated_shift_id INTEGER NOT NULL,decision TEXT NOT NULL DEFAULT '',
