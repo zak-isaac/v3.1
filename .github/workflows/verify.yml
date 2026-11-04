@@ -29,6 +29,7 @@ jobs:
           node --check web/manual-oos.js
           node --check web/facility-admin.js
           node --check web/pm-needing-completion.js
+          node --check web/analytics.js
 
 
   browser:
