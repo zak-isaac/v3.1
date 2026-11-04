@@ -51,11 +51,16 @@ async function refresh(){
     emLine.textContent='Evening (before midnight): '+em.evening+' WO · Morning (after midnight): '+em.morning+' WO';
     audit.append(emLine);
   }
+  // Pending/ignored reason lines can run long -- keep them in their own
+  // scrollable strip so the summary/Next-Day button above stay visible.
+  const reasons=document.createElement('div');
+  reasons.className='audit-reasons';
   for(const r of [...snapshot.audit.pending,...snapshot.audit.ignored].slice(0,35)){
     const line=document.createElement('p');
     line.textContent='WO# '+r.wo_number+' — '+r.reason;
-    audit.append(line);
+    reasons.append(line);
   }
+  audit.append(reasons);
   // Next-day WOs are audit visibility, not automatic shift attribution.
   const nextDay=snapshot.audit.next_day||[];
   const nextWrap=document.createElement('details');
