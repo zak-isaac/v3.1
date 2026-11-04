@@ -134,11 +134,6 @@ body,.app{background:var(--cc-canvas)}
   align-items:flex-start;
   justify-content:flex-start;
 }
-.audit-reasons{
-  border-top:1px solid #edf1f6;
-  margin-top:4px;
-  padding-top:4px;
-}
 .audit-panel p{margin:4px 0;font-size:12px;line-height:1.5;color:#405974}
 .audit-panel strong{font-size:13px}
 .audit-panel details{margin-top:8px!important;padding:8px!important}

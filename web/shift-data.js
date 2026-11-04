@@ -40,21 +40,11 @@ async function refresh(){
     emLine.textContent='Evening (before midnight): '+em.evening+' WO · Morning (after midnight): '+em.morning+' WO';
     audit.append(emLine);
   }
-  // Pending/ignored reason lines can run long -- keep them in their own
-  // scrollable strip. Only attach the wrapper when there is a real reason
-  // to show -- an always-appended empty div used to defeat the children
-  // -count check below, keeping the panel visibly empty.
-  const reasonItems=[...snapshot.audit.pending,...snapshot.audit.ignored].slice(0,35);
-  if(reasonItems.length){
-    const reasons=document.createElement('div');
-    reasons.className='audit-reasons';
-    for(const r of reasonItems){
-      const line=document.createElement('p');
-      line.textContent='WO# '+r.wo_number+' — '+r.reason;
-      reasons.append(line);
-    }
-    audit.append(reasons);
-  }
+  // Pending/ignored reason lines used to render here as a scrollable
+  // strip of 'WO# ... - reason' text. Removed per request -- the WO
+  // Review Items metric card already surfaces the count, and the
+  // 'Review completed work orders' action below covers the actionable
+  // case; a raw reason dump wasn't adding value.
   const pendingClosed=snapshot.audit.pending.filter(x=>
     String(x.reason||'').startsWith('Completed but not Closed'));
   if(pendingClosed.length){
