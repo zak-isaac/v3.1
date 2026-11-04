@@ -51,7 +51,8 @@ def test_real_browser_manual_pm_breakdown_passdown_and_end_shift(live_server):
         assert any(row['asset']=='VOIDFILL-UI' and row['is_manual'] for row in state['rows'])
 
         # PM needing completion: an actual file, not just a preview filename.
-        pm_csv=b'WO Number,PM Due Date,Asset #\\nPMUI001,11/05/2026,BALER-UI\\n'
+        pm_csv=chr(10).join(['WO Number,PM Due Date,Asset #',
+                             'PMUI001,11/05/2026,BALER-UI','']).encode('utf-8')
         with page.expect_response(lambda r:'/api/pm-needing-completion/upload' in r.url) as uploaded:
             page.locator('#pending-picker').set_input_files({
               'name':'pm-needing-ui.csv','mimeType':'text/csv','buffer':pm_csv
