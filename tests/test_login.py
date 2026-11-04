@@ -140,7 +140,9 @@ def test_manager_can_choose_and_resume_another_mst_report(client, monkeypatch):
 
 
 def test_active_drax_associates_can_log_in_without_mst_job_title(client, monkeypatch):
-    freeze(monkeypatch, at(2026, 10, 27, 8))
+    # At 1 PM, both S1 and S2 are inside their scheduled windows;
+    # the off-shift denial must be authorization (403), not timing (409).
+    freeze(monkeypatch, at(2026, 10, 27, 13))
     result = sign_in(client, '777777')
     assert result.status_code == 200, result.text
     assert result.json()['role'] == 'technician'
