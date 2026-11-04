@@ -172,8 +172,16 @@ function chooseTechs(){
  // Existing selections survive reopening. For a new staged import, preselect
  // all uniquely matched active assigned Drax technicians, irrespective of role.
  const previously=(snapshot.technicians||[]).filter(n=>suggested.some(t=>t.name===n));
- const checked=new Set(snapshot.stage.imported?previously:
-    previously.length?previously:suggested.filter(t=>t.preselected).map(t=>t.name));
+ // On a replacement file, retain an explicit prior deselection but
+ // automatically check any *newly encountered* Drax-assigned technician.
+ // Opening the same staged file again never silently reverses a choice.
+ const previousStage=new Set(snapshot.stage.prior_stage_technicians||[]);
+ const checked=new Set(previously);
+ if(!snapshot.stage.imported){
+   for(const tech of suggested){
+     if(tech.preselected && !previousStage.has(tech.name))checked.add(tech.name);
+   }
+ }
  const selectedShift=snapshot.shift?.code||'selected shift';
  const container=document.createElement('div');
  container.className='v31-tech-roster';
