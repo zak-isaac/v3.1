@@ -19,6 +19,7 @@ import html as _html
 import spelling_fix
 import v31_oos
 import v31_pm_needing_completion as v31_pm
+import v31_breakdown
 
 TZ=ZoneInfo("America/Indiana/Indianapolis")
 
@@ -394,6 +395,10 @@ def import_selection(conn, shift_id: int, shift_code: str, shift_day: str,
                              (hidden,saved["row_key"]))
                 if hidden: selection_hidden+=1
                 else: selection_restored+=1
+    # V3-style breakdown lifecycle is separate from ordinary WO attribution.
+    # It can update already-tracked WOs from later Cetaris exports without
+    # crediting an unrelated shift for the original repair.
+    breakdown_changes=v31_breakdown.sync(conn,all_rows,selected,accepted,shift_id)
     # Completed non-PM records are pending a specific MST confirmation.
     completed=set()
     for r in accepted:
@@ -414,6 +419,7 @@ def import_selection(conn, shift_id: int, shift_code: str, shift_day: str,
     next_day=_next_day_work_orders(
         all_rows,shift_day,selected,persisted_numbers,saved_pm_numbers,pending,ignored)
     summary.update({"added":added,"updated":updated,"preserved_edits":preserved,
+                    "breakdown_status_changes":breakdown_changes,
                     "selection_hidden":selection_hidden,"selection_restored":selection_restored,
                     "pm_wos_this_import":pm_count,"selected_technicians":len(selected),
                     "pending_review":len(pending),"ignored":len(ignored),
@@ -745,6 +751,19 @@ def build_passdown_html(conn, shift_id, shift_code):
     for record in v31_oos.resolved_this_shift(conn, shift_id):
         rts.append(f'<strong>{esc(record["asset"])}</strong> &mdash; '
                    f'Returned to Service (manually reported)')
+
+    # V3-style global breakdown lifecycle. Previously flagged OOS assets
+    # remain visible on later shifts until a verified Closed WO or an
+    # explicit reviewed RTS decision clears them.
+    global_open={x["asset"].strip().casefold() for x in inc if x["status"]=="OOS"}
+    global_open.update(x["asset"].strip().casefold() for x in v31_oos.list_records(conn))
+    for entry in v31_breakdown.overview(conn,shift_id)["open"]:
+        asset=entry["asset"].strip()
+        if asset.casefold() not in global_open:
+            oos.append(f'<strong>{esc(asset)}</strong> — Breakdown WO# {esc(entry["wo_number"])} (awaiting RTS)')
+            global_open.add(asset.casefold())
+    for event in v31_breakdown.overview(conn,shift_id)["resolved_this_shift"]:
+        rts.append(f'<strong>{esc(event["asset"])}</strong> — Breakdown WO# {esc(event["wo_number"])} RTS')
 
     loto_html = (
         '<p style="font-size:14px;font-family:Calibri,Arial,sans-serif;margin-top:18px;">'
