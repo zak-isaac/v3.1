@@ -43,6 +43,11 @@ def test_real_browser_manual_pm_breakdown_passdown_and_end_shift(live_server):
         page.locator('#m-cause').fill('Loose terminal discovered during PM inspection')
         page.locator('#m-remarks').fill('Connection tightened; function verified')
         page.locator('#m-status').select_option('RTS')
+        # The real modal must use an actual valid form; do not assume that
+        # clicking a detached footer button always dispatches a request.
+        page.locator('#v31-manual-form').wait_for(timeout=5000)
+        assert page.locator('#v31-manual-form').evaluate(
+            "(form) => form.checkValidity()"), "Manual work form did not validate"
         with page.expect_response(lambda r:'/api/reporting/manual' in r.url) as changed:
             page.get_by_role('button',name='Save Manual Happening').click()
         assert changed.value.status==200
