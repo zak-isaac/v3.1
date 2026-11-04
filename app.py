@@ -712,6 +712,16 @@ class MstOvertimeGrant(BaseModel):
     approved: bool = True
 
 
+@app.get('/api/admin/mst-overtime')
+def list_mst_overtime(request: Request):
+    """Management review of all explicitly approved dated MST overtime."""
+    require_manager(request)
+    with _db() as conn:
+        rows = conn.execute('''SELECT associate,code,shift_day,granted_by,granted_at
+            FROM mst_overtime_grants ORDER BY shift_day DESC,code,associate''').fetchall()
+    return {'grants':[dict(row) for row in rows]}
+
+
 @app.post('/api/admin/mst-overtime')
 def set_mst_overtime(payload: MstOvertimeGrant, request: Request):
     """Management approves/revokes a specific MST and shift date only."""
