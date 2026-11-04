@@ -29,7 +29,7 @@
     document.querySelector('.pm-action small:not(#pending-filename)')?.replaceChildren(
       document.createTextNode(pm.present?
         (pm.parsed?'Work orders imported from the separate unfinished-PM report':'Reference file saved; contents not parsed') :
-        'Upload the separate V2-style PMs Needing Completion report'));
+        ''));
     return pm;
   }
   picker.addEventListener('change',async()=>{

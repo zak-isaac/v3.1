@@ -387,7 +387,10 @@ body,.app{background:var(--cc-canvas)}
   border:1px solid #e2eaf2;
   border-radius:10px;
 }
-.action-item{background:#f8fafc;padding:8px}
+.action-item{background:#f8fafc;padding:6px}
+.pm-action .action-icon{width:24px;height:24px}
+.pm-action .action-icon .icon{width:13px;height:13px}
+.pm-action .action-item-title{gap:7px}
 .action-row{padding:7px 12px}
 .action-row:hover{background:#f8fbff;border-color:#c4d6e5}
 .action-item-title strong,.action-row strong,.loto-box strong{
@@ -397,10 +400,11 @@ body,.app{background:var(--cc-canvas)}
   font-size:11px;line-height:1.45;
   font-style:normal;color:#6d8195;
 }
+.action-item-title small:empty{display:none}
 .action-icon{width:28px;height:28px;border-radius:8px}
 .action-icon .icon{width:15px;height:15px}
 #loto-keys-toggle{margin-top:7px;padding:5px 10px;min-height:0;font-size:11px}
-.pm-upload{min-height:36px;margin-top:8px;width:100%}
+.pm-upload{min-height:30px;margin-top:6px;width:100%}
 .loto-box{padding:8px}
 .report-footer{
   background:#fff;border:1px solid var(--cc-line);
