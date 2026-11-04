@@ -110,8 +110,10 @@ def test_end_shift_button_really_closes_the_shift_server_side(live_server):
         )
         assert saved["status"] == 200, saved
 
+        page.locator("#end-shift").click()
+        page.locator("#modal-actions .btn-end").wait_for(timeout=10000)
         with page.expect_response(lambda r: "/api/shifts/end" in r.url) as response_info:
-            page.locator("#end-shift").click()
+            page.locator("#modal-actions .btn-end").click()
         response = response_info.value
         assert response.status == 200, response.status
 
