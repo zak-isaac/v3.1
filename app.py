@@ -61,6 +61,13 @@ SHIFT_RULES = {
 async def lifespan(_app):
     # Isolated boot: don't touch Workshop V3 data or services.
     roster()
+    # Initialize all private SQLite schemas before parallel browser requests
+    # begin. This avoids staging/PM/breakdown racing migration DDL.
+    with _db() as conn:
+        v31_reporting._table(conn)
+        v31_pm.ensure(conn)
+        v31_oos._table(conn)
+        v31_breakdown.ensure(conn)
     expire_shifts()
     task = asyncio.create_task(_periodic_maintenance())
     bridge = asyncio.create_task(_periodic_drax_bridge())
