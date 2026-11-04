@@ -13,8 +13,6 @@
   };
   let context;
   try {context=await request('/api/me');}catch(e){return;}
-  const reportText=$('.footer-tip span');
-  if(reportText) reportText.textContent='Work orders and notes are saved to the selected V3.1 shift.';
   const username=$('#v31-user-name');
   if(username)username.textContent=context.name||'Shift Associate';
   const initial=$('#v31-user-initial');

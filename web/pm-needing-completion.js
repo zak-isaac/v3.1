@@ -41,7 +41,8 @@
       const pm=await fetchState('POST',form,'/api/pm-needing-completion/upload');
       await refresh();
       window.V31Reporting?.refresh?.().catch(()=>{});
-      document.querySelector('#last-saved').textContent=
+      const savedLabel=document.querySelector('#last-saved');
+      if(savedLabel)savedLabel.textContent=
         'PMs Needing Completion: '+(pm.parsed?pm.count+' work orders saved':'reference saved');
     }catch(error){target.textContent=error.message;window.alert(error.message);}
     finally{btn.disabled=false;}

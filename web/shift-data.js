@@ -278,7 +278,8 @@ async function updateWO(wo,changes){
 async function saveDraft(notify=false){
  try{
   await api('/api/reporting/draft',view.draft());
-  document.querySelector('#last-saved').textContent='Draft saved to selected shift';
+    const savedLabel=document.querySelector('#last-saved');
+  if(savedLabel)savedLabel.textContent='Draft saved to selected shift';
   if(notify)view.toast('Shift draft saved');
  }catch(e){view.toast('Draft save failed: '+e.message);throw e;}
 }
