@@ -47,4 +47,4 @@ jobs:
       - name: Require an actual working Chromium browser
         run: python -c "from playwright.sync_api import sync_playwright; p=sync_playwright().start(); b=p.chromium.launch(); b.close(); p.stop()"
       - name: Run UI from login to report and End Shift in Chromium
-        run: python -m pytest -q tests/test_browser_eml_template.py tests/test_browser_end_shift.py tests/test_report_consistency.py
+        run: python -m pytest -q tests/test_browser_eml_template.py tests/test_browser_end_shift.py tests/test_report_consistency.py tests/test_browser_operational_workflow.py
