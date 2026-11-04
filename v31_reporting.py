@@ -703,7 +703,7 @@ def happenings_counts(conn, shift_ids):
     placeholders = ",".join("?" * len(shift_ids))
     rows = conn.execute(
         f"SELECT shift_id, COUNT(*) AS n FROM report_wo "
-        f"WHERE excluded=0 AND shift_id IN ({placeholders}) GROUP BY shift_id",
+        f"WHERE excluded=0 AND selection_hidden=0 AND shift_id IN ({placeholders}) GROUP BY shift_id",
         shift_ids)
     return {r["shift_id"]: r["n"] for r in rows}
 
