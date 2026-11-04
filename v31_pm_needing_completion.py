@@ -24,6 +24,8 @@ PARSABLE_EXTS={".xlsx",".xls",".csv"}
 MAX_BYTES=12*1024*1024
 
 def ensure(conn:sqlite3.Connection):
+    if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='pm_needing_completion'").fetchone():
+        return
     conn.execute("""CREATE TABLE IF NOT EXISTS pm_needing_completion(
       shift_id INTEGER PRIMARY KEY,filename TEXT NOT NULL,
       extension TEXT NOT NULL,file_data BLOB NOT NULL,
