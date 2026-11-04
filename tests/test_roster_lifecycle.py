@@ -125,6 +125,35 @@ def test_management_can_add_manual_mst_not_in_drax(client,monkeypatch):
         json={"number":"8972","name":"Should be denied","shift":"S1","is_mst":True}).status_code == 403
 
 
+def test_management_can_review_approve_and_revoke_mst_overtime(client,monkeypatch):
+    freeze(monkeypatch, at())
+    assert sign(client, "333333").status_code == 200
+    assert client.get('/api/admin/mst-overtime').status_code == 403
+    client.post('/api/logout')
+    assert sign(client).status_code == 200
+    page=client.get('/administration')
+    assert page.status_code == 200
+    for value in ('v31-ot-form','v31-ot-associate','v31-ot-shift','v31-ot-date',
+                  'v31-ot-grants'):
+        assert value in page.text
+    ui=client.get('/web/roster-admin.js').text
+    assert "loadOvertime()" in ui
+    empty=client.get('/api/admin/mst-overtime')
+    assert empty.status_code == 200 and empty.json()['grants'] == []
+    approval=client.post('/api/admin/mst-overtime',json={
+        'associate':'111111','code':'S2','shift_day':'2026-10-27','approved':True
+    })
+    assert approval.status_code == 200
+    stored=client.get('/api/admin/mst-overtime').json()['grants']
+    assert len(stored) == 1
+    assert stored[0]['associate'] == '111111' and stored[0]['code'] == 'S2'
+    revoked=client.post('/api/admin/mst-overtime',json={
+        'associate':'111111','code':'S2','shift_day':'2026-10-27','approved':False
+    })
+    assert revoked.status_code == 200
+    assert client.get('/api/admin/mst-overtime').json()['grants'] == []
+
+
 def test_regular_mst_cannot_use_management_endpoints(client,monkeypatch):
     freeze(monkeypatch, at())
     sign(client, "111111")
