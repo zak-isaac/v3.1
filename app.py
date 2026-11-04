@@ -709,6 +709,16 @@ def _end_shift_readiness(conn,row):
         except (TypeError,ValueError):
             review_count=0
         if review_count:warnings.append(f'{review_count} Cetaris import review item(s) remain unresolved.')
+    # Global OOS and explicit maintenance holds can span multiple shifts.
+    # They are never automatically cleared by End Shift.
+    breakdowns=v31_breakdown.overview(conn,row['id'])
+    active_assets={
+        item['asset'].strip().casefold() for item in
+        (breakdowns['open']+breakdowns['holds']+v31_oos.list_records(conn,open_only=True))
+        if item['asset'].strip()
+    }
+    if active_assets:
+        warnings.append(f'{len(active_assets)} asset(s) remain out of service or on manual hold.')
     draft=v31_reporting.get_draft(conn,row['id'])
     if not draft.get('loto'):
         warnings.append('LOTO verification is not marked complete.')
