@@ -28,3 +28,21 @@ jobs:
           node --check web/shift-data.js
           node --check web/manual-oos.js
           node --check web/facility-admin.js
+          node --check web/pm-needing-completion.js
+
+
+  browser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Python and Playwright dependencies
+        run: |
+          python -m pip install -r requirements.txt pytest httpx playwright
+          python -m playwright install --with-deps chromium
+      - name: Require an actual working Chromium browser
+        run: python -c "from playwright.sync_api import sync_playwright; p=sync_playwright().start(); b=p.chromium.launch(); b.close(); p.stop()"
+      - name: Run UI from login to report and End Shift in Chromium
+        run: python -m pytest -q tests/test_browser_eml_template.py tests/test_browser_end_shift.py tests/test_report_consistency.py
