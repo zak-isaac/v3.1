@@ -667,8 +667,69 @@ def logout(request: Request, response: Response):
     response.delete_cookie(SESSION_COOKIE, path='/')
     return {'signed_out': True}
 
+class EndShiftRequest(BaseModel):
+    acknowledge_warnings: bool = False
+
+
+def _end_shift_readiness(conn,row):
+    """A saved, intact EML is mandatory; actual outstanding work is
+    acknowledged, never automatically marked RTS or discarded."""
+    saved=bool(row['report_saved_at'] and row['report_eml'] and row['report_hash'])
+    digest_ok=saved and hashlib.sha256(bytes(row['report_eml'])).hexdigest()==row['report_hash']
+    blockers=[]
+    if not saved:
+        blockers.append('Generate and save the Outlook passdown before End Shift.')
+    elif not digest_ok:
+        blockers.append('Saved Outlook report failed integrity verification; regenerate it.')
+    stage=conn.execute("SELECT applied_at FROM report_stage WHERE shift_id=?",(row['id'],)).fetchone() if conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='report_stage'").fetchone() else None
+    if stage and not stage['applied_at']:
+        blockers.append('A newer Cetaris file is staged but not imported. Confirm its technicians first.')
+    warnings=[]
+    import v31_reporting
+    v31_reporting._table(conn)
+    included=conn.execute("""SELECT COUNT(*) FROM report_wo WHERE shift_id=?
+        AND excluded=0 AND selection_hidden=0""",(row['id'],)).fetchone()[0]
+    outstanding=conn.execute("""SELECT COUNT(*) FROM report_wo WHERE shift_id=?
+        AND excluded=0 AND selection_hidden=0 AND status='PENDING'""",(row['id'],)).fetchone()[0]
+    if outstanding:
+        warnings.append(f'{outstanding} pending work order(s) require follow-up.')
+    audit=conn.execute("SELECT pending_json FROM report_audit WHERE shift_id=?",
+                       (row['id'],)).fetchone()
+    if audit:
+        try:
+            review_count=len(json.loads(audit['pending_json']))
+        except (TypeError,ValueError):
+            review_count=0
+        if review_count:warnings.append(f'{review_count} Cetaris import review item(s) remain unresolved.')
+    draft=v31_reporting.get_draft(conn,row['id'])
+    if not draft.get('loto'):
+        warnings.append('LOTO verification is not marked complete.')
+    missing=draft.get('missingKeys') or []
+    if missing:
+        warnings.append(f'{len(missing)} LOTO key(s) are marked missing.')
+    completed_pm=conn.execute("SELECT COUNT(*) FROM report_pm WHERE shift_id=? AND selection_hidden=0",
+                              (row['id'],)).fetchone()[0]
+    import v31_pm_needing_completion as v31_pm
+    pm_needs=v31_pm.get(conn,row['id'])['present']
+    has_other=bool((draft.get('notes') or '').strip() or draft.get('vendors') or draft.get('ro'))
+    if not included and not completed_pm and not pm_needs and not has_other:
+        warnings.append('No reportable work or shift notes were entered. Confirm this was a quiet shift.')
+    return {'ready':not blockers,'saved':saved,'hash_verified':bool(digest_ok),
+            'blockers':blockers,'warnings':warnings,
+            'requires_acknowledgement':bool(warnings),
+            'pending_work_orders':outstanding}
+
+
+@app.get('/api/shifts/end/readiness')
+def end_shift_readiness(request:Request):
+    _session,row=_report_access(request)
+    with _db() as conn:
+        return _end_shift_readiness(conn,row)
+
+
 @app.post('/api/shifts/end')
-def end_shift(request: Request, response: Response):
+def end_shift(request: Request, response: Response, payload: EndShiftRequest | None = None):
     """Finish only the bound session; overlapping sessions remain untouched."""
     _origin_check(request)
     session, profile = who(request)
@@ -681,10 +742,22 @@ def end_shift(request: Request, response: Response):
             raise HTTPException(404, 'Active shift not found')
         if not profile.get('all_shifts') and row['owner'] != session['a']:
             raise HTTPException(403, 'Only the shift starter or management may close it')
-        if not row['report_saved_at'] or not row['report_hash'] or not row['report_eml']:
-            raise HTTPException(409, 'Generate and save the authoritative Outlook passdown before ending this shift')
+        if eligible_date(row['code'],datetime.now(TZ)) != date.fromisoformat(row['shift_day']):
+            raise HTTPException(409, 'Reporting window has ended')
+        readiness=_end_shift_readiness(conn,row)
+        if readiness['blockers']:
+            raise HTTPException(409,' '.join(readiness['blockers']))
+        if readiness['warnings'] and not (payload and payload.acknowledge_warnings):
+            raise HTTPException(409,'Review and acknowledge the outstanding End Shift warnings first')
+        now=datetime.now(TZ).isoformat()
+        conn.execute("""CREATE TABLE IF NOT EXISTS shift_end_review(
+            shift_id INTEGER PRIMARY KEY, actor TEXT NOT NULL,
+            warnings_json TEXT NOT NULL, acknowledged_at TEXT NOT NULL)""")
+        conn.execute("""INSERT OR REPLACE INTO shift_end_review
+           (shift_id,actor,warnings_json,acknowledged_at) VALUES(?,?,?,?)""",
+           (row['id'],session['a'],json.dumps(readiness['warnings']),now))
         conn.execute("""UPDATE shifts SET open=0, closed_at=?,closed_reason='completed'
-                        WHERE id=?""",(datetime.now(TZ).isoformat(),session['s']))
+                        WHERE id=?""",(now,session['s']))
     _set_cookie(response, session['a'], 0)
     _record_login_event(session['a'], 'end_shift', session['s'])
     return {'ended': True, 'shift_id': session['s']}
