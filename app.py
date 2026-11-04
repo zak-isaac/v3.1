@@ -31,6 +31,7 @@ import v31_reporting
 import v31_facility
 import v31_oos
 import v31_pm_needing_completion as v31_pm
+import v31_report_export
 
 ROOT = Path(__file__).resolve().parent
 PRIVATE = Path(os.environ.get('IND3_V31_PRIVATE_DIR', str(ROOT / '.local-data'))).resolve()
@@ -203,6 +204,9 @@ def _db() -> sqlite3.Connection:
         'report_saved_at': "TEXT NOT NULL DEFAULT ''",
         'report_content': "TEXT NOT NULL DEFAULT ''",
         'report_count': "INTEGER NOT NULL DEFAULT 0",
+        'report_html': "TEXT NOT NULL DEFAULT ''",
+        'report_hash': "TEXT NOT NULL DEFAULT ''",
+        'report_eml': "BLOB NOT NULL DEFAULT X''",
         # Existing V3.1 shifts were MST-owned, so preserve their authorization.
         'owner_role': "TEXT NOT NULL DEFAULT 'mst'",
     }.items():
@@ -671,8 +675,8 @@ def end_shift(request: Request, response: Response):
             raise HTTPException(404, 'Active shift not found')
         if not profile.get('all_shifts') and row['owner'] != session['a']:
             raise HTTPException(403, 'Only the shift starter or management may close it')
-        if not row['report_saved_at']:
-            raise HTTPException(409, 'Generate and save the passdown report before ending this shift')
+        if not row['report_saved_at'] or not row['report_hash'] or not row['report_eml']:
+            raise HTTPException(409, 'Generate and save the authoritative Outlook passdown before ending this shift')
         conn.execute("""UPDATE shifts SET open=0, closed_at=?,closed_reason='completed'
                         WHERE id=?""",(datetime.now(TZ).isoformat(),session['s']))
     _set_cookie(response, session['a'], 0)
@@ -681,7 +685,9 @@ def end_shift(request: Request, response: Response):
 
 
 class ReportPayload(BaseModel):
-    content: str = Field(min_length=30, max_length=90000)
+    # Legacy browser text is intentionally ignored. The server builds a
+    # canonical report from saved shift work and drafts.
+    content: str | None = Field(default=None,max_length=90000)
 
 
 class AdminAddAssociate(BaseModel):
@@ -839,47 +845,53 @@ def admin_settings_save(payload: FacilitySettingsPayload, request: Request):
     })
 
 
+@app.get('/api/shifts/report/preview')
+def preview_shift_report(request: Request):
+    session,row=_report_access(request)
+    with _db() as conn:
+        report=v31_report_export.build(conn,row['id'],row['code'],row['shift_day'],PRIVATE)
+    return {'html':report['html'],'sha256':report['sha256'],
+            'attachments':report['attachments']}
+
+
 @app.post('/api/shifts/report')
 def save_shift_report(payload: ReportPayload, request: Request):
-    """Store a locally generated passdown before allowing a normal End Shift."""
+    """Generate and persist a canonical EML snapshot from DB, never client text."""
     _origin_check(request)
-    session, profile = who(request)
-    if not session['s']:
-        raise HTTPException(409, 'Choose a shift first')
-    now = datetime.now(TZ)
+    session,row=_report_access(request)
     with _db() as conn:
-        row = conn.execute("SELECT * FROM shifts WHERE id=? AND open=1",(session['s'],)).fetchone()
-        if row is None:
-            raise HTTPException(404, 'No active report selected')
-        day = date.fromisoformat(row['shift_day'])
-        if eligible_date(row['code'],now) != day:
-            raise HTTPException(409, 'Reporting window expired')
-        if not allowed(profile,row['code'],day,session['a']):
-            raise HTTPException(403, 'Shift access no longer authorized')
-        if not profile.get('all_shifts') and row['owner'] != session['a']:
-            raise HTTPException(403, 'Only the shift starter or management can save a report')
-        body = payload.content.strip()
-        if 'SHIFT HAPPENINGS' not in body or 'IND3' not in body:
-            raise HTTPException(422, 'Passdown content is missing required sections')
-        conn.execute("""UPDATE shifts SET report_content=?, report_saved_at=?, report_count=report_count+1
-                        WHERE id=?""",(body,now.isoformat(),session['s']))
-    return {'saved':True, 'shift_id':session['s'], 'saved_at':now.isoformat()}
+        report=v31_report_export.build(conn,row['id'],row['code'],row['shift_day'],PRIVATE)
+        conn.execute("""UPDATE shifts SET
+          report_content=?,report_html=?,report_eml=?,report_hash=?,
+          report_saved_at=?,report_count=report_count+1 WHERE id=?""",
+          (report['html'],report['html'],report['eml'],report['sha256'],
+           report['created_at'],row['id']))
+    return {'saved':True,'shift_id':row['id'],
+            'saved_at':report['created_at'],'sha256':report['sha256'],
+            'filename':report['filename'],'attachments':report['attachments']}
+
+
+@app.get('/api/shifts/report/download')
+def download_shift_report(request: Request):
+    _session,row=_report_access(request)
+    with _db() as conn:
+        saved=conn.execute('SELECT report_eml FROM shifts WHERE id=?',(row['id'],)).fetchone()
+    if not saved or not saved['report_eml']:
+        raise HTTPException(409, 'Generate and save a passdown before download')
+    filename=f"IND3_{row['code']}_{row['shift_day']}_Shift_Passdown.eml"
+    return Response(content=bytes(saved['report_eml']),media_type='message/rfc822',
+                    headers={'Content-Disposition':f'attachment; filename="{filename}"'})
 
 
 @app.get('/api/shifts/report')
 def read_shift_report(request: Request):
-    session, profile = who(request)
-    if not session['s']:
-        raise HTTPException(409, 'Choose a shift')
+    _session,row=_report_access(request)
     with _db() as conn:
-        row=conn.execute("SELECT * FROM shifts WHERE id=?",(session['s'],)).fetchone()
-    if row is None or not allowed(profile,row['code'],date.fromisoformat(row['shift_day']),session['a']):
-        raise HTTPException(404,'Shift not found')
-    if not profile.get('all_shifts') and row['owner'] != session['a']:
-        raise HTTPException(403,'Report belongs to another MST')
-    return {'content':row['report_content'], 'saved_at':row['report_saved_at'],
+        saved=conn.execute('SELECT report_content,report_saved_at,report_hash FROM shifts WHERE id=?',
+                           (row['id'],)).fetchone()
+    return {'content':saved['report_content'],
+            'saved_at':saved['report_saved_at'],'sha256':saved['report_hash'],
             'shift_id':row['id']}
-
 
 def _report_access(request: Request):
     session, profile = who(request)
@@ -901,8 +913,8 @@ def _report_access(request: Request):
 
 def _invalidate_passdown(conn,shift_id):
     # Edited data cannot be followed by End Shift until a new EML is saved.
-    conn.execute("UPDATE shifts SET report_saved_at='',report_content='' WHERE id=?",
-                 (shift_id,))
+    conn.execute("""UPDATE shifts SET report_saved_at='',report_content='',
+          report_html='',report_hash='',report_eml=X'' WHERE id=?""",(shift_id,))
 
 
 @app.get('/api/pm-needing-completion')
@@ -1056,6 +1068,8 @@ def reporting_draft(payload:ReportingDraft,request:Request):
     _origin_check(request)
     session,row=_report_access(request)
     content=payload.model_dump()
+    if content['loto'] and content['missingKeys']:
+        raise HTTPException(422,'LOTO cannot be verified while keys are marked missing')
     if sum(len(x) for x in content['vendors']+content['ro'])>15000:
         raise HTTPException(422,'Too much draft content')
     with _db() as conn:
@@ -1124,31 +1138,26 @@ def shift_history(request: Request, limit: int = 25, offset: int = 0):
 
 
 @app.get('/api/history/shifts/{shift_id}/eml')
-def shift_history_eml(shift_id: int, request: Request):
-    """Regenerate a historical shift's passdown .eml from what actually
-    persists (report_wo/report_pm + the autosaved draft) -- see
-    v31_reporting.build_passdown_html() for exactly what that reconstructs
-    and what it can't (nothing is fabricated for fields that were truly
-    never saved)."""
-    session, profile = who(request)
-    admin = bool(profile.get('all_shifts'))
+def shift_history_eml(shift_id:int,request:Request):
+    """Download the EXACT EML saved at report creation, never regenerate it."""
+    session,profile=who(request)
     with _db() as conn:
-        row = conn.execute('SELECT * FROM shifts WHERE id=?', (shift_id,)).fetchone()
-        if row is None:
-            raise HTTPException(404, 'Shift not found')
-        if not admin and row['owner'] != session['a']:
-            raise HTTPException(403, 'Not your shift')
-        body = v31_reporting.build_passdown_html(conn, shift_id, row['code'])
-    facility = v31_facility.public_fields(v31_facility.load(PRIVATE))
-    dc = facility.get('distribution_center') or 'IND3'
-    eml = ('To: ' + facility.get('recipients', '') + '\r\n'
-           'Subject: ' + dc + ' - ' + row['code'] + ' Shift Passdown - ' + row['shift_day'] + '\r\n'
-           'MIME-Version: 1.0\r\nContent-Type: text/html; charset=UTF-8\r\n'
-           'Content-Transfer-Encoding: 8bit\r\n\r\n' + body.replace('\n', '\r\n'))
-    filename = f"IND3_{row['code']}_{row['shift_day']}_Shift_Passdown.eml"
-    return Response(content=eml, media_type='message/rfc822',
-                     headers={'Content-Disposition': f'attachment; filename="{filename}"'})
-
+        row=conn.execute('SELECT * FROM shifts WHERE id=?',(shift_id,)).fetchone()
+        if not row:raise HTTPException(404,'Shift not found')
+        if not profile.get('all_shifts') and row['owner']!=session['a']:
+            raise HTTPException(403,'Not your shift')
+        if row['report_eml']:
+            content=bytes(row['report_eml'])
+        elif row['report_saved_at']:
+            # Old V3.1 history: fallback for records saved before this
+            # snapshot migration, never pretend this is a byte-identical copy.
+            content=v31_report_export.build(conn,shift_id,row['code'],
+                     row['shift_day'],PRIVATE)['eml']
+        else:
+            raise HTTPException(404,'No saved passdown for this shift')
+    filename=f"IND3_{row['code']}_{row['shift_day']}_Shift_Passdown.eml"
+    return Response(content=content,media_type='message/rfc822',
+                    headers={'Content-Disposition':f'attachment; filename="{filename}"'})
 
 class ManualOOSCreate(BaseModel):
     asset: str = Field(min_length=1, max_length=120)
