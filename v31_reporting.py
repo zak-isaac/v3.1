@@ -68,6 +68,24 @@ def _table(conn):
         conn.execute("ALTER TABLE report_wo ADD COLUMN ai_suggestion TEXT NOT NULL DEFAULT ''")
     if "ai_status" not in wo_columns:
         conn.execute("ALTER TABLE report_wo ADD COLUMN ai_status TEXT NOT NULL DEFAULT 'none'")
+    if "is_manual" not in wo_columns:
+        conn.execute("ALTER TABLE report_wo ADD COLUMN is_manual INTEGER NOT NULL DEFAULT 0")
+    if "reference_wo" not in wo_columns:
+        conn.execute("ALTER TABLE report_wo ADD COLUMN reference_wo TEXT NOT NULL DEFAULT ''")
+    if "carry_over" not in wo_columns:
+        conn.execute("ALTER TABLE report_wo ADD COLUMN carry_over INTEGER NOT NULL DEFAULT 0")
+    if "source_shift_id" not in wo_columns:
+        conn.execute("ALTER TABLE report_wo ADD COLUMN source_shift_id INTEGER")
+    if "manual_oos_id" not in wo_columns:
+        conn.execute("ALTER TABLE report_wo ADD COLUMN manual_oos_id INTEGER")
+    conn.execute("""CREATE TABLE IF NOT EXISTS carry_over_decisions(
+       id INTEGER PRIMARY KEY AUTOINCREMENT,
+       source_row_id INTEGER NOT NULL,
+       source_shift_id INTEGER NOT NULL,
+       target_shift_id INTEGER NOT NULL,
+       action TEXT NOT NULL,
+       actor TEXT NOT NULL,
+       acted_at TEXT NOT NULL)""")
     if "selection_hidden" not in wo_columns:
         conn.execute("ALTER TABLE report_wo ADD COLUMN selection_hidden INTEGER NOT NULL DEFAULT 0")
     if "source_techs_json" not in wo_columns:
@@ -361,7 +379,8 @@ def import_selection(conn, shift_id: int, shift_code: str, shift_day: str,
     selection_hidden=selection_restored=0
     for table in ("report_wo","report_pm"):
         for saved in conn.execute(
-            f"SELECT rowid AS row_key,tech,selection_hidden,source_techs_json FROM {table} WHERE shift_id=?",
+            f"SELECT rowid AS row_key,tech,selection_hidden,source_techs_json FROM {table} WHERE shift_id=?
+             {('AND is_manual=0' if table=='report_wo' else '')}",
             (shift_id,)).fetchall():
             try:
                 contributors=set(json.loads(saved["source_techs_json"] or "[]"))
@@ -423,7 +442,7 @@ def update_wo(conn,shift_id,wo_number,data:dict):
     permitted={"asset","category","cause","tech","remarks","status","excluded"}
     fields={k:v for k,v in data.items() if k in permitted}
     if not fields:raise ValueError("No supported work-order changes")
-    if row["status"]=="PENDING" and "status" in fields and fields["status"]!="PENDING":
+    if row["status"]=="PENDING" and not row["is_manual"] and "status" in fields and fields["status"]!="PENDING":
         raise ValueError("Pending Cetaris closure must be verified by a new Closed WO import; editing other fields is allowed")
     for k,v in fields.items():
         if k=="excluded":
@@ -436,6 +455,84 @@ def update_wo(conn,shift_id,wo_number,data:dict):
     conn.execute(f"UPDATE report_wo SET {setters},edited=1 WHERE id=?",
                  (*fields.values(),row["id"]))
     return True
+
+
+def add_manual_happening(conn,shift_id,*,asset,cause,remarks,category,status,technician,
+                         reference_wo='',source_shift_id=None,manual_oos_id=None):
+    """Record work discovered outside Cetaris, including proactive/PM findings.
+
+    Generated MANUAL identifiers are local record keys, not claimed Cetaris
+    work-order numbers. A real WO is only referenced when supplied.
+    """
+    import secrets
+    _table(conn)
+    if not asset.strip() or not cause.strip():
+        raise ValueError('Asset and description are required')
+    if category not in ('Breakdown','Process Interruption','Proactive Repair','Work Request'):
+        raise ValueError('Invalid manual work category')
+    if status not in ('RTS','OOS','PENDING'):
+        raise ValueError('Invalid manual equipment status')
+    wo='MANUAL-'+secrets.token_hex(6).upper()
+    now=_now()
+    conn.execute("""INSERT INTO report_wo
+      (shift_id,wo_number,asset,category,cause,tech,remarks,status,imported_at,
+       work_at,source_techs_json,is_manual,reference_wo,source_shift_id,manual_oos_id)
+      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+      (shift_id,wo,asset.strip()[:120],category,cause.strip()[:4000],
+       technician.strip()[:180],remarks.strip()[:5000],status,now,'','[]',
+       1,reference_wo.strip()[:100],source_shift_id,manual_oos_id))
+    return {'wo_number':wo,'reference_wo':reference_wo,'asset':asset,
+            'status':status,'category':category,'is_manual':True}
+
+
+def flag_carry_over(conn,shift_id,wo_number,enabled):
+    _table(conn)
+    row=conn.execute("SELECT id FROM report_wo WHERE shift_id=? AND wo_number=?",
+                     (shift_id,wo_number)).fetchone()
+    if not row:raise KeyError('Work order not found in selected shift')
+    conn.execute('UPDATE report_wo SET carry_over=? WHERE id=?',(int(bool(enabled)),row['id']))
+    return {'wo_number':wo_number,'carry_over':bool(enabled)}
+
+
+def available_carry_overs(conn,target_shift_id,target_day):
+    _table(conn)
+    rows=conn.execute("""SELECT r.id,r.shift_id,r.wo_number,r.asset,r.cause,r.remarks,r.status,
+        r.reference_wo,s.code,s.shift_day
+        FROM report_wo r JOIN shifts s ON s.id=r.shift_id
+        WHERE r.carry_over=1 AND r.excluded=0 AND r.selection_hidden=0
+        AND r.shift_id<>? AND s.open=0 AND s.shift_day<=?
+        ORDER BY s.shift_day DESC,r.id DESC LIMIT 75""",
+        (target_shift_id,target_day)).fetchall()
+    return [dict(row) for row in rows]
+
+
+def resolve_carry_over(conn,target_shift_id,target_day,source_row_id,action,actor):
+    _table(conn)
+    if action not in ('adopt','dismiss'):
+        raise ValueError('Invalid carry-over decision')
+    found={r['id']:r for r in available_carry_overs(conn,target_shift_id,target_day)}
+    row=found.get(source_row_id)
+    if not row:raise KeyError('Carry-over no longer available')
+    updated=conn.execute("UPDATE report_wo SET carry_over=0 WHERE id=? AND carry_over=1",
+                         (source_row_id,))
+    if updated.rowcount!=1:raise KeyError('Carry-over was already handled')
+    adopted=None
+    if action=='adopt':
+        # Adoption makes an explicit follow-up, NOT another completed WO
+        # and never automatically counts an old RTS as a new repair.
+        notes=('Carry-over from '+row['code']+' '+row['shift_day']+
+               ' · source WO '+(row['reference_wo'] or row['wo_number']))
+        if row['remarks']: notes+=' · '+row['remarks']
+        adopted=add_manual_happening(conn,target_shift_id,asset=row['asset'],
+               cause='Carry-over follow-up: '+row['cause'],remarks=notes,
+               category='Work Request',status='PENDING',technician=actor,
+               reference_wo=row['reference_wo'] or row['wo_number'],
+               source_shift_id=row['shift_id'])
+    conn.execute("""INSERT INTO carry_over_decisions(
+       source_row_id,source_shift_id,target_shift_id,action,actor,acted_at)
+       VALUES(?,?,?,?,?,?)""",
+       (source_row_id,row['shift_id'],target_shift_id,action,actor,_now()))
+    return {'action':action,'source_row_id':source_row_id,'adopted':adopted}
 
 
 def request_ai_rewrite(conn,shift_id,wo_number):
