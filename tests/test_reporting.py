@@ -653,6 +653,9 @@ def test_next_day_audit_migrates_previous_v31_schema_without_deleting_old_data(c
     clock(monkeypatch,day=26,hour=10)
     enter(client,"S1")
     with m._db() as db:
+        # Startup now eagerly initializes the current schema; reproduce an
+        # old database intentionally before exercising the migration path.
+        db.execute("DROP TABLE IF EXISTS report_audit")
         db.execute("""CREATE TABLE report_audit (
             shift_id INTEGER PRIMARY KEY,
             summary_json TEXT NOT NULL DEFAULT '{}',
