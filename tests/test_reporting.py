@@ -285,7 +285,7 @@ def test_flagged_carryover_requires_adoption_or_dismissal_after_previous_shift_e
                      json={'wo_number':wo,'enabled':True})
     assert flag.status_code==200
     assert client.post('/api/shifts/report',json={}).status_code==200
-    assert client.post('/api/shifts/end',json={}).status_code==200
+    assert client.post('/api/shifts/end',json={'acknowledge_warnings':True}).status_code==200
     client.post('/api/logout')
     clock(monkeypatch,day=26,hour=13)
     enter(client,'S2')
@@ -460,7 +460,7 @@ def test_draft_is_shift_scoped_and_wo_edit_invalidates_saved_passdown(client,mon
        json={"notes":"Waiting for a spare part","vendors":[],"ro":[],
              "loto":False,"missingKeys":[]}).status_code==200
     assert client.get("/api/me").json()["report_saved"] is False
-    assert client.post("/api/shifts/end").status_code==409
+    assert client.post("/api/shifts/end",json={"acknowledge_warnings":True}).status_code==409
     assert client.get("/api/reporting/state").json()["draft"]["notes"]=="Waiting for a spare part"
 
 
