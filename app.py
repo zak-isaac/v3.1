@@ -1125,6 +1125,8 @@ def oos_create(payload: ManualOOSCreate, request: Request):
             notes=payload.notes.strip(), logged_by=session['a'],
             logged_by_name=profile.get('name', 'Associate'), shift_id=session['s'],
             shift_code=shift['code'], now_iso=datetime.now(TZ).isoformat())
+        # New OOS information changes the outgoing passdown.
+        _invalidate_passdown(conn, session['s'])
     return record
 
 
@@ -1153,6 +1155,10 @@ def oos_mark_rts(oos_id: int, payload: ManualOOSResolve, request: Request):
             rts_by_name=profile.get('name', 'Associate'), shift_id=session['s'],
             shift_code=shift['code'], now_iso=datetime.now(TZ).isoformat(),
             notes=payload.notes.strip())
+        if error is None:
+            # A newly RTS asset must appear in a regenerated passdown before
+            # the shift can be ended.
+            _invalidate_passdown(conn, session['s'])
     if error == 'not_found':
         raise HTTPException(404, 'Record not found')
     if error == 'already_resolved':
