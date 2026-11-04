@@ -379,8 +379,8 @@ def import_selection(conn, shift_id: int, shift_code: str, shift_day: str,
     selection_hidden=selection_restored=0
     for table in ("report_wo","report_pm"):
         for saved in conn.execute(
-            f"SELECT rowid AS row_key,tech,selection_hidden,source_techs_json FROM {table} WHERE shift_id=?
-             {('AND is_manual=0' if table=='report_wo' else '')}",
+            f"SELECT rowid AS row_key,tech,selection_hidden,source_techs_json FROM {table} WHERE shift_id=? "
+            f"{'AND is_manual=0' if table=='report_wo' else ''}",
             (shift_id,)).fetchall():
             try:
                 contributors=set(json.loads(saved["source_techs_json"] or "[]"))
