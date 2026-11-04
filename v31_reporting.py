@@ -67,6 +67,15 @@ def _table(conn):
         conn.execute("ALTER TABLE report_wo ADD COLUMN ai_suggestion TEXT NOT NULL DEFAULT ''")
     if "ai_status" not in wo_columns:
         conn.execute("ALTER TABLE report_wo ADD COLUMN ai_status TEXT NOT NULL DEFAULT 'none'")
+    if "selection_hidden" not in wo_columns:
+        conn.execute("ALTER TABLE report_wo ADD COLUMN selection_hidden INTEGER NOT NULL DEFAULT 0")
+    if "source_techs_json" not in wo_columns:
+        conn.execute("ALTER TABLE report_wo ADD COLUMN source_techs_json TEXT NOT NULL DEFAULT '[]'")
+    pm_columns={r["name"] for r in conn.execute("PRAGMA table_info(report_pm)")}
+    if "selection_hidden" not in pm_columns:
+        conn.execute("ALTER TABLE report_pm ADD COLUMN selection_hidden INTEGER NOT NULL DEFAULT 0")
+    if "source_techs_json" not in pm_columns:
+        conn.execute("ALTER TABLE report_pm ADD COLUMN source_techs_json TEXT NOT NULL DEFAULT '[]'")
     if "work_at" not in wo_columns:
         # The actual work-evidence timestamp (latest of last_complete_at /
         # in_service_at / start_at) this WO was attributed on -- powers the
@@ -313,6 +322,10 @@ def import_selection(conn, shift_id: int, shift_code: str, shift_day: str,
         existing=conn.execute("SELECT id,edited FROM report_wo WHERE shift_id=? AND wo_number=?",
                               (shift_id,wo)).fetchone()
         if existing and existing["edited"]:
+            # Keep deliberate manual wording, but refresh the source
+            # contributors so removing a technician can still hide the WO.
+            conn.execute("UPDATE report_wo SET source_techs_json=? WHERE id=?",
+                         (_json(row["techs"]),existing["id"]))
             preserved+=1
             continue
         fields=(row["asset"],row["category"],row["cause"],
@@ -320,24 +333,47 @@ def import_selection(conn, shift_id: int, shift_code: str, shift_day: str,
         work_at=wo_work_at[wo].isoformat() if wo in wo_work_at else ""
         if existing:
             conn.execute("""UPDATE report_wo SET asset=?,category=?,cause=?,tech=?,
-                remarks=?,status=?,imported_at=?,work_at=? WHERE id=?""",
-                (*fields,now,work_at,existing["id"]))
+                remarks=?,status=?,imported_at=?,work_at=?,source_techs_json=?
+                WHERE id=?""",
+                (*fields,now,work_at,_json(row["techs"]),existing["id"]))
             updated+=1
         else:
             conn.execute("""INSERT INTO report_wo
-               (shift_id,wo_number,asset,category,cause,tech,remarks,status,imported_at,work_at)
-               VALUES(?,?,?,?,?,?,?,?,?,?)""",(shift_id,wo,*fields,now,work_at))
+               (shift_id,wo_number,asset,category,cause,tech,remarks,status,imported_at,work_at,source_techs_json)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?)""",(shift_id,wo,*fields,now,work_at,_json(row["techs"])))
             added+=1
     for wo,row in pm_by_wo.items():
         owned=_existing_elsewhere(conn,shift_id,wo,'RTS')
         if owned is not None:
             ignored.append({"wo_number":wo,"reason":"PM already recorded in shift #"+str(owned)})
             continue
-        conn.execute("""INSERT INTO report_pm(shift_id,wo_number,asset,tech,completed_at)
-             VALUES(?,?,?,?,?) ON CONFLICT(shift_id,wo_number) DO UPDATE SET
-             asset=excluded.asset,tech=excluded.tech""",
-             (shift_id,wo,row["asset"],"; ".join(row["techs"]),now))
+        conn.execute("""INSERT INTO report_pm(shift_id,wo_number,asset,tech,completed_at,source_techs_json)
+             VALUES(?,?,?,?,?,?) ON CONFLICT(shift_id,wo_number) DO UPDATE SET
+             asset=excluded.asset,tech=excluded.tech,
+             source_techs_json=excluded.source_techs_json""",
+             (shift_id,wo,row["asset"],"; ".join(row["techs"]),now,_json(row["techs"])))
         pm_count+=1
+    # Reconcile the CURRENT technician selection against cumulative records,
+    # including older WOs missing from this replacement export. Never erase
+    # original work history or override an MST's deliberate Exclude choice.
+    # source_techs_json is provenance, not the report owner's name.
+    selection_hidden=selection_restored=0
+    for table in ("report_wo","report_pm"):
+        for saved in conn.execute(
+            f"SELECT rowid,tech,selection_hidden,source_techs_json FROM {table} WHERE shift_id=?",
+            (shift_id,)).fetchall():
+            try:
+                contributors=set(json.loads(saved["source_techs_json"] or "[]"))
+            except (ValueError,TypeError):
+                contributors=set()
+            if not contributors:
+                contributors={x.strip() for x in saved["tech"].split(";") if x.strip()}
+            hidden=int(bool(contributors) and not bool(contributors & selected))
+            if hidden != saved["selection_hidden"]:
+                conn.execute(f"UPDATE {table} SET selection_hidden=? WHERE rowid=?",
+                             (hidden,saved["rowid"]))
+                if hidden: selection_hidden+=1
+                else: selection_restored+=1
     # Completed non-PM records are pending a specific MST confirmation.
     completed=set()
     for r in accepted:
@@ -358,6 +394,7 @@ def import_selection(conn, shift_id: int, shift_code: str, shift_day: str,
     next_day=_next_day_work_orders(
         all_rows,shift_day,selected,persisted_numbers,saved_pm_numbers,pending,ignored)
     summary.update({"added":added,"updated":updated,"preserved_edits":preserved,
+                    "selection_hidden":selection_hidden,"selection_restored":selection_restored,
                     "pm_wos_this_import":pm_count,"selected_technicians":len(selected),
                     "pending_review":len(pending),"ignored":len(ignored),
                     "staged_rows":len(all_rows),
@@ -479,7 +516,9 @@ def get_state(conn,shift_id,shift_code=None,shift_day=None):
     rows=[dict(x) for x in conn.execute(
         "SELECT * FROM report_wo WHERE shift_id=? ORDER BY id",(shift_id,))]
     for r in rows:
-        r["excluded"]=bool(r["excluded"])
+        r["manual_excluded"]=bool(r["excluded"])
+        r["selection_hidden"]=bool(r["selection_hidden"])
+        r["excluded"]=r["manual_excluded"] or r["selection_hidden"]
         # Display/report-only spelling cleanup (V3 spelling_fix, ported
         # unchanged). The DB row above is never modified by this -- the
         # Cetaris-original/MST-edited text stays the row of record, and
@@ -491,7 +530,8 @@ def get_state(conn,shift_id,shift_code=None,shift_day=None):
         r["cause"]=spelling_fix.correct_spelling(r["cause"])
         r["remarks"]=spelling_fix.correct_spelling(r["remarks"])
     pm=[dict(x) for x in conn.execute(
-        "SELECT * FROM report_pm WHERE shift_id=? ORDER BY wo_number",(shift_id,))]
+        "SELECT * FROM report_pm WHERE shift_id=? AND selection_hidden=0 ORDER BY wo_number",
+        (shift_id,))]
     tech=conn.execute("SELECT selected_json FROM report_techs WHERE shift_id=?",(shift_id,)).fetchone()
     audit=conn.execute("SELECT * FROM report_audit WHERE shift_id=?",(shift_id,)).fetchone()
     stage_data=stage_details(conn,shift_id)
