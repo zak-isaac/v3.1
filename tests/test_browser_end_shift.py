@@ -114,6 +114,8 @@ def test_end_shift_button_really_closes_the_shift_server_side(live_server):
 
         page.locator("#end-shift").click()
         page.locator("#modal-actions .btn-end").wait_for(timeout=10000)
+        if page.locator("#v31-end-ack").count():
+            page.locator("#v31-end-ack").check()
         with page.expect_response(lambda r: "/api/shifts/end" in r.url) as response_info:
             page.locator("#modal-actions .btn-end").click()
         response = response_info.value
