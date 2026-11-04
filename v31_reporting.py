@@ -726,6 +726,17 @@ def build_passdown_html(conn, shift_id, shift_code):
 
     rts = [f'<strong>{esc(r["asset"])}</strong> &mdash; Returned to Service' for r in inc if r["status"] == "RTS"]
     oos = [f'<strong>{esc(r["asset"])}</strong>' for r in inc if r["status"] == "OOS"]
+    # Current globally-open manually reported equipment is included in the
+    # current shift's canonical report snapshot. Snapshot bytes will never
+    # change retroactively after the equipment is returned to service.
+    seen_oos={r["asset"].strip().casefold() for r in inc if r["status"]=="OOS"}
+    for record in v31_oos.list_records(conn,open_only=True):
+        asset=record["asset"].strip()
+        if asset.casefold() not in seen_oos:
+            oos.append(f'<strong>{esc(asset)}</strong>'
+                       f'{(" — "+esc(record["cause"])) if record["cause"] else ""} '
+                       '(manually reported)')
+            seen_oos.add(asset.casefold())
     # Manually-reported Breakdown/OOS (no Cetaris WO behind it at all).
     # Historical regeneration only shows what was resolved *during this
     # specific shift* (a stable fact tied to rts_shift_id) -- never the
