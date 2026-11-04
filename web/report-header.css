@@ -32,7 +32,7 @@
 .shift-header{
   display:grid;grid-template-columns:minmax(0,1fr) minmax(200px,290px);
   grid-template-rows:auto auto auto;align-items:center;
-  gap:13px 18px;min-height:0;padding:16px 18px;
+  gap:8px 18px;min-height:0;padding:10px 16px;
 }
 .shift-header .progress-area{
   grid-column:2;grid-row:1;min-width:0;width:100%;border-left:0;
@@ -63,18 +63,18 @@
 .v31-header-actions{
   grid-column:1/-1;grid-row:2;
   display:flex;align-items:center;justify-content:space-between;
-  gap:10px;flex-wrap:wrap;
-  padding-top:12px;border-top:1px solid var(--line);
+  gap:8px;flex-wrap:wrap;
+  padding-top:7px;border-top:1px solid var(--line);
 }
-.v31-header-actions-group{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.v31-header-actions-group{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
 .v31-header-actions .btn{
-  border-radius:8px;min-height:40px;font-size:12px;
-  padding:9px 13px;font-weight:750;white-space:nowrap;
+  border-radius:7px;min-height:33px;font-size:11px;
+  padding:7px 11px;font-weight:750;white-space:nowrap;
 }
 #replace-file.v31-cetaris-primary{
   color:#fff;background:#bf2534;border:1px solid #a71c2b;
   box-shadow:0 2px 7px #981c2635;
-  font-size:12px;font-weight:820;
+  font-size:11px;font-weight:820;
 }
 #replace-file.v31-cetaris-primary .icon{color:#fff}
 #replace-file.v31-cetaris-primary:hover{background:#a81b2b;box-shadow:0 3px 9px #981c2650}
