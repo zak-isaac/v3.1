@@ -1,0 +1,41 @@
+"""Canonical, immutable backend-authored V3.1 shift report and EML.
+
+Never trust browser-generated report text as the archived source of truth.
+Preview, saved download and Shift History share this serialized snapshot.
+"""
+from __future__ import annotations
+
+from email.message import EmailMessage
+from email.policy import SMTP
+from datetime import datetime
+from zoneinfo import ZoneInfo
+import hashlib
+
+import v31_reporting
+import v31_facility
+import v31_pm_needing_completion as pm_needs
+
+TZ=ZoneInfo("America/Indiana/Indianapolis")
+
+def build(conn,shift_id,shift_code,shift_day,private):
+    html=v31_reporting.build_passdown_html(conn,shift_id,shift_code)
+    settings=v31_facility.public_fields(v31_facility.load(private))
+    dc=settings.get('distribution_center') or 'IND3'
+    subject=f'{dc} - {shift_code} Shift Passdown - {shift_day}'
+    msg=EmailMessage(policy=SMTP)
+    msg['Subject']=subject
+    recipients=[a.strip() for a in (settings.get('recipients') or '').split(',') if a.strip()]
+    if recipients:
+        msg['To']=', '.join(recipients)
+    msg.set_content(f'{dc} {shift_code} End of Shift Passdown. Open the HTML part of this message.')
+    msg.add_alternative(html,subtype='html')
+    attached=pm_needs.get(conn,shift_id,include_data=True)
+    if attached['present']:
+        msg.add_attachment(attached['file_data'],maintype='application',
+                           subtype='octet-stream',filename=attached['filename'])
+    eml=msg.as_bytes()
+    return {'html':html,'eml':eml,'sha256':hashlib.sha256(eml).hexdigest(),
+            'filename':f'IND3_{shift_code}_{shift_day}_Shift_Passdown.eml',
+            'created_at':datetime.now(TZ).isoformat(),
+            'subject':subject,
+            'attachments':[attached['filename']] if attached['present'] else []}
