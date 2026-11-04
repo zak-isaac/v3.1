@@ -140,6 +140,21 @@ def test_manual_oos_requires_report_inside_shift_window(client, monkeypatch):
     assert client.get('/api/oos').status_code == 409
 
 
+def test_manual_oos_changes_invalidate_previous_passdown_before_end_shift(client, monkeypatch):
+    clock(monkeypatch, day=26, hour=13)
+    enter(client, 'S1')
+    draft = 'IND3 S1 SHIFT HAPPENINGS: Verified shift passdown before OOS.'
+    assert client.post('/api/shifts/report',json={'content':draft}).status_code == 200
+    oos = client.post('/api/oos',json={'asset':'TEST-001'})
+    assert oos.status_code == 200
+    assert client.post('/api/shifts/end').status_code == 409
+    assert client.post('/api/shifts/report',json={'content':draft}).status_code == 200
+    assert client.post(f"/api/oos/{oos.json()['id']}/rts",json={}).status_code == 200
+    assert client.post('/api/shifts/end').status_code == 409
+    assert client.post('/api/shifts/report',json={'content':draft}).status_code == 200
+    assert client.post('/api/shifts/end').status_code == 200
+
+
 def test_resolved_manual_oos_appears_in_regenerated_historical_eml(client, monkeypatch):
     clock(monkeypatch, day=26, hour=10)
     shift_id = enter(client, "S1")
