@@ -659,10 +659,17 @@ def save_draft(conn,shift_id,data):
     conn.execute("""CREATE TABLE IF NOT EXISTS report_drafts(
        shift_id INTEGER PRIMARY KEY, body_json TEXT NOT NULL,updated_at TEXT NOT NULL)""")
     payload={k:data.get(k) for k in ("vendors","ro","notes","loto","missingKeys")}
+    existing=conn.execute("SELECT body_json FROM report_drafts WHERE shift_id=?",
+                          (shift_id,)).fetchone()
+    # Repeated autosave/Preview/EML generation must not invalidate an
+    # unchanged authoritative snapshot or increase meaningless revisions.
+    if existing and json.loads(existing["body_json"])==payload:
+        return False
     conn.execute("""INSERT INTO report_drafts(shift_id,body_json,updated_at)
       VALUES(?,?,?) ON CONFLICT(shift_id) DO UPDATE SET
       body_json=excluded.body_json,updated_at=excluded.updated_at""",
       (shift_id,_json(payload),_now()))
+    return True
 
 
 def get_draft(conn,shift_id):
