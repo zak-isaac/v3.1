@@ -450,7 +450,7 @@ def test_next_day_opened_wo_is_audited_without_work_or_close(client,monkeypatch)
     assert item["included_in_shift"] is False
 
 
-def test_drax_preselects_matching_shift_msts_but_not_other_technicians(client,monkeypatch,tmp_path):
+def test_drax_preselects_any_assigned_active_tech_not_only_msts(client,monkeypatch,tmp_path):
     import csv
     import v31_roster
     clock(monkeypatch,day=26,hour=10)
@@ -475,8 +475,9 @@ def test_drax_preselects_matching_shift_msts_but_not_other_technicians(client,mo
     assert suggestions["Synthetic, A"]["match_reason"] is None
     assert suggestions["Synthetic B"]["group"]=="other_shift"
     assert suggestions["Synthetic B"]["preselected"] is False
-    assert suggestions["Synthetic C"]["group"]=="unmatched"
-    assert "not marked MST" in suggestions["Synthetic C"]["match_reason"]
+    assert suggestions["Synthetic C"]["group"]=="assigned"
+    assert suggestions["Synthetic C"]["preselected"] is True
+    assert suggestions["Synthetic C"]["match_reason"] is None
     assert suggestions["Unknown Fourth"]["group"]=="unmatched"
     assert "No Drax associate" in suggestions["Unknown Fourth"]["match_reason"]
     assert all("number" not in t for t in suggestions.values())
@@ -505,7 +506,7 @@ def test_technician_suggestions_explains_every_unmatched_case():
     suggestions={t["name"]:t for t in v31_reporting.technician_suggestions(source,roster_rows,"S1")}
     # Two active MST Drax records share this name -- never silently guess which one.
     assert suggestions["Dup Person"]["group"]=="unmatched"
-    assert "Multiple active MST" in suggestions["Dup Person"]["match_reason"]
+    assert "Multiple active Drax" in suggestions["Dup Person"]["match_reason"]
     # Matches a real Drax record, but that record is inactive.
     assert suggestions["Inactive Tech"]["group"]=="unmatched"
     assert "inactive" in suggestions["Inactive Tech"]["match_reason"]
