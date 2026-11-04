@@ -13,8 +13,6 @@
   };
   let context;
   try {context=await request('/api/me');}catch(e){return;}
-  const reportTitle=document.querySelector('.shift-heading h1');
-  const originalTitle=reportTitle?.textContent||'Shift Report';
   const reportText=$('.footer-tip span');
   if(reportText) reportText.textContent='Work orders and notes are saved to the selected V3.1 shift.';
   const username=$('#v31-user-name');
@@ -49,7 +47,6 @@
       if(spans[1]) spans[1].textContent=fmtTime(context.selected.scheduled_start)+' – '+fmtTime(context.selected.scheduled_end);
       if(spans[2]) spans[2].textContent='Reporting window closes '+fmtTime(context.selected.closes_at);
     }
-    if(reportTitle) reportTitle.textContent=context.selected?`${context.selected.code} Shift Report`:originalTitle;
   };
   async function signout(){
     try{await request('/api/logout',{});}
