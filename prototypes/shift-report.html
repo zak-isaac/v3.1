@@ -202,17 +202,79 @@
         </div>
       </section>
 <section id="v31-analytics-screen" class="v31-analytics" hidden aria-label="Reliability analytics">
-        <div class="v31-analytics-head"><div><span class="v31-analytics-eyebrow">IND3 · RELIABILITY INTELLIGENCE</span><h1>Reliability Analytics</h1><p>Real shift-report evidence · no estimated downtime, MTTR or fabricated performance figures</p></div>
-          <div class="v31-analytics-filters"><label for="v31-analytics-period">Reporting period</label><select id="v31-analytics-period"><option value="7d">Past 7 days</option><option value="30d" selected>Past 30 days</option><option value="90d">Past 90 days</option><option value="all">All records</option></select><button class="v31-analytics-refresh" type="button" id="v31-analytics-refresh">Refresh</button></div>
-        </div>
+        <header class="v31-analytics-head">
+          <div><span class="v31-analytics-eyebrow">IND3 / RELIABILITY OPERATIONS</span>
+            <h1>Reliability Analytics</h1>
+            <p>Actual Cetaris work orders and V3.1 report records. No estimated downtime or invented reliability percentages.</p>
+          </div>
+          <div class="v31-analytics-filters">
+            <label for="v31-analytics-period">Period</label>
+            <select id="v31-analytics-period" aria-label="Analytics reporting period">
+              <option value="7d">7 days</option><option value="30d" selected>30 days</option>
+              <option value="90d">90 days</option><option value="all">All records</option>
+            </select>
+            <button class="v31-analytics-refresh" type="button" id="v31-analytics-refresh">Refresh</button>
+          </div>
+        </header>
         <p id="v31-analytics-scope" class="v31-analytics-scope">Loading recorded shift metrics…</p>
-        <div class="v31-analytics-kpis" id="v31-analytics-kpis" aria-live="polite"></div>
-        <div class="v31-analytics-grid">
-          <section class="v31-analytics-panel"><header><div><h2>Work Orders by Shift</h2><p>S1–S5, based on saved and included entries</p></div></header><div class="v31-analytics-bars" id="v31-analytics-shifts"></div></section>
-          <section class="v31-analytics-panel"><header><div><h2>Work Categories</h2><p>Breakdown, interruption, proactive and other recorded work</p></div></header><div class="v31-analytics-bars" id="v31-analytics-categories"></div></section>
-          <section class="v31-analytics-panel v31-analytics-panel-wide"><header><div><h2>Workload Over Time</h2><p>Shift-start dates: included WO and completed PM counts</p></div></header><div class="v31-analytics-trend" id="v31-analytics-trend"></div></section>
-          <section class="v31-analytics-panel v31-analytics-panel-wide"><header><div><h2>Report Quality &amp; Source Notes</h2><p>Transparency about what the records can and cannot establish</p></div></header><div id="v31-analytics-notes" class="v31-analytics-notes"></div></section>
-        </div>
+        <section class="v31-analytics-section" aria-labelledby="v31-maint-heading">
+          <div class="v31-analytics-section-head">
+            <div><span class="v31-analytics-section-index">01 / DAILY OPERATIONS</span>
+              <h2 id="v31-maint-heading">Maintenance Performance</h2>
+              <p>Five essential numbers. Reported work, completed PMs and unresolved closures.</p>
+            </div>
+          </div>
+          <div class="v31-analytics-kpis" id="v31-analytics-kpis" aria-live="polite"></div>
+          <div class="v31-analytics-grid">
+            <section class="v31-analytics-panel">
+              <header><div><h3>Work Categories</h3><p>Recorded Breakdown, Proactive Repair, Interruption and Work Request entries</p></div></header>
+              <div class="v31-analytics-bars" id="v31-analytics-categories"></div>
+            </section>
+            <section class="v31-analytics-panel">
+              <header><div><h3>Workload Over Time</h3><p>By shift start date · Reported WOs and completed PMs</p></div></header>
+              <div class="v31-analytics-trend-wrap" id="v31-analytics-trend"></div>
+            </section>
+          </div>
+        </section>
+        <section class="v31-analytics-section" aria-labelledby="v31-equipment-heading">
+          <div class="v31-analytics-section-head">
+            <div><span class="v31-analytics-section-index">02 / ASSET HISTORY</span>
+              <h2 id="v31-equipment-heading">Equipment Reliability</h2>
+              <p>Which assets have the most distinct repair WOs, and which have recurring breakdowns?</p>
+            </div>
+          </div>
+          <div class="v31-analytics-grid">
+            <section class="v31-analytics-panel">
+              <header><div><h3>Most Repaired Assets</h3><p>Unique WOs per asset, deduplicated across shift handovers</p></div></header>
+              <div id="v31-analytics-assets"></div>
+            </section>
+            <section class="v31-analytics-panel">
+              <header><div><h3>Repeat Breakdown Assets</h3><p>Two or more distinct Breakdown WOs on the same asset</p></div></header>
+              <div id="v31-analytics-repeats"></div>
+            </section>
+            <section class="v31-analytics-panel v31-analytics-panel-wide">
+              <header><div><h3>Most Reported Breakdown Descriptions</h3><p>Exact descriptions from work orders, not automatically diagnosed root causes</p></div></header>
+              <div class="v31-analytics-bars" id="v31-analytics-causes"></div>
+            </section>
+          </div>
+        </section>
+        <section class="v31-analytics-section" aria-labelledby="v31-shift-heading">
+          <div class="v31-analytics-section-head">
+            <div><span class="v31-analytics-section-index">03 / REPORTING &amp; HANDOVER</span>
+              <h2 id="v31-shift-heading">Shift Performance</h2>
+              <p>Compare S1–S5 work volumes and passdown completion without ranking individual technicians.</p>
+            </div>
+          </div>
+          <section class="v31-analytics-panel">
+            <header><div><h3>Shift Comparison</h3><p>Shift report entries by code, including unresolved work and saved passdowns</p></div></header>
+            <div id="v31-analytics-shifts"></div>
+          </section>
+          <section class="v31-analytics-panel v31-analytics-panel-notes">
+            <header><div><h3>Report Quality &amp; Data Notes</h3>
+              <p>Passdown coverage, import exceptions and limitations of the Excel-based evidence</p></div></header>
+            <div id="v31-analytics-notes" class="v31-analytics-notes"></div>
+          </section>
+        </section>
         <p id="v31-analytics-error" class="v31-analytics-error" role="alert" hidden></p>
       </section>
             <div id="placeholder-screen" hidden><div class="placeholder-card"><span class="placeholder-icon"><svg class="icon"><use href="#i-stack"/></svg></span><h1 id="placeholder-title">Shift History</h1><p id="placeholder-description">This screen is planned for a later frontend phase. For now, we're developing the approved Shift Report screen.</p><button id="back-to-report" class="btn btn-primary">Back to Shift Report</button></div></div>
@@ -428,7 +490,7 @@ async function reviewCarryOvers(){
       '<p>No flagged carry-overs from completed earlier shifts.</p>';
     showModal('Review Carry-overs','Adopting creates a follow-up entry, not a falsely completed WO.',content,[
       {text:'Close',onClick:closeModal}],{wide:true});
-    $('#modal-body [data-action]').forEach(button=>button.addEventListener('click',async()=>{
+    $$('#modal-body [data-action]').forEach(button=>button.addEventListener('click',async()=>{
       button.disabled=true;
       try{
         const data=await v31ReportPost('/api/reporting/carryovers/decision',{
@@ -630,7 +692,7 @@ const keyGrid=$('#missing-keys');for(let i=1;i<=20;i++){const label=document.cre
 $('#loto-keys-toggle').addEventListener('click',()=>{const area=$('#loto-select-area');const open=area.hidden;area.hidden=!open;$('#loto-keys-toggle').setAttribute('aria-expanded',String(open));});
 $('#preview-report').addEventListener('click',previewReport);$('#generate-eml').addEventListener('click',emlDownload);$('#end-shift').addEventListener('click',confirmEnd);
 function navTo(page){
-  $('.nav-link').forEach(b=>b.classList.toggle('selected',b.dataset.nav===page));
+  $$('.nav-link').forEach(b=>b.classList.toggle('selected',b.dataset.nav===page));
   $('#report-screen').hidden=page!=='report';
   $('#placeholder-screen').hidden=true;
   $('#v31-admin-screen').hidden=page!=='admin';

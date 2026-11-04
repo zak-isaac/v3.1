@@ -71,6 +71,13 @@ def test_real_browser_manual_pm_breakdown_passdown_and_end_shift(live_server):
         state=page.evaluate("""async () => (await (await fetch(
             '/api/reporting/state',{credentials:'same-origin'})).json())""")
         assert any(row['asset']=='VOIDFILL-UI' and row['is_manual'] for row in state['rows'])
+        # Navigate the actual Analytics page and require the manually entered
+        # asset to appear from the backend, never hardcoded demo figures.
+        page.locator('[data-nav="analytics"]').click()
+        page.locator('#v31-equipment-heading').wait_for(timeout=10000)
+        page.locator('#v31-analytics-assets').get_by_text('VOIDFILL-UI').wait_for(timeout=10000)
+        assert page.locator('#v31-analytics-kpis .v31-analytics-kpi').count()==5
+        page.locator('[data-nav="report"]').click()
 
         # PM needing completion: an actual file, not just a preview filename.
         pm_csv=chr(10).join(['WO Number,PM Due Date,Asset #',
