@@ -18,6 +18,7 @@ import ai_remark_rewriter
 import html as _html
 import spelling_fix
 import v31_oos
+import v31_pm_needing_completion as v31_pm
 
 TZ=ZoneInfo("America/Indiana/Indianapolis")
 
@@ -540,6 +541,7 @@ def get_state(conn,shift_id,shift_code=None,shift_day=None):
     evening_morning=(evening_morning_counts(rows,shift_code,shift_day)
                      if shift_code and shift_day else {"applicable":False})
     return {"rows":rows,"pms":pm,"pm_count":len(pm),
+            "pm_needing_completion":v31_pm.get(conn,shift_id),
             "technicians":json.loads(tech["selected_json"]) if tech else [],
             "stage":stage_data,
             "audit":{"summary":json.loads(audit["summary_json"]) if audit else {},
@@ -648,12 +650,9 @@ def build_passdown_html(conn, shift_id, shift_code):
         label = "Missing key" + ("s" if len(missing_keys) > 1 else "")
         missing_html = (f'<p style="color:#c00;margin:2px 0;font-size:14px;font-family:Calibri,Arial,sans-serif;">'
                         f'<strong>{label}:</strong> {esc(", ".join(missing_keys))}</p>')
-    # V3.1 does not yet have the real pending-PM data source wired -- see
-    # buildEmailHtml()'s matching comment. Same honest "not shown", not a
-    # fabricated "none pending".
-    pm_html = ('<p style="margin:16px 0 2px;"><strong style="font-size:16px;">PM\'s Needing to be Completed</strong></p>'
-               '<p style="margin:0 0 6px;font-size:14px;color:#6b7280;font-style:italic;">'
-               'Pending-PM tracking is not yet connected in V3.1 -- not shown.</p>')
+    # The separate V2-style PM report is NOT the regular Completed PM
+    # work-order count and must not be inferred from In Process Cetaris WOs.
+    pm_html = v31_pm.report_section(conn,shift_id)
     vendors = [esc(v) for v in (draft.get("vendors") or [])]
     ro = [esc(v) for v in (draft.get("ro") or [])]
     return (
