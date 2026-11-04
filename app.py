@@ -1118,13 +1118,9 @@ def oos_create(payload: ManualOOSCreate, request: Request):
     record itself is global -- visible to every signed-in associate, not
     scoped to this shift or this MST."""
     _origin_check(request)
-    session, profile = who(request)
-    if not session['s']:
-        raise HTTPException(409, 'Choose a shift first')
+    session, shift = _report_access(request)
+    profile = roster()[session['a']]
     with _db() as conn:
-        shift = conn.execute('SELECT code FROM shifts WHERE id=?', (session['s'],)).fetchone()
-        if shift is None:
-            raise HTTPException(409, 'Shift not found')
         record = v31_oos.create(conn, asset=payload.asset.strip(), cause=payload.cause.strip(),
             notes=payload.notes.strip(), logged_by=session['a'],
             logged_by_name=profile.get('name', 'Associate'), shift_id=session['s'],
@@ -1137,7 +1133,7 @@ def oos_list(request: Request):
     """Currently-open manual OOS records (global, every associate sees the
     same list) plus this session's own shift's resolved-this-shift list
     (for that shift's own passdown RTS section and tab confirmation UI)."""
-    session, profile = who(request)
+    session, _shift = _report_access(request)
     with _db() as conn:
         open_items = v31_oos.list_records(conn, open_only=True)
         resolved_this_shift = v31_oos.resolved_this_shift(conn, session['s']) if session['s'] else []
@@ -1150,13 +1146,9 @@ def oos_mark_rts(oos_id: int, payload: ManualOOSResolve, request: Request):
     whoever logged it -- the actual fix might come from a different shift
     or a different technician entirely than whoever first logged it down."""
     _origin_check(request)
-    session, profile = who(request)
-    if not session['s']:
-        raise HTTPException(409, 'Choose a shift first')
+    session, shift = _report_access(request)
+    profile = roster()[session['a']]
     with _db() as conn:
-        shift = conn.execute('SELECT code FROM shifts WHERE id=?', (session['s'],)).fetchone()
-        if shift is None:
-            raise HTTPException(409, 'Shift not found')
         record, error = v31_oos.mark_rts(conn, oos_id, rts_by=session['a'],
             rts_by_name=profile.get('name', 'Associate'), shift_id=session['s'],
             shift_code=shift['code'], now_iso=datetime.now(TZ).isoformat(),
