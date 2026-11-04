@@ -801,6 +801,25 @@ def build_passdown_html(conn, shift_id, shift_code):
                         f'<strong>{label}:</strong> {esc(", ".join(missing_keys))}</p>')
     # The separate V2-style PM report is NOT the regular Completed PM
     # work-order count and must not be inferred from In Process Cetaris WOs.
+    # Explicitly hand unfinished repairs and flagged carry-overs to the next
+    # shift. Do not imply an unresolved WO or in-process breakdown is RTS.
+    followups=[]
+    for record in inc:
+        status=record["status"]
+        carry=bool(record.get("carry_over"))
+        if status!="PENDING" and not carry:
+            continue
+        context=[]
+        if status=="PENDING":context.append("Pending completion / closure")
+        if carry:context.append("Flagged for shift handover")
+        ref=record.get("reference_wo") or record["wo_number"]
+        followups.append(f'<strong>{esc(record["asset"] or "Asset unspecified")}</strong> '
+                         f'(WO# {esc(ref)}) — {esc(record["cause"] or "Follow-up required")}: '
+                         f'{esc("; ".join(context))}')
+    review_items=state["audit"]["pending"]
+    if review_items:
+        followups.append(f'<strong>{len(review_items)} import audit item(s) need review.</strong> '
+                         'See the saved Cetaris Import Audit before closing the shift.')
     pm_html = v31_pm.report_section(conn,shift_id)
     vendors = [esc(v) for v in (draft.get("vendors") or [])]
     ro = [esc(v) for v in (draft.get("ro") or [])]
@@ -810,6 +829,7 @@ def build_passdown_html(conn, shift_id, shift_code):
         f'<p style="margin:0 0 18px;font-size:18px;"><strong>{esc(shift_code)} End of Shift Passdown</strong></p>'
         + sec("Vendors", bullet_list(vendors))
         + sec("Shift Happenings", "".join(happenings) if happenings else "<p>None</p>")
+        + sec("Open Follow-ups / Shift Carry-overs", bullet_list(followups))
         + sec("Reliable Operations", bullet_list(ro))
         + pm_html
         + sec("Out of Service &mdash; Returned to Service (RTS)", bullet_list(rts))
