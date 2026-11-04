@@ -490,7 +490,7 @@ async function reviewCarryOvers(){
       '<p>No flagged carry-overs from completed earlier shifts.</p>';
     showModal('Review Carry-overs','Adopting creates a follow-up entry, not a falsely completed WO.',content,[
       {text:'Close',onClick:closeModal}],{wide:true});
-    $('#modal-body [data-action]').forEach(button=>button.addEventListener('click',async()=>{
+    $$('#modal-body [data-action]').forEach(button=>button.addEventListener('click',async()=>{
       button.disabled=true;
       try{
         const data=await v31ReportPost('/api/reporting/carryovers/decision',{
@@ -692,7 +692,7 @@ const keyGrid=$('#missing-keys');for(let i=1;i<=20;i++){const label=document.cre
 $('#loto-keys-toggle').addEventListener('click',()=>{const area=$('#loto-select-area');const open=area.hidden;area.hidden=!open;$('#loto-keys-toggle').setAttribute('aria-expanded',String(open));});
 $('#preview-report').addEventListener('click',previewReport);$('#generate-eml').addEventListener('click',emlDownload);$('#end-shift').addEventListener('click',confirmEnd);
 function navTo(page){
-  $('.nav-link').forEach(b=>b.classList.toggle('selected',b.dataset.nav===page));
+  $$('.nav-link').forEach(b=>b.classList.toggle('selected',b.dataset.nav===page));
   $('#report-screen').hidden=page!=='report';
   $('#placeholder-screen').hidden=true;
   $('#v31-admin-screen').hidden=page!=='admin';
