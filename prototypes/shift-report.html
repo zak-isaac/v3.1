@@ -315,7 +315,7 @@ function pmTab(){
 }
 function breakdownTab(){
   const items=state.rows.filter(r=>!r.excluded&&(r.status==='OOS'||r.category==='Breakdown'));
-  return `<div class="secondary-pane"><div id="v31-manual-oos-root">Loading breakdown/OOS records&hellip;</div>
+  return `<div class="secondary-pane"><div id="v31-breakdown-lifecycle">Loading V3 Breakdown lifecycle…</div><div id="v31-manual-oos-root">Loading breakdown/OOS records&hellip;</div>
     <div class="pane-header"><div><h3>From Cetaris Import</h3><p>Tracked automatically from imported work orders.</p></div></div><div class="item-list">${items.length ? items.map(r=>`<div class="item-card"><div><strong>${esc(r.asset)} · WO# ${esc(r.wo)}</strong><small>${esc(r.cause)}</small></div><span class="status-pill ${r.status.toLowerCase()}">${esc(r.status)}</span></div>`).join('') : '<p class="field-help">No breakdown or OOS records imported yet.</p>'}</div></div>`;
 }
 function renderTab(){ $$('.tab').forEach(t=>{const yes=t.dataset.tab===selectedTab;t.classList.toggle('current',yes);t.setAttribute('aria-selected',String(yes));});$('#tab-content').innerHTML= selectedTab==='happenings'?workTab():selectedTab==='pm'?pmTab():selectedTab==='breakdown'?breakdownTab():listPane(selectedTab);if(selectedTab==='happenings'){
