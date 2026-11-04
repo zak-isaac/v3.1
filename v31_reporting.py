@@ -60,6 +60,8 @@ def _table(conn):
         # Older V3.1 records already imported by technician selection keep their status.
         conn.execute("""UPDATE report_stage SET applied_at=uploaded_at
             WHERE EXISTS(SELECT 1 FROM report_techs t WHERE t.shift_id=report_stage.shift_id)""")
+    if "prior_techs_json" not in stage_columns:
+        conn.execute("ALTER TABLE report_stage ADD COLUMN prior_techs_json TEXT NOT NULL DEFAULT '[]'")
     # Phase 2: AI rewrite review state. ai_status is one of 'none' | 'suggested'
     # | 'accepted' | 'rejected'. Accepting a suggestion reuses the existing
     # `edited` flag (see accept_ai_rewrite()) so the reimport-preservation
@@ -118,11 +120,17 @@ def stage(conn, shift_id, payload: bytes, filename: str, actor: str):
     stats={}
     rows=parse_excel(payload,stats)
     filename=Path(filename.replace("\\","/")).name[:120] or "cetaris.xlsx"
-    conn.execute("""INSERT INTO report_stage(shift_id,filename,raw_json,stats_json,uploaded_by,uploaded_at,applied_at)
-        VALUES(?,?,?,?,?,?,NULL) ON CONFLICT(shift_id) DO UPDATE SET
+    previous=conn.execute("SELECT raw_json,applied_at FROM report_stage WHERE shift_id=?",
+                          (shift_id,)).fetchone()
+    prior_names=([p["name"] for p in technician_counts(json.loads(previous["raw_json"]))]
+                 if previous and previous["applied_at"] else [])
+    conn.execute("""INSERT INTO report_stage
+        (shift_id,filename,raw_json,stats_json,uploaded_by,uploaded_at,applied_at,prior_techs_json)
+        VALUES(?,?,?,?,?,?,NULL,?) ON CONFLICT(shift_id) DO UPDATE SET
         filename=excluded.filename,raw_json=excluded.raw_json,stats_json=excluded.stats_json,
-        uploaded_by=excluded.uploaded_by,uploaded_at=excluded.uploaded_at,applied_at=NULL""",
-        (shift_id,filename,_json(rows),_json(stats),actor,_now()))
+        uploaded_by=excluded.uploaded_by,uploaded_at=excluded.uploaded_at,applied_at=NULL,
+        prior_techs_json=excluded.prior_techs_json""",
+        (shift_id,filename,_json(rows),_json(stats),actor,_now(),_json(prior_names)))
     return {"filename":filename,"technicians":technician_counts(rows),
             "stats":stats,"staged":True,"requires_selection":True}
 
@@ -131,11 +139,13 @@ def stage_details(conn, shift_id):
     _table(conn)
     stage_row=conn.execute("SELECT * FROM report_stage WHERE shift_id=?",(shift_id,)).fetchone()
     if not stage_row:
-        return {"staged":False,"imported":False,"filename":"","technicians":[],"stats":{}}
+        return {"staged":False,"imported":False,"filename":"","technicians":[],"stats":{},
+                "prior_stage_technicians":[]}
     rows=json.loads(stage_row["raw_json"])
     return {"staged":True,"imported":bool(stage_row["applied_at"]),
             "filename":stage_row["filename"],
             "technicians":technician_counts(rows),
+            "prior_stage_technicians":json.loads(stage_row["prior_techs_json"] or "[]"),
             "stats":json.loads(stage_row["stats_json"])}
 
 
@@ -339,13 +349,18 @@ def import_selection(conn, shift_id: int, shift_code: str, shift_day: str,
         if owned is not None:
             ignored.append({"wo_number":wo,"reason":"Already recorded in V3.1 shift #"+str(owned)})
             continue
-        existing=conn.execute("SELECT id,edited FROM report_wo WHERE shift_id=? AND wo_number=?",
+        existing=conn.execute("SELECT id,edited,status FROM report_wo WHERE shift_id=? AND wo_number=?",
                               (shift_id,wo)).fetchone()
         if existing and existing["edited"]:
             # Keep deliberate manual wording, but refresh the source
             # contributors so removing a technician can still hide the WO.
-            conn.execute("UPDATE report_wo SET source_techs_json=? WHERE id=?",
-                         (_json(row["techs"]),existing["id"]))
+            # A later verified Cetaris Closed event must release a prior
+            # PENDING closure even if remarks were edited manually. Preserve
+            # human wording, category, exclusion and deliberate OOS holds.
+            new_status=("RTS" if existing["status"]=="PENDING" and row["status"]=="RTS"
+                        else existing["status"])
+            conn.execute("UPDATE report_wo SET source_techs_json=?,status=? WHERE id=?",
+                         (_json(row["techs"]),new_status,existing["id"]))
             preserved+=1
             continue
         fields=(row["asset"],row["category"],row["cause"],
