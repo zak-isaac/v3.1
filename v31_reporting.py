@@ -802,6 +802,13 @@ def build_passdown_html(conn, shift_id, shift_code):
         if asset.casefold() not in global_open:
             oos.append(f'<strong>{esc(asset)}</strong> — Breakdown WO# {esc(entry["wo_number"])} (awaiting RTS)')
             global_open.add(asset.casefold())
+    for held in v31_breakdown.overview(conn,shift_id)["holds"]:
+        asset=held["asset"].strip()
+        if asset.casefold() not in global_open:
+            reason=held["reason"].strip()
+            oos.append(f'<strong>{esc(asset)}</strong> — Manual OOS hold'
+                       + (f': {esc(reason)}' if reason else ''))
+            global_open.add(asset.casefold())
     for event in v31_breakdown.overview(conn,shift_id)["resolved_this_shift"]:
         rts.append(f'<strong>{esc(event["asset"])}</strong> — Breakdown WO# {esc(event["wo_number"])} RTS')
 
