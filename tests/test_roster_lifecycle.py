@@ -70,7 +70,8 @@ def test_drax_roster_sync_and_manager_visibility(client, monkeypatch):
     records = {r["number"]:r for r in data["associates"]}
     assert records["111111"]["is_mst"]
     assert not records["333333"]["is_mst"]
-    assert sign(client,"333333").status_code == 401
+    assert sign(client,"333333").status_code == 200
+    assert client.get('/api/me').json()['role'] == 'technician'
 
 
 def test_drax_reload_inserts_updates_and_disables_removed_rows(client, tmp_path, monkeypatch):
@@ -107,7 +108,8 @@ def test_manager_edit_survives_drax_reload(client, monkeypatch):
     reset=client.post("/api/admin/roster/override",
                       json={"number":"333333","reset":True})
     assert reset.status_code == 200
-    assert "333333" not in m.roster()
+    assert "333333" in m.roster()
+    assert m.roster()["333333"]["is_mst"] is False
 
 
 def test_management_can_add_manual_mst_not_in_drax(client,monkeypatch):
@@ -132,7 +134,7 @@ def test_regular_mst_cannot_use_management_endpoints(client,monkeypatch):
       json={"number":"222222","full_name":"Denied"}).status_code == 403
 
 
-def test_overtime_disabled_and_mst_locked_to_drax_shift(client, monkeypatch):
+def test_legacy_overtime_endpoints_disabled_and_mst_locked_without_grant(client, monkeypatch):
     freeze(monkeypatch, at())
     sign(client)
     # Deprecated routes must not authorize additional-shift access.
@@ -285,12 +287,15 @@ def test_legacy_and_v31_drax_environment_overrides(tmp_path, monkeypatch):
     assert roster_module._source(tmp_path)[0]==specific
 
 
-def test_new_database_has_no_overtime_schema(client):
+def test_approved_overtime_is_isolated_from_legacy_schema(client):
     with m._db() as db:
         tables={row["name"] for row in db.execute(
             "SELECT name FROM sqlite_master WHERE type='table'")}
         columns={row["name"] for row in db.execute("PRAGMA table_info(shifts)")}
     assert "overtime_grants" not in tables
+    assert "mst_overtime_grants" in tables
+    assert "shift_owner_transfers" in tables
+    assert "owner_role" in columns
     assert "is_ot" not in columns
 
 
