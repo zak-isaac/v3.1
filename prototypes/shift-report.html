@@ -272,16 +272,16 @@ function rowDetail(id){const r=state.rows.find(r=>r.id===id);showModal(`Work Ord
 function listPane(kind){let list=kind==='vendors'?state.vendors:state.ro;let title=kind==='vendors'?'Vendor Activity':'RO / Work Requests';return `<div class="secondary-pane"><div class="pane-header"><div><h3>${title}</h3><p>Items entered manually for this shift's final report.</p></div><button class="btn btn-primary" id="add-list-entry">+ Add ${kind==='vendors'?'Vendor':'RO'}</button></div><div class="item-list">${list.length?list.map((t,i)=>`<div class="item-card"><div><strong>${esc(t)}</strong><small>Manual reporting entry</small></div><button class="btn btn-light btn-small" data-list-edit="${i}">Edit</button></div>`).join(''):'<p>No entries have been added for this shift.</p>'}</div></div>`;}
 function pmTab(){
   const needed=state.pmNeeds||{present:false,count:0,rows:[]};
-  const completed=state.pms.length?state.pms.map(r=>\`<div class="item-card"><div><strong>\${esc(r.asset||'Asset not specified')} · WO# \${esc(r.wo_number)}</strong><small>\${esc(r.tech||'')}</small></div><span class="status-pill rts">Completed</span></div>\`).join(''):'<p class="field-help">No completed PMs imported yet.</p>';
-  const toDo=(needed.rows||[]).map(r=>\`<div class="item-card"><div><strong>\${esc(r.asset_num||'Asset not specified')} · WO# \${esc(r.wo_number)}</strong><small>Due: \${esc(r.pm_due_date||'not provided')}, Promise: \${esc(r.promise_date||'not provided')}</small></div><span class="status-pill pending">Needs completion</span></div>\`).join('');
+  const completed=state.pms.length?state.pms.map(r=>`<div class="item-card"><div><strong>${esc(r.asset||'Asset not specified')} · WO# ${esc(r.wo_number)}</strong><small>${esc(r.tech||'')}</small></div><span class="status-pill rts">Completed</span></div>`).join(''):'<p class="field-help">No completed PMs imported yet.</p>';
+  const toDo=(needed.rows||[]).map(r=>`<div class="item-card"><div><strong>${esc(r.asset_num||'Asset not specified')} · WO# ${esc(r.wo_number)}</strong><small>Due: ${esc(r.pm_due_date||'not provided')}, Promise: ${esc(r.promise_date||'not provided')}</small></div><span class="status-pill pending">Needs completion</span></div>`).join('');
   const missing=needed.present?(needed.parsed?'No PM rows in the uploaded file.':'Reference file saved; details not machine-parsed.'):'No PMs Needing Completion file uploaded yet.';
-  return \`<div class="secondary-pane">
-    <div class="pane-header"><div><h3>Completed PMs · \${state.pmCount}</h3><p>From the completed-work-order Cetaris import.</p></div></div>
-    <div class="item-list">\${completed}</div>
-    <div class="pane-header"><div><h3>PMs Needing Completion · \${needed.count||0}</h3><p>Separate V2-style file; not inferred from In Process WOs.</p></div></div>
-    \${needed.present?'<p>Uploaded: '+esc(needed.filename)+'</p>':''}
-    <div class="item-list">\${toDo||'<p class="field-help">'+missing+'</p>'}</div>
-  </div>\`;
+  return `<div class="secondary-pane">
+    <div class="pane-header"><div><h3>Completed PMs · ${state.pmCount}</h3><p>From the completed-work-order Cetaris import.</p></div></div>
+    <div class="item-list">${completed}</div>
+    <div class="pane-header"><div><h3>PMs Needing Completion · ${needed.count||0}</h3><p>Separate V2-style file; not inferred from In Process WOs.</p></div></div>
+    ${needed.present?'<p>Uploaded: '+esc(needed.filename)+'</p>':''}
+    <div class="item-list">${toDo||'<p class="field-help">'+missing+'</p>'}</div>
+  </div>`;
 }
 function breakdownTab(){
   const items=state.rows.filter(r=>!r.excluded&&(r.status==='OOS'||r.category==='Breakdown'));
