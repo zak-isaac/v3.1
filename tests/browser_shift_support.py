@@ -25,9 +25,9 @@ def shift_for_browser(now=None):
             start=datetime.combine(day,time(*a),tzinfo=TZ)
             end=datetime.combine(day,time(*b),tzinfo=TZ)
             if end<=start:end+=timedelta(days=1)
-            # A new passdown can be opened an hour before shift start,
-            # but not after scheduled end. Require at least one minute left.
-            if start-timedelta(hours=1)<=now<end-timedelta(minutes=1):
+            # For work-attribution browser tests require an actually begun
+            # shift, not merely a prestart login grace. Start before end.
+            if start<=now<end-timedelta(minutes=1):
                 possible.append(((end-now).total_seconds(),code))
     if not possible:raise RuntimeError("No shift available for browser integration test")
     return max(possible)[1]
