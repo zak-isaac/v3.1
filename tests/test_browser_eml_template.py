@@ -152,7 +152,7 @@ def test_eml_download_uses_v3_html_template_with_corrected_spelling(live_server)
     assert "End of Shift Passdown" in content
     assert "Shift Happenings" in content
     assert "Reliable Operations" in content
-    assert "Needing to be Completed" in content
+    assert "PMs Needing Completion" in content
     assert "Returned to Service (RTS)" in content
     assert "Current Out of Service" in content
 
