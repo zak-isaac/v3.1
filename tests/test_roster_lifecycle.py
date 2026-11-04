@@ -204,7 +204,9 @@ def test_report_required_before_ending_and_saved_in_correct_shift(client,monkeyp
     report="IND3 S2 SHIFT HAPPENINGS: no work orders on this shift. Verified for passdown."
     saved=client.post("/api/shifts/report",json={"content":report})
     assert saved.status_code==200, saved.text
-    assert client.get("/api/shifts/report").json()["content"]==report
+    generated=client.get("/api/shifts/report").json()["content"]
+    assert "<html>" in generated and "S2 End of Shift Passdown" in generated
+    assert generated!=report  # Caller-supplied text must never be archived as truth.
     ended=client.post("/api/shifts/end",json={})
     assert ended.status_code==200, ended.text
     assert ended.json()["shift_id"]==s2
