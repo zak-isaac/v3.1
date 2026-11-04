@@ -33,4 +33,18 @@ def shift_for_browser(now=None):
     return max(possible)[1]
 
 def local_work_time():
-    return datetime.now(TZ).strftime("%Y-%m-%d %H:%M")
+    """A deterministic *in-shift work evidence* time for synthetic Cetaris.
+
+    Avoid transient S1/S2 and S4/S5 overlaps and avoid misattributing an
+    otherwise valid work order when GitHub CI happens to run at handover.
+    This is test data; it does not override the application's real clock.
+    """
+    now=datetime.now(TZ)
+    shift=shift_for_browser(now)
+    start_date=now.date()
+    start,end,weekdays=RULES[shift]
+    if start>end and now.time()<time(*end):
+        start_date-=timedelta(days=1)
+    sample={"S1":time(8,30),"S2":time(17,0),"S3":time(23,0),
+            "S4":time(10,0),"S5":time(23,0)}[shift]
+    return datetime.combine(start_date,sample).strftime("%Y-%m-%d %H:%M")
