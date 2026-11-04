@@ -35,6 +35,7 @@ jobs:
 
   windows-backend:
     runs-on: windows-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -49,6 +50,7 @@ jobs:
 
   browser:
     runs-on: ubuntu-latest
+    timeout-minutes: 7
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
