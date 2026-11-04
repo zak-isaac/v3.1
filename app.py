@@ -33,6 +33,7 @@ import v31_oos
 import v31_pm_needing_completion as v31_pm
 import v31_report_export
 import v31_analytics
+import v31_breakdown
 import ai_remark_rewriter
 
 ROOT = Path(__file__).resolve().parent
@@ -1126,6 +1127,50 @@ def reporting_ai_reject(wo_number:str,request:Request):
         except KeyError as exc:
             raise HTTPException(404,str(exc))
     return {'rejected':True}
+
+
+@app.get('/api/breakdowns')
+def breakdown_status(request:Request):
+    _session,row=_report_access(request)
+    with _db() as conn:
+        return v31_breakdown.overview(conn,row['id'])
+
+
+class BreakdownDecision(BaseModel):
+    decision:Literal['rts','keep_oos']
+
+
+@app.post('/api/breakdowns/{wo_number}/decision')
+def breakdown_decision(wo_number:str,payload:BreakdownDecision,request:Request):
+    """V3 Completed Breakdown requires explicit RTS/keep-OOS confirmation."""
+    _origin_check(request)
+    session,row=_report_access(request)
+    try:
+        with _db() as conn:
+            result=v31_breakdown.decide(conn,wo_number,payload.decision,
+                                         row['id'],session['a'])
+            _invalidate_passdown(conn,row['id'])
+    except KeyError as exc:
+        raise HTTPException(409,str(exc))
+    return result
+
+
+class BreakdownHold(BaseModel):
+    asset: str = Field(min_length=1,max_length=120)
+    enabled: bool = True
+    reason: str = Field(default='',max_length=500)
+
+
+@app.post('/api/breakdowns/hold')
+def breakdown_hold(payload:BreakdownHold,request:Request):
+    """Explicit manual OOS hold; a later Cetaris Closed WO may not undo it."""
+    _origin_check(request)
+    session,row=_report_access(request)
+    with _db() as conn:
+        data=v31_breakdown.hold(conn,payload.asset.strip(),payload.enabled,
+                                 session['a'],payload.reason.strip())
+        _invalidate_passdown(conn,row['id'])
+    return data
 
 
 class ManualHappening(BaseModel):
