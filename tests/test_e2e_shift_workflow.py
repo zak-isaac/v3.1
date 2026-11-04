@@ -108,10 +108,11 @@ def test_full_s1_journey_login_through_end_shift(client, tmp_path, monkeypatch):
     saved = client.post("/api/shifts/report", json={"content": report_text})
     assert saved.status_code == 200, saved.text
     read_back = client.get("/api/shifts/report")
-    assert read_back.json()["content"] == report_text
+    assert "8001" in read_back.json()["content"] and "8003" in read_back.json()["content"]
+    assert "<html>" in read_back.json()["content"]  # Server-generated, not caller-supplied text
 
     # --- Phase 6: End Shift must actually close the session server-side
-    ended = client.post("/api/shifts/end", json={})
+    ended = client.post("/api/shifts/end",json={"acknowledge_warnings":True})
     assert ended.status_code == 200, ended.text
 
     # Re-login as the same MST: no shift should resume/auto-reopen today
@@ -152,7 +153,7 @@ def test_s3_overnight_journey_uses_correct_shift_day_throughout(client, tmp_path
     saved = client.post("/api/shifts/report",
         json={"content": "IND3 S3 SHIFT HAPPENINGS: WO# 9101 RTS overnight."})
     assert saved.status_code == 200, saved.text
-    ended = client.post("/api/shifts/end", json={})
+    ended = client.post("/api/shifts/end",json={"acknowledge_warnings":True})
     assert ended.status_code == 200, ended.text
 
 
@@ -179,4 +180,4 @@ def test_s5_weekend_journey_uses_friday_start_date(client, tmp_path, monkeypatch
     saved = client.post("/api/shifts/report",
         json={"content": "IND3 S5 SHIFT HAPPENINGS: WO# 9201 RTS."})
     assert saved.status_code == 200, saved.text
-    assert client.post("/api/shifts/end", json={}).status_code == 200
+    assert client.post("/api/shifts/end",json={"acknowledge_warnings":True}).status_code == 200

@@ -18,11 +18,31 @@ import ai_remark_rewriter
 import html as _html
 import spelling_fix
 import v31_oos
+import v31_pm_needing_completion as v31_pm
+import v31_breakdown
 
 TZ=ZoneInfo("America/Indiana/Indianapolis")
 
 
 def _table(conn):
+    # This module is called by several concurrent browser requests on first
+    # page load. Only run SQLite DDL/migrations when an old schema actually
+    # needs them; repeated executescript() commits and schema locks can race
+    # an in-flight Cetaris upload and occasionally return HTTP 500.
+    expected={
+        "report_stage":{"applied_at","prior_techs_json"},
+        "report_techs":{"selected_json"},
+        "report_wo":{"ai_status","is_manual","selection_hidden","source_techs_json","work_at"},
+        "report_pm":{"selection_hidden","source_techs_json"},
+        "report_audit":{"next_day_json"},
+        "carry_over_decisions":{"id"}
+    }
+    current={r["name"] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'")}
+    if all(table in current and columns.issubset({
+        r["name"] for r in conn.execute(f"PRAGMA table_info({table})")
+    }) for table,columns in expected.items()):
+        return
     conn.executescript("""
     CREATE TABLE IF NOT EXISTS report_stage (
       shift_id INTEGER PRIMARY KEY, filename TEXT NOT NULL,
@@ -58,6 +78,8 @@ def _table(conn):
         # Older V3.1 records already imported by technician selection keep their status.
         conn.execute("""UPDATE report_stage SET applied_at=uploaded_at
             WHERE EXISTS(SELECT 1 FROM report_techs t WHERE t.shift_id=report_stage.shift_id)""")
+    if "prior_techs_json" not in stage_columns:
+        conn.execute("ALTER TABLE report_stage ADD COLUMN prior_techs_json TEXT NOT NULL DEFAULT '[]'")
     # Phase 2: AI rewrite review state. ai_status is one of 'none' | 'suggested'
     # | 'accepted' | 'rejected'. Accepting a suggestion reuses the existing
     # `edited` flag (see accept_ai_rewrite()) so the reimport-preservation
@@ -67,6 +89,33 @@ def _table(conn):
         conn.execute("ALTER TABLE report_wo ADD COLUMN ai_suggestion TEXT NOT NULL DEFAULT ''")
     if "ai_status" not in wo_columns:
         conn.execute("ALTER TABLE report_wo ADD COLUMN ai_status TEXT NOT NULL DEFAULT 'none'")
+    if "is_manual" not in wo_columns:
+        conn.execute("ALTER TABLE report_wo ADD COLUMN is_manual INTEGER NOT NULL DEFAULT 0")
+    if "reference_wo" not in wo_columns:
+        conn.execute("ALTER TABLE report_wo ADD COLUMN reference_wo TEXT NOT NULL DEFAULT ''")
+    if "carry_over" not in wo_columns:
+        conn.execute("ALTER TABLE report_wo ADD COLUMN carry_over INTEGER NOT NULL DEFAULT 0")
+    if "source_shift_id" not in wo_columns:
+        conn.execute("ALTER TABLE report_wo ADD COLUMN source_shift_id INTEGER")
+    if "manual_oos_id" not in wo_columns:
+        conn.execute("ALTER TABLE report_wo ADD COLUMN manual_oos_id INTEGER")
+    conn.execute("""CREATE TABLE IF NOT EXISTS carry_over_decisions(
+       id INTEGER PRIMARY KEY AUTOINCREMENT,
+       source_row_id INTEGER NOT NULL,
+       source_shift_id INTEGER NOT NULL,
+       target_shift_id INTEGER NOT NULL,
+       action TEXT NOT NULL,
+       actor TEXT NOT NULL,
+       acted_at TEXT NOT NULL)""")
+    if "selection_hidden" not in wo_columns:
+        conn.execute("ALTER TABLE report_wo ADD COLUMN selection_hidden INTEGER NOT NULL DEFAULT 0")
+    if "source_techs_json" not in wo_columns:
+        conn.execute("ALTER TABLE report_wo ADD COLUMN source_techs_json TEXT NOT NULL DEFAULT '[]'")
+    pm_columns={r["name"] for r in conn.execute("PRAGMA table_info(report_pm)")}
+    if "selection_hidden" not in pm_columns:
+        conn.execute("ALTER TABLE report_pm ADD COLUMN selection_hidden INTEGER NOT NULL DEFAULT 0")
+    if "source_techs_json" not in pm_columns:
+        conn.execute("ALTER TABLE report_pm ADD COLUMN source_techs_json TEXT NOT NULL DEFAULT '[]'")
     if "work_at" not in wo_columns:
         # The actual work-evidence timestamp (latest of last_complete_at /
         # in_service_at / start_at) this WO was attributed on -- powers the
@@ -89,11 +138,17 @@ def stage(conn, shift_id, payload: bytes, filename: str, actor: str):
     stats={}
     rows=parse_excel(payload,stats)
     filename=Path(filename.replace("\\","/")).name[:120] or "cetaris.xlsx"
-    conn.execute("""INSERT INTO report_stage(shift_id,filename,raw_json,stats_json,uploaded_by,uploaded_at,applied_at)
-        VALUES(?,?,?,?,?,?,NULL) ON CONFLICT(shift_id) DO UPDATE SET
+    previous=conn.execute("SELECT raw_json,applied_at FROM report_stage WHERE shift_id=?",
+                          (shift_id,)).fetchone()
+    prior_names=([p["name"] for p in technician_counts(json.loads(previous["raw_json"]))]
+                 if previous and previous["applied_at"] else [])
+    conn.execute("""INSERT INTO report_stage
+        (shift_id,filename,raw_json,stats_json,uploaded_by,uploaded_at,applied_at,prior_techs_json)
+        VALUES(?,?,?,?,?,?,NULL,?) ON CONFLICT(shift_id) DO UPDATE SET
         filename=excluded.filename,raw_json=excluded.raw_json,stats_json=excluded.stats_json,
-        uploaded_by=excluded.uploaded_by,uploaded_at=excluded.uploaded_at,applied_at=NULL""",
-        (shift_id,filename,_json(rows),_json(stats),actor,_now()))
+        uploaded_by=excluded.uploaded_by,uploaded_at=excluded.uploaded_at,applied_at=NULL,
+        prior_techs_json=excluded.prior_techs_json""",
+        (shift_id,filename,_json(rows),_json(stats),actor,_now(),_json(prior_names)))
     return {"filename":filename,"technicians":technician_counts(rows),
             "stats":stats,"staged":True,"requires_selection":True}
 
@@ -102,11 +157,13 @@ def stage_details(conn, shift_id):
     _table(conn)
     stage_row=conn.execute("SELECT * FROM report_stage WHERE shift_id=?",(shift_id,)).fetchone()
     if not stage_row:
-        return {"staged":False,"imported":False,"filename":"","technicians":[],"stats":{}}
+        return {"staged":False,"imported":False,"filename":"","technicians":[],"stats":{},
+                "prior_stage_technicians":[]}
     rows=json.loads(stage_row["raw_json"])
     return {"staged":True,"imported":bool(stage_row["applied_at"]),
             "filename":stage_row["filename"],
             "technicians":technician_counts(rows),
+            "prior_stage_technicians":json.loads(stage_row["prior_techs_json"] or "[]"),
             "stats":json.loads(stage_row["stats_json"])}
 
 
@@ -209,17 +266,12 @@ def _next_day_work_orders(rows, shift_day, selected, imported, pms, pending, ign
 
 
 def technician_suggestions(source_techs, roster_rows, shift_code):
-    """Suggest a V3-style technician selection from Drax, without inferring overtime.
+    """Preselect every uniquely matched active Drax associate on this shift.
 
-    Match normalized complete names (First Last / Last, First) exactly.
-    Never send employee identifiers to the reporting browser.
-    A duplicate/ambiguous Drax match is listed as unmatched, not preselected.
-
-    Every result carries a `match_reason` explaining why a technician was NOT
-    preselected (None when they were) -- a Job Title that isn't literally
-    "MST", a name spelled differently than Cetaris, an inactive record, or a
-    duplicate name are otherwise invisible to the MST and just show up as a
-    wall of unchecked boxes with no explanation.
+    Import preselection is based on the Drax-assigned shift, NEVER the
+    associate who opened the report or a literal MST Job Title.
+    Exact normalized name matching protects against accidental ownership;
+    ambiguous, unmatched and inactive people remain unchecked.
     """
     by_name={}
     by_name_any={}
@@ -228,7 +280,7 @@ def technician_suggestions(source_techs, roster_rows, shift_code):
         if not key:
             continue
         by_name_any.setdefault(key,[]).append(person)
-        if person.get('active') and person.get('is_mst'):
+        if person.get('active'):
             by_name.setdefault(key,[]).append(person)
     result=[]
     for tech in source_techs:
@@ -237,7 +289,7 @@ def technician_suggestions(source_techs, roster_rows, shift_code):
         matches=by_name.get(key,[])
         match=matches[0] if len(matches)==1 else None
         assigned=match.get('shift') if match else None
-        group=('assigned' if assigned == shift_code else
+        group=('assigned' if assigned==shift_code else
                'other_shift' if assigned else 'unmatched')
         reason=None
         if group=='unmatched':
@@ -245,11 +297,11 @@ def technician_suggestions(source_techs, roster_rows, shift_code):
             if not any_matches:
                 reason='No Drax associate with this name was found.'
             elif len(matches)>1:
-                reason='Multiple active MST Drax records share this name; confirm manually.'
-            elif not any(m.get('is_mst') for m in any_matches):
-                reason='Found in Drax, but their Job Title is not marked MST.'
-            elif not any(m.get('active') for m in any_matches):
+                reason='Multiple active Drax records share this name; confirm manually.'
+            elif not any(p.get('active') for p in any_matches):
                 reason='Found in Drax, but the record is inactive.'
+            elif match and not assigned:
+                reason='Active Drax record has no assigned shift.'
             else:
                 reason='Drax record found but could not be confirmed automatically.'
         result.append({'name':name,'count':tech['count'],
@@ -257,7 +309,6 @@ def technician_suggestions(source_techs, roster_rows, shift_code):
                        'preselected':group=='assigned',
                        'match_reason':reason})
     return result
-
 
 def import_selection(conn, shift_id: int, shift_code: str, shift_day: str,
                      technicians: list[str], closure_reviews: dict[str,str] | None = None,
@@ -316,9 +367,18 @@ def import_selection(conn, shift_id: int, shift_code: str, shift_day: str,
         if owned is not None:
             ignored.append({"wo_number":wo,"reason":"Already recorded in V3.1 shift #"+str(owned)})
             continue
-        existing=conn.execute("SELECT id,edited FROM report_wo WHERE shift_id=? AND wo_number=?",
+        existing=conn.execute("SELECT id,edited,status FROM report_wo WHERE shift_id=? AND wo_number=?",
                               (shift_id,wo)).fetchone()
         if existing and existing["edited"]:
+            # Keep deliberate manual wording, but refresh the source
+            # contributors so removing a technician can still hide the WO.
+            # A later verified Cetaris Closed event must release a prior
+            # PENDING closure even if remarks were edited manually. Preserve
+            # human wording, category, exclusion and deliberate OOS holds.
+            new_status=("RTS" if existing["status"]=="PENDING" and row["status"]=="RTS"
+                        else existing["status"])
+            conn.execute("UPDATE report_wo SET source_techs_json=?,status=? WHERE id=?",
+                         (_json(row["techs"]),new_status,existing["id"]))
             preserved+=1
             continue
         fields=(row["asset"],row["category"],row["cause"],
@@ -326,24 +386,52 @@ def import_selection(conn, shift_id: int, shift_code: str, shift_day: str,
         work_at=wo_work_at[wo].isoformat() if wo in wo_work_at else ""
         if existing:
             conn.execute("""UPDATE report_wo SET asset=?,category=?,cause=?,tech=?,
-                remarks=?,status=?,imported_at=?,work_at=? WHERE id=?""",
-                (*fields,now,work_at,existing["id"]))
+                remarks=?,status=?,imported_at=?,work_at=?,source_techs_json=?
+                WHERE id=?""",
+                (*fields,now,work_at,_json(row["techs"]),existing["id"]))
             updated+=1
         else:
             conn.execute("""INSERT INTO report_wo
-               (shift_id,wo_number,asset,category,cause,tech,remarks,status,imported_at,work_at)
-               VALUES(?,?,?,?,?,?,?,?,?,?)""",(shift_id,wo,*fields,now,work_at))
+               (shift_id,wo_number,asset,category,cause,tech,remarks,status,imported_at,work_at,source_techs_json)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?)""",(shift_id,wo,*fields,now,work_at,_json(row["techs"])))
             added+=1
     for wo,row in pm_by_wo.items():
         owned=_existing_elsewhere(conn,shift_id,wo,'RTS')
         if owned is not None:
             ignored.append({"wo_number":wo,"reason":"PM already recorded in shift #"+str(owned)})
             continue
-        conn.execute("""INSERT INTO report_pm(shift_id,wo_number,asset,tech,completed_at)
-             VALUES(?,?,?,?,?) ON CONFLICT(shift_id,wo_number) DO UPDATE SET
-             asset=excluded.asset,tech=excluded.tech""",
-             (shift_id,wo,row["asset"],"; ".join(row["techs"]),now))
+        conn.execute("""INSERT INTO report_pm(shift_id,wo_number,asset,tech,completed_at,source_techs_json)
+             VALUES(?,?,?,?,?,?) ON CONFLICT(shift_id,wo_number) DO UPDATE SET
+             asset=excluded.asset,tech=excluded.tech,
+             source_techs_json=excluded.source_techs_json""",
+             (shift_id,wo,row["asset"],"; ".join(row["techs"]),now,_json(row["techs"])))
         pm_count+=1
+    # Reconcile the CURRENT technician selection against cumulative records,
+    # including older WOs missing from this replacement export. Never erase
+    # original work history or override an MST's deliberate Exclude choice.
+    # source_techs_json is provenance, not the report owner's name.
+    selection_hidden=selection_restored=0
+    for table in ("report_wo","report_pm"):
+        for saved in conn.execute(
+            f"SELECT rowid AS row_key,tech,selection_hidden,source_techs_json FROM {table} WHERE shift_id=? "
+            f"{'AND is_manual=0' if table=='report_wo' else ''}",
+            (shift_id,)).fetchall():
+            try:
+                contributors=set(json.loads(saved["source_techs_json"] or "[]"))
+            except (ValueError,TypeError):
+                contributors=set()
+            if not contributors:
+                contributors={x.strip() for x in saved["tech"].split(";") if x.strip()}
+            hidden=int(bool(contributors) and not bool(contributors & selected))
+            if hidden != saved["selection_hidden"]:
+                conn.execute(f"UPDATE {table} SET selection_hidden=? WHERE rowid=?",
+                             (hidden,saved["row_key"]))
+                if hidden: selection_hidden+=1
+                else: selection_restored+=1
+    # V3-style breakdown lifecycle is separate from ordinary WO attribution.
+    # It can update already-tracked WOs from later Cetaris exports without
+    # crediting an unrelated shift for the original repair.
+    breakdown_changes=v31_breakdown.sync(conn,all_rows,selected,accepted,shift_id)
     # Completed non-PM records are pending a specific MST confirmation.
     completed=set()
     for r in accepted:
@@ -364,6 +452,8 @@ def import_selection(conn, shift_id: int, shift_code: str, shift_day: str,
     next_day=_next_day_work_orders(
         all_rows,shift_day,selected,persisted_numbers,saved_pm_numbers,pending,ignored)
     summary.update({"added":added,"updated":updated,"preserved_edits":preserved,
+                    "breakdown_status_changes":breakdown_changes,
+                    "selection_hidden":selection_hidden,"selection_restored":selection_restored,
                     "pm_wos_this_import":pm_count,"selected_technicians":len(selected),
                     "pending_review":len(pending),"ignored":len(ignored),
                     "staged_rows":len(all_rows),
@@ -391,17 +481,97 @@ def update_wo(conn,shift_id,wo_number,data:dict):
     permitted={"asset","category","cause","tech","remarks","status","excluded"}
     fields={k:v for k,v in data.items() if k in permitted}
     if not fields:raise ValueError("No supported work-order changes")
+    if row["status"]=="PENDING" and not row["is_manual"] and "status" in fields and fields["status"]!="PENDING":
+        raise ValueError("Pending Cetaris closure must be verified by a new Closed WO import; editing other fields is allowed")
     for k,v in fields.items():
         if k=="excluded":
             if not isinstance(v,bool):raise ValueError("Excluded must be true or false")
             fields[k]=int(v)
-        elif not isinstance(v,str) or len(v)>5000 or (k=="status" and v not in ("RTS","OOS")):
+        elif not isinstance(v,str) or len(v)>5000 or (k=="status" and v not in ("RTS","OOS","PENDING")):
             raise ValueError("Invalid value for "+k)
         else:fields[k]=v.strip()
     setters=", ".join(k+"=?" for k in fields)
     conn.execute(f"UPDATE report_wo SET {setters},edited=1 WHERE id=?",
                  (*fields.values(),row["id"]))
     return True
+
+
+def add_manual_happening(conn,shift_id,*,asset,cause,remarks,category,status,technician,
+                         reference_wo='',source_shift_id=None,manual_oos_id=None):
+    """Record work discovered outside Cetaris, including proactive/PM findings.
+
+    Generated MANUAL identifiers are local record keys, not claimed Cetaris
+    work-order numbers. A real WO is only referenced when supplied.
+    """
+    import secrets
+    _table(conn)
+    if not asset.strip() or not cause.strip():
+        raise ValueError('Asset and description are required')
+    if category not in ('Breakdown','Process Interruption','Proactive Repair','Work Request'):
+        raise ValueError('Invalid manual work category')
+    if status not in ('RTS','OOS','PENDING'):
+        raise ValueError('Invalid manual equipment status')
+    wo='MANUAL-'+secrets.token_hex(6).upper()
+    now=_now()
+    conn.execute("""INSERT INTO report_wo
+      (shift_id,wo_number,asset,category,cause,tech,remarks,status,imported_at,
+       work_at,source_techs_json,is_manual,reference_wo,source_shift_id,manual_oos_id)
+      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+      (shift_id,wo,asset.strip()[:120],category,cause.strip()[:4000],
+       technician.strip()[:180],remarks.strip()[:5000],status,now,'','[]',
+       1,reference_wo.strip()[:100],source_shift_id,manual_oos_id))
+    return {'wo_number':wo,'reference_wo':reference_wo,'asset':asset,
+            'status':status,'category':category,'is_manual':True}
+
+
+def flag_carry_over(conn,shift_id,wo_number,enabled):
+    _table(conn)
+    row=conn.execute("SELECT id FROM report_wo WHERE shift_id=? AND wo_number=?",
+                     (shift_id,wo_number)).fetchone()
+    if not row:raise KeyError('Work order not found in selected shift')
+    conn.execute('UPDATE report_wo SET carry_over=? WHERE id=?',(int(bool(enabled)),row['id']))
+    return {'wo_number':wo_number,'carry_over':bool(enabled)}
+
+
+def available_carry_overs(conn,target_shift_id,target_day):
+    _table(conn)
+    rows=conn.execute("""SELECT r.id,r.shift_id,r.wo_number,r.asset,r.cause,r.remarks,r.status,
+        r.reference_wo,s.code,s.shift_day
+        FROM report_wo r JOIN shifts s ON s.id=r.shift_id
+        WHERE r.carry_over=1 AND r.excluded=0 AND r.selection_hidden=0
+        AND r.shift_id<>? AND s.open=0 AND s.shift_day<=?
+        ORDER BY s.shift_day DESC,r.id DESC LIMIT 75""",
+        (target_shift_id,target_day)).fetchall()
+    return [dict(row) for row in rows]
+
+
+def resolve_carry_over(conn,target_shift_id,target_day,source_row_id,action,actor):
+    _table(conn)
+    if action not in ('adopt','dismiss'):
+        raise ValueError('Invalid carry-over decision')
+    found={r['id']:r for r in available_carry_overs(conn,target_shift_id,target_day)}
+    row=found.get(source_row_id)
+    if not row:raise KeyError('Carry-over no longer available')
+    updated=conn.execute("UPDATE report_wo SET carry_over=0 WHERE id=? AND carry_over=1",
+                         (source_row_id,))
+    if updated.rowcount!=1:raise KeyError('Carry-over was already handled')
+    adopted=None
+    if action=='adopt':
+        # Adoption makes an explicit follow-up, NOT another completed WO
+        # and never automatically counts an old RTS as a new repair.
+        notes=('Carry-over from '+row['code']+' '+row['shift_day']+
+               ' · source WO '+(row['reference_wo'] or row['wo_number']))
+        if row['remarks']: notes+=' · '+row['remarks']
+        adopted=add_manual_happening(conn,target_shift_id,asset=row['asset'],
+               cause='Carry-over follow-up: '+row['cause'],remarks=notes,
+               category='Work Request',status='PENDING',technician=actor,
+               reference_wo=row['reference_wo'] or row['wo_number'],
+               source_shift_id=row['shift_id'])
+    conn.execute("""INSERT INTO carry_over_decisions(
+       source_row_id,source_shift_id,target_shift_id,action,actor,acted_at)
+       VALUES(?,?,?,?,?,?)""",
+       (source_row_id,row['shift_id'],target_shift_id,action,actor,_now()))
+    return {'action':action,'source_row_id':source_row_id,'adopted':adopted}
 
 
 def request_ai_rewrite(conn,shift_id,wo_number):
@@ -485,7 +655,9 @@ def get_state(conn,shift_id,shift_code=None,shift_day=None):
     rows=[dict(x) for x in conn.execute(
         "SELECT * FROM report_wo WHERE shift_id=? ORDER BY id",(shift_id,))]
     for r in rows:
-        r["excluded"]=bool(r["excluded"])
+        r["manual_excluded"]=bool(r["excluded"])
+        r["selection_hidden"]=bool(r["selection_hidden"])
+        r["excluded"]=r["manual_excluded"] or r["selection_hidden"]
         # Display/report-only spelling cleanup (V3 spelling_fix, ported
         # unchanged). The DB row above is never modified by this -- the
         # Cetaris-original/MST-edited text stays the row of record, and
@@ -497,13 +669,15 @@ def get_state(conn,shift_id,shift_code=None,shift_day=None):
         r["cause"]=spelling_fix.correct_spelling(r["cause"])
         r["remarks"]=spelling_fix.correct_spelling(r["remarks"])
     pm=[dict(x) for x in conn.execute(
-        "SELECT * FROM report_pm WHERE shift_id=? ORDER BY wo_number",(shift_id,))]
+        "SELECT * FROM report_pm WHERE shift_id=? AND selection_hidden=0 ORDER BY wo_number",
+        (shift_id,))]
     tech=conn.execute("SELECT selected_json FROM report_techs WHERE shift_id=?",(shift_id,)).fetchone()
     audit=conn.execute("SELECT * FROM report_audit WHERE shift_id=?",(shift_id,)).fetchone()
     stage_data=stage_details(conn,shift_id)
     evening_morning=(evening_morning_counts(rows,shift_code,shift_day)
                      if shift_code and shift_day else {"applicable":False})
     return {"rows":rows,"pms":pm,"pm_count":len(pm),
+            "pm_needing_completion":v31_pm.get(conn,shift_id),
             "technicians":json.loads(tech["selected_json"]) if tech else [],
             "stage":stage_data,
             "audit":{"summary":json.loads(audit["summary_json"]) if audit else {},
@@ -518,10 +692,17 @@ def save_draft(conn,shift_id,data):
     conn.execute("""CREATE TABLE IF NOT EXISTS report_drafts(
        shift_id INTEGER PRIMARY KEY, body_json TEXT NOT NULL,updated_at TEXT NOT NULL)""")
     payload={k:data.get(k) for k in ("vendors","ro","notes","loto","missingKeys")}
+    existing=conn.execute("SELECT body_json FROM report_drafts WHERE shift_id=?",
+                          (shift_id,)).fetchone()
+    # Repeated autosave/Preview/EML generation must not invalidate an
+    # unchanged authoritative snapshot or increase meaningless revisions.
+    if existing and json.loads(existing["body_json"])==payload:
+        return False
     conn.execute("""INSERT INTO report_drafts(shift_id,body_json,updated_at)
       VALUES(?,?,?) ON CONFLICT(shift_id) DO UPDATE SET
       body_json=excluded.body_json,updated_at=excluded.updated_at""",
       (shift_id,_json(payload),_now()))
+    return True
 
 
 def get_draft(conn,shift_id):
@@ -540,7 +721,7 @@ def happenings_counts(conn, shift_ids):
     placeholders = ",".join("?" * len(shift_ids))
     rows = conn.execute(
         f"SELECT shift_id, COUNT(*) AS n FROM report_wo "
-        f"WHERE excluded=0 AND shift_id IN ({placeholders}) GROUP BY shift_id",
+        f"WHERE excluded=0 AND selection_hidden=0 AND shift_id IN ({placeholders}) GROUP BY shift_id",
         shift_ids)
     return {r["shift_id"]: r["n"] for r in rows}
 
@@ -591,6 +772,17 @@ def build_passdown_html(conn, shift_id, shift_code):
 
     rts = [f'<strong>{esc(r["asset"])}</strong> &mdash; Returned to Service' for r in inc if r["status"] == "RTS"]
     oos = [f'<strong>{esc(r["asset"])}</strong>' for r in inc if r["status"] == "OOS"]
+    # Current globally-open manually reported equipment is included in the
+    # current shift's canonical report snapshot. Snapshot bytes will never
+    # change retroactively after the equipment is returned to service.
+    seen_oos={r["asset"].strip().casefold() for r in inc if r["status"]=="OOS"}
+    for record in v31_oos.list_records(conn,open_only=True):
+        asset=record["asset"].strip()
+        if asset.casefold() not in seen_oos:
+            oos.append(f'<strong>{esc(asset)}</strong>'
+                       f'{(" — "+esc(record["cause"])) if record["cause"] else ""} '
+                       '(manually reported)')
+            seen_oos.add(asset.casefold())
     # Manually-reported Breakdown/OOS (no Cetaris WO behind it at all).
     # Historical regeneration only shows what was resolved *during this
     # specific shift* (a stable fact tied to rts_shift_id) -- never the
@@ -599,6 +791,26 @@ def build_passdown_html(conn, shift_id, shift_code):
     for record in v31_oos.resolved_this_shift(conn, shift_id):
         rts.append(f'<strong>{esc(record["asset"])}</strong> &mdash; '
                    f'Returned to Service (manually reported)')
+
+    # V3-style global breakdown lifecycle. Previously flagged OOS assets
+    # remain visible on later shifts until a verified Closed WO or an
+    # explicit reviewed RTS decision clears them.
+    global_open={x["asset"].strip().casefold() for x in inc if x["status"]=="OOS"}
+    global_open.update(x["asset"].strip().casefold() for x in v31_oos.list_records(conn))
+    for entry in v31_breakdown.overview(conn,shift_id)["open"]:
+        asset=entry["asset"].strip()
+        if asset.casefold() not in global_open:
+            oos.append(f'<strong>{esc(asset)}</strong> — Breakdown WO# {esc(entry["wo_number"])} (awaiting RTS)')
+            global_open.add(asset.casefold())
+    for held in v31_breakdown.overview(conn,shift_id)["holds"]:
+        asset=held["asset"].strip()
+        if asset.casefold() not in global_open:
+            reason=held["reason"].strip()
+            oos.append(f'<strong>{esc(asset)}</strong> — Manual OOS hold'
+                       + (f': {esc(reason)}' if reason else ''))
+            global_open.add(asset.casefold())
+    for event in v31_breakdown.overview(conn,shift_id)["resolved_this_shift"]:
+        rts.append(f'<strong>{esc(event["asset"])}</strong> — Breakdown WO# {esc(event["wo_number"])} RTS')
 
     loto_html = (
         '<p style="font-size:14px;font-family:Calibri,Arial,sans-serif;margin-top:18px;">'
@@ -612,12 +824,28 @@ def build_passdown_html(conn, shift_id, shift_code):
         label = "Missing key" + ("s" if len(missing_keys) > 1 else "")
         missing_html = (f'<p style="color:#c00;margin:2px 0;font-size:14px;font-family:Calibri,Arial,sans-serif;">'
                         f'<strong>{label}:</strong> {esc(", ".join(missing_keys))}</p>')
-    # V3.1 does not yet have the real pending-PM data source wired -- see
-    # buildEmailHtml()'s matching comment. Same honest "not shown", not a
-    # fabricated "none pending".
-    pm_html = ('<p style="margin:16px 0 2px;"><strong style="font-size:16px;">PM\'s Needing to be Completed</strong></p>'
-               '<p style="margin:0 0 6px;font-size:14px;color:#6b7280;font-style:italic;">'
-               'Pending-PM tracking is not yet connected in V3.1 -- not shown.</p>')
+    # The separate V2-style PM report is NOT the regular Completed PM
+    # work-order count and must not be inferred from In Process Cetaris WOs.
+    # Explicitly hand unfinished repairs and flagged carry-overs to the next
+    # shift. Do not imply an unresolved WO or in-process breakdown is RTS.
+    followups=[]
+    for record in inc:
+        status=record["status"]
+        carry=bool(record.get("carry_over"))
+        if status!="PENDING" and not carry:
+            continue
+        context=[]
+        if status=="PENDING":context.append("Pending completion / closure")
+        if carry:context.append("Flagged for shift handover")
+        ref=record.get("reference_wo") or record["wo_number"]
+        followups.append(f'<strong>{esc(record["asset"] or "Asset unspecified")}</strong> '
+                         f'(WO# {esc(ref)}) — {esc(record["cause"] or "Follow-up required")}: '
+                         f'{esc("; ".join(context))}')
+    review_items=state["audit"]["pending"]
+    if review_items:
+        followups.append(f'<strong>{len(review_items)} import audit item(s) need review.</strong> '
+                         'See the saved Cetaris Import Audit before closing the shift.')
+    pm_html = v31_pm.report_section(conn,shift_id)
     vendors = [esc(v) for v in (draft.get("vendors") or [])]
     ro = [esc(v) for v in (draft.get("ro") or [])]
     return (
@@ -626,6 +854,7 @@ def build_passdown_html(conn, shift_id, shift_code):
         f'<p style="margin:0 0 18px;font-size:18px;"><strong>{esc(shift_code)} End of Shift Passdown</strong></p>'
         + sec("Vendors", bullet_list(vendors))
         + sec("Shift Happenings", "".join(happenings) if happenings else "<p>None</p>")
+        + sec("Open Follow-ups / Shift Carry-overs", bullet_list(followups))
         + sec("Reliable Operations", bullet_list(ro))
         + pm_html
         + sec("Out of Service &mdash; Returned to Service (RTS)", bullet_list(rts))

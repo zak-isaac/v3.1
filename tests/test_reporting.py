@@ -82,6 +82,67 @@ def test_selected_shift_required_for_reporting(client,monkeypatch):
     assert result["rows"]==[] and result["pm_count"]==0
 
 
+def test_new_assigned_technicians_on_replacement_are_preselected_without_reenabling_old_deselections(client,monkeypatch):
+    clock(monkeypatch)
+    enter(client)
+    first=upload(client,[row("TECH101",tech="Synthetic A"),
+                         row("TECH102",tech="Synthetic B")])
+    assert first.status_code==200
+    assert import_techs(client,["Synthetic A"]).status_code==200
+    stage=client.get('/api/reporting/state').json()['stage']
+    assert stage['imported'] is True
+    assert upload(client,[row("TECH103",tech="Synthetic A"),
+                          row("TECH104",tech="Synthetic B"),
+                          row("TECH105",tech="Synthetic C")]).status_code==200
+    new_stage=client.get('/api/reporting/state').json()['stage']
+    assert not new_stage['imported']
+    assert set(new_stage['prior_stage_technicians'])=={"Synthetic A","Synthetic B"}
+    assert set(client.get('/api/reporting/state').json()['technicians'])=={"Synthetic A"}
+    # Browser preselection combines previously-selected A with newly
+    # encountered C; B remains deliberately deselected.
+    frontend=client.get('/web/shift-data.js').text
+    assert 'previousStage.has(tech.name)' in frontend
+    assert 'snapshot.stage.prior_stage_technicians' in frontend
+
+
+def test_verified_cetaris_closed_reconciles_edited_pending_without_erasing_remarks(client,monkeypatch):
+    clock(monkeypatch)
+    enter(client)
+    assert upload(client,[row("CLSR001",status="Completed")]).status_code==200
+    imported=client.post('/api/reporting/import',json={
+        'technicians':['Synthetic A'],'closure_reviews':{'CLSR001':'add'}})
+    assert imported.status_code==200,imported.text
+    assert client.get('/api/reporting/state').json()['rows'][0]['status']=='PENDING'
+    assert client.post('/api/reporting/work-orders/CLSR001',
+                       json={'remarks':'Verified motor checks, waiting for final Cetaris closure'}).status_code==200
+    assert upload(client,[row("CLSR001",status="Closed")]).status_code==200
+    assert import_techs(client,['Synthetic A']).status_code==200
+    updated=client.get('/api/reporting/state').json()['rows'][0]
+    assert updated['status']=='RTS'
+    assert updated['edited']==1
+    assert 'waiting for final Cetaris' in updated['remarks']
+
+
+def test_unchanged_draft_preserves_saved_eml_but_new_draft_invalidates_it(client,monkeypatch):
+    clock(monkeypatch)
+    enter(client)
+    payload={"vendors":[],"ro":[],"notes":"Inspect bay 12","loto":True,"missingKeys":[]}
+    init=client.post('/api/reporting/draft',json=payload)
+    assert init.status_code==200 and init.json()['changed'] is True
+    report=client.post('/api/shifts/report',json={})
+    assert report.status_code==200,report.text
+    etag=report.json()['sha256']
+    again=client.post('/api/reporting/draft',json=payload)
+    assert again.status_code==200 and again.json()['changed'] is False
+    saved=client.get('/api/shifts/report').json()
+    assert saved['sha256']==etag and saved['saved_at']
+    assert client.get('/api/shifts/report/download').status_code==200
+    different=client.post('/api/reporting/draft',json={**payload,"notes":"Inspect bay 12 and bay 13"})
+    assert different.status_code==200 and different.json()['changed'] is True
+    assert client.get('/api/shifts/report').json()['saved_at']==''
+    assert client.get('/api/shifts/report/download').status_code==409
+
+
 def test_two_tech_one_closed_wo_grouped_with_remarks(client,monkeypatch):
     clock(monkeypatch)
     enter(client)
@@ -106,6 +167,184 @@ def test_two_tech_one_closed_wo_grouped_with_remarks(client,monkeypatch):
     assert "Located sensor fault" in wo["remarks"] and "Replaced sensor" in wo["remarks"]
     assert wo["excluded"] is False
     assert data["pm_count"]==0
+
+
+def test_reimport_deselection_hides_and_restores_wo_and_pm_without_erasing_manual_edits(client,monkeypatch):
+    clock(monkeypatch)
+    enter(client)
+    records=[
+        row("SEL100",tech="Synthetic A",remarks="A note"),
+        row("SEL200",tech="Synthetic B",remarks="B note"),
+        row("SEL300",tech="Synthetic B",category="Preventive Maintenance",pm="RNPK.001.PKM")
+    ]
+    assert upload(client,records).status_code == 200
+    assert import_techs(client,["Synthetic A","Synthetic B"]).status_code == 200
+    assert client.get('/api/reporting/state').json()['pm_count'] == 1
+    assert client.post('/api/reporting/work-orders/SEL100',json={
+        'remarks':'Manually corrected repair', 'excluded':True
+    }).status_code == 200
+    assert import_techs(client,["Synthetic A"]).status_code == 200
+    state=client.get('/api/reporting/state').json()
+    by={r['wo_number']:r for r in state['rows']}
+    assert by['SEL100']['remarks']=='Manually corrected repair'
+    assert by['SEL100']['manual_excluded'] is True
+    assert by['SEL100']['selection_hidden'] is False
+    assert by['SEL200']['selection_hidden'] is True and by['SEL200']['excluded']
+    assert state['pm_count'] == 0
+    assert import_techs(client,["Synthetic A","Synthetic B"]).status_code == 200
+    restored=client.get('/api/reporting/state').json()
+    by={r['wo_number']:r for r in restored['rows']}
+    assert not by['SEL200']['selection_hidden']
+    assert restored['pm_count'] == 1
+    assert by['SEL100']['manual_excluded'] and by['SEL100']['excluded']
+    assert by['SEL100']['remarks']=='Manually corrected repair'
+
+
+def test_reimport_deselects_old_technician_even_if_new_export_omits_wo(client,monkeypatch):
+    clock(monkeypatch)
+    enter(client)
+    assert upload(client,[row("OLD100",tech="Synthetic A")]).status_code == 200
+    assert import_techs(client,["Synthetic A"]).status_code == 200
+    assert upload(client,[row("NEW200",tech="Synthetic B")]).status_code == 200
+    assert import_techs(client,["Synthetic B"]).status_code == 200
+    data=client.get('/api/reporting/state').json()
+    old={r['wo_number']:r for r in data['rows']}['OLD100']
+    assert old['selection_hidden'] and old['excluded']
+    assert 'NEW200' in {r['wo_number'] for r in data['rows'] if not r['excluded']}
+
+
+def test_pending_closure_remains_pending_on_manual_edit(client,monkeypatch):
+    clock(monkeypatch)
+    enter(client)
+    assert upload(client,[row("PEND01",status="Completed")]).status_code == 200
+    selected=client.post('/api/reporting/import',json={
+        'technicians':['Synthetic A'],'closure_reviews':{'PEND01':'add'}
+    })
+    assert selected.status_code==200,selected.text
+    old=client.get('/api/reporting/state').json()['rows'][0]
+    assert old['status']=='PENDING'
+    assert client.post('/api/reporting/work-orders/PEND01',json={
+        'remarks':'Needs Cetaris closure','status':'PENDING'
+    }).status_code==200
+    assert client.post('/api/reporting/work-orders/PEND01',json={'status':'RTS'}).status_code==422
+    final=client.get('/api/reporting/state').json()['rows'][0]
+    assert final['status']=='PENDING'
+    ui=client.get('/shift-report.html').text
+    assert 'Pending closure — reimport after Cetaris closes' in ui
+
+
+def test_manual_proactive_pm_discovery_survives_cetaris_reimport(client,monkeypatch):
+    clock(monkeypatch)
+    enter(client)
+    added=client.post('/api/reporting/manual',json={
+        'asset':'VOIDFILL-02','cause':'Found loose drive connection during PM',
+        'remarks':'Tightened connection; inspected and tested','category':'Proactive Repair',
+        'status':'RTS','wo_reference':''
+    })
+    assert added.status_code==200,added.text
+    manual_id=added.json()['wo_number']
+    assert manual_id.startswith('MANUAL-')
+    assert upload(client,[row('FRESH123')]).status_code==200
+    assert import_techs(client,['Synthetic A']).status_code==200
+    state=client.get('/api/reporting/state').json()
+    by={r['wo_number']:r for r in state['rows']}
+    assert by[manual_id]['is_manual']==1
+    assert not by[manual_id]['excluded'] and not by[manual_id]['selection_hidden']
+    assert by[manual_id]['category']=='Proactive Repair'
+    assert by[manual_id]['status']=='RTS'
+    assert 'FRESH123' in by
+    assert 'v31-add-manual' in client.get('/shift-report.html').text
+
+
+def test_manual_oos_creation_uses_global_equipment_tracking(client,monkeypatch):
+    clock(monkeypatch)
+    enter(client)
+    data=client.post('/api/reporting/manual',json={
+        'asset':'CONV-55','cause':'Mechanical obstruction found during PM',
+        'category':'Breakdown','status':'OOS'
+    })
+    assert data.status_code==200,data.text
+    active=client.get('/api/oos').json()['open']
+    assert [x['asset'] for x in active]==['CONV-55']
+    shift_id=client.get('/api/me').json()['selected']['id']
+    with m._db() as conn:
+        import v31_reporting
+        html=v31_reporting.build_passdown_html(conn,shift_id,'S1')
+    assert html.count('CONV-55')>=1
+
+
+def test_flagged_carryover_requires_adoption_or_dismissal_after_previous_shift_ends(client,monkeypatch):
+    clock(monkeypatch,day=26,hour=10)
+    enter(client,'S1')
+    created=client.post('/api/reporting/manual',json={
+        'asset':'CONV-73','cause':'Awaiting replacement part','status':'PENDING'
+    })
+    assert created.status_code==200,created.text
+    wo=created.json()['wo_number']
+    flag=client.post('/api/reporting/carryovers/flag',
+                     json={'wo_number':wo,'enabled':True})
+    assert flag.status_code==200
+    assert client.post('/api/shifts/report',json={}).status_code==200
+    assert client.post('/api/shifts/end',json={'acknowledge_warnings':True}).status_code==200
+    client.post('/api/logout')
+    clock(monkeypatch,day=26,hour=13)
+    enter(client,'S2')
+    available=client.get('/api/reporting/carryovers').json()['available']
+    assert len(available)==1 and available[0]['asset']=='CONV-73'
+    adopt=client.post('/api/reporting/carryovers/decision',json={
+        'source_row_id':available[0]['id'],'action':'adopt'
+    })
+    assert adopt.status_code==200,adopt.text
+    state=client.get('/api/reporting/state').json()
+    adopted=[x for x in state['rows'] if x['is_manual'] and x['source_shift_id']]
+    assert len(adopted)==1 and adopted[0]['status']=='PENDING'
+    assert 'Carry-over follow-up' in adopted[0]['cause']
+    assert client.get('/api/reporting/carryovers').json()['available']==[]
+    repeat=client.post('/api/reporting/carryovers/decision',json={
+        'source_row_id':available[0]['id'],'action':'adopt'
+    })
+    assert repeat.status_code==409
+
+
+def test_pm_needing_completion_upload_is_real_and_separate_from_completed_pm_count(client,monkeypatch):
+    clock(monkeypatch)
+    shift_id=enter(client)
+    csv=(b"WO Number,WO Date / Time,PM Due Date,Promise Date / Time,Asset #\n"
+         b"PM100,10/26/2026,10/27/2026,10/28/2026,CONV-1\n"
+         b"PM200,10/26/2026,10/27/2026,10/28/2026,CONV-2\n")
+    uploaded=client.post('/api/pm-needing-completion/upload',files={
+        'file':('pm-needing.csv',csv,'text/csv')
+    })
+    assert uploaded.status_code==200,uploaded.text
+    body=uploaded.json()
+    assert body['count']==2 and body['parsed'] is True
+    state=client.get('/api/reporting/state').json()
+    assert state['pm_count']==0
+    assert state['pm_needing_completion']['count']==2
+    downloaded=client.get('/api/pm-needing-completion/download')
+    assert downloaded.status_code==200 and downloaded.content==csv
+    with m._db() as conn:
+        import v31_reporting
+        html=v31_reporting.build_passdown_html(conn,shift_id,'S1')
+    assert 'PMs Needing Completion' in html
+    assert 'PM100' in html and 'PM200' in html and 'CONV-1' in html
+    cleared=client.delete('/api/pm-needing-completion')
+    assert cleared.status_code==200 and cleared.json()['removed']
+    assert client.get('/api/pm-needing-completion').json()['present'] is False
+
+
+def test_pm_report_rejects_unparseable_workbook_without_erasing_previous(client,monkeypatch):
+    clock(monkeypatch)
+    enter(client)
+    good=b'WO Number,PM Due Date,Asset #\nPM101,10/27/2026,ASSET-1\n'
+    saved=client.post('/api/pm-needing-completion/upload',files={'file':('good.csv',good,'text/csv')})
+    assert saved.status_code==200
+    bad=client.post('/api/pm-needing-completion/upload',files={
+        'file':('bad.csv',b'Wrong Heading\nValue\n','text/csv')
+    })
+    assert bad.status_code==422
+    old=client.get('/api/pm-needing-completion').json()
+    assert old['filename']=='good.csv' and old['count']==1
 
 
 def test_pm_counts_once_and_does_not_enter_shift_happenings(client,monkeypatch):
@@ -221,7 +460,7 @@ def test_draft_is_shift_scoped_and_wo_edit_invalidates_saved_passdown(client,mon
        json={"notes":"Waiting for a spare part","vendors":[],"ro":[],
              "loto":False,"missingKeys":[]}).status_code==200
     assert client.get("/api/me").json()["report_saved"] is False
-    assert client.post("/api/shifts/end").status_code==409
+    assert client.post("/api/shifts/end",json={"acknowledge_warnings":True}).status_code==409
     assert client.get("/api/reporting/state").json()["draft"]["notes"]=="Waiting for a spare part"
 
 
@@ -414,6 +653,9 @@ def test_next_day_audit_migrates_previous_v31_schema_without_deleting_old_data(c
     clock(monkeypatch,day=26,hour=10)
     enter(client,"S1")
     with m._db() as db:
+        # Startup now eagerly initializes the current schema; reproduce an
+        # old database intentionally before exercising the migration path.
+        db.execute("DROP TABLE IF EXISTS report_audit")
         db.execute("""CREATE TABLE report_audit (
             shift_id INTEGER PRIMARY KEY,
             summary_json TEXT NOT NULL DEFAULT '{}',
@@ -450,7 +692,7 @@ def test_next_day_opened_wo_is_audited_without_work_or_close(client,monkeypatch)
     assert item["included_in_shift"] is False
 
 
-def test_drax_preselects_matching_shift_msts_but_not_other_technicians(client,monkeypatch,tmp_path):
+def test_drax_preselects_any_assigned_active_tech_not_only_msts(client,monkeypatch,tmp_path):
     import csv
     import v31_roster
     clock(monkeypatch,day=26,hour=10)
@@ -475,8 +717,9 @@ def test_drax_preselects_matching_shift_msts_but_not_other_technicians(client,mo
     assert suggestions["Synthetic, A"]["match_reason"] is None
     assert suggestions["Synthetic B"]["group"]=="other_shift"
     assert suggestions["Synthetic B"]["preselected"] is False
-    assert suggestions["Synthetic C"]["group"]=="unmatched"
-    assert "not marked MST" in suggestions["Synthetic C"]["match_reason"]
+    assert suggestions["Synthetic C"]["group"]=="assigned"
+    assert suggestions["Synthetic C"]["preselected"] is True
+    assert suggestions["Synthetic C"]["match_reason"] is None
     assert suggestions["Unknown Fourth"]["group"]=="unmatched"
     assert "No Drax associate" in suggestions["Unknown Fourth"]["match_reason"]
     assert all("number" not in t for t in suggestions.values())
@@ -505,7 +748,7 @@ def test_technician_suggestions_explains_every_unmatched_case():
     suggestions={t["name"]:t for t in v31_reporting.technician_suggestions(source,roster_rows,"S1")}
     # Two active MST Drax records share this name -- never silently guess which one.
     assert suggestions["Dup Person"]["group"]=="unmatched"
-    assert "Multiple active MST" in suggestions["Dup Person"]["match_reason"]
+    assert "Multiple active Drax" in suggestions["Dup Person"]["match_reason"]
     # Matches a real Drax record, but that record is inactive.
     assert suggestions["Inactive Tech"]["group"]=="unmatched"
     assert "inactive" in suggestions["Inactive Tech"]["match_reason"]
@@ -559,7 +802,7 @@ def test_shift_report_repositions_cetaris_and_uses_real_walmart_logo(client,monk
     assert '#replace-file.v31-cetaris-primary' in stylesheet.text
     js=client.get("/web/shift-data.js").text
     assert "v31-tech-group" in js
-    assert "Drax MSTs" in js
+    assert "Drax Technicians" in js
     assert "snapshot.stage.imported" in js
 
 

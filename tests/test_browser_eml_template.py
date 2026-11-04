@@ -19,6 +19,8 @@ from openpyxl import Workbook
 pytest.importorskip("playwright.sync_api")
 from playwright.sync_api import sync_playwright  # noqa: E402
 
+from browser_shift_support import shift_for_browser, local_work_time
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 HEADERS = ["WO Number", "Asset #", "WO Status", "Primary RFR",
            "Service/Repair Description", "Technician", "Technician Remarks",
@@ -35,7 +37,7 @@ def _free_port() -> int:
 def _workbook_bytes():
     # No frozen clock in this real-browser test -- use the real current time
     # so the WO lands inside today's actual shift-ownership window.
-    now = datetime.now().strftime("%Y-%m-%d %H:%M")
+    now = local_work_time()
     wb = Workbook()
     sheet = wb.active
     sheet.append(HEADERS)
@@ -54,7 +56,7 @@ def live_server(tmp_path):
     with roster_csv.open("w", newline="") as f:
         w = csv.writer(f)
         w.writerow(["Name", "Assoc. #", "Shift", "Job Title"])
-        w.writerow(["Browser Check Tech", "555099", "S1", "MST"])
+        w.writerow(["Browser Check Tech", "555099", shift_for_browser(), "MST"])
 
     env = os.environ.copy()
     env["IND3_V31_PRIVATE_DIR"] = str(tmp_path)
@@ -152,7 +154,7 @@ def test_eml_download_uses_v3_html_template_with_corrected_spelling(live_server)
     assert "End of Shift Passdown" in content
     assert "Shift Happenings" in content
     assert "Reliable Operations" in content
-    assert "Needing to be Completed" in content
+    assert "PMs Needing Completion" in content
     assert "Returned to Service (RTS)" in content
     assert "Current Out of Service" in content
 

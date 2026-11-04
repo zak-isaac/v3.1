@@ -60,7 +60,7 @@ def run_full_shift(client, tmp_path, monkeypatch, associate, name, shift_code="S
 
 def test_closed_shift_appears_with_real_counts_and_eml_regenerates_faithfully(client, tmp_path, monkeypatch):
     run_full_shift(client, tmp_path, monkeypatch, "555001", "Reliability Tech")
-    ended = client.post("/api/shifts/end", json={})
+    ended = client.post("/api/shifts/end",json={"acknowledge_warnings":True})
     assert ended.status_code == 200, ended.text
     shift_id = ended.json()["shift_id"]
 
@@ -117,7 +117,7 @@ def test_missing_loto_keys_show_in_regenerated_eml(client, tmp_path, monkeypatch
 
 def test_ordinary_mst_sees_only_own_shifts_and_cannot_download_others(client, tmp_path, monkeypatch):
     run_full_shift(client, tmp_path, monkeypatch, "555001", "Reliability Tech")
-    first_shift = client.post("/api/shifts/end", json={}).json()["shift_id"]
+    first_shift = client.post("/api/shifts/end",json={"acknowledge_warnings":True}).json()["shift_id"]
 
     # A different ordinary MST, a day later -- no need to start a shift of
     # their own to exercise the access-control boundary below.
@@ -137,7 +137,7 @@ def test_ordinary_mst_sees_only_own_shifts_and_cannot_download_others(client, tm
 
 def test_management_sees_every_associates_shifts(client, tmp_path, monkeypatch):
     run_full_shift(client, tmp_path, monkeypatch, "555001", "Reliability Tech")
-    client.post("/api/shifts/end", json={})
+    client.post("/api/shifts/end",json={"acknowledge_warnings":True})
     client.post("/api/logout", json={})
     assert client.post("/api/login", json={"associate": "8972", "intent": "direct"}).status_code == 200
     listing = client.get("/api/history/shifts").json()
@@ -156,7 +156,7 @@ def test_history_screen_and_script_wired_on_both_report_and_standalone_admin(cli
     assert 'id="v31-history-rows"' in report_page
     assert '/web/shift-history.js' in report_page
 
-    client.post("/api/shifts/end", json={})
+    client.post("/api/shifts/end",json={"acknowledge_warnings":True})
     client.post("/api/logout", json={})
     assert client.post("/api/login", json={"associate": "8972", "intent": "direct"}).status_code == 200
     admin_page = client.get("/administration").text

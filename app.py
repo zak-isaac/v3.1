@@ -30,6 +30,11 @@ import v31_drax_bridge
 import v31_reporting
 import v31_facility
 import v31_oos
+import v31_pm_needing_completion as v31_pm
+import v31_report_export
+import v31_analytics
+import v31_breakdown
+import ai_remark_rewriter
 
 ROOT = Path(__file__).resolve().parent
 PRIVATE = Path(os.environ.get('IND3_V31_PRIVATE_DIR', str(ROOT / '.local-data'))).resolve()
@@ -56,6 +61,13 @@ SHIFT_RULES = {
 async def lifespan(_app):
     # Isolated boot: don't touch Workshop V3 data or services.
     roster()
+    # Initialize all private SQLite schemas before parallel browser requests
+    # begin. This avoids staging/PM/breakdown racing migration DDL.
+    with _db() as conn:
+        v31_reporting._table(conn)
+        v31_pm.ensure(conn)
+        v31_oos._table(conn)
+        v31_breakdown.ensure(conn)
     expire_shifts()
     task = asyncio.create_task(_periodic_maintenance())
     bridge = asyncio.create_task(_periodic_drax_bridge())
@@ -202,6 +214,9 @@ def _db() -> sqlite3.Connection:
         'report_saved_at': "TEXT NOT NULL DEFAULT ''",
         'report_content': "TEXT NOT NULL DEFAULT ''",
         'report_count': "INTEGER NOT NULL DEFAULT 0",
+        'report_html': "TEXT NOT NULL DEFAULT ''",
+        'report_hash': "TEXT NOT NULL DEFAULT ''",
+        'report_eml': "BLOB NOT NULL DEFAULT X''",
         # Existing V3.1 shifts were MST-owned, so preserve their authorization.
         'owner_role': "TEXT NOT NULL DEFAULT 'mst'",
     }.items():
@@ -442,7 +457,10 @@ def landing(request: Request):
         '<script defer src="/web/facility-admin.js"></script>'+
         '<script defer src="/web/shift-history.js"></script>'+
         '<script defer src="/web/manual-oos.js"></script>'+
-        '<script defer src="/web/shift-data.js"></script>'))
+        '<script defer src="/web/breakdown-lifecycle.js"></script>'+
+        '<script defer src="/web/shift-data.js"></script>'+
+        '<script defer src="/web/pm-needing-completion.js"></script>'+
+        '<script defer src="/web/analytics.js"></script>'))
 
 
 @app.get('/administration', response_class=HTMLResponse)
@@ -456,7 +474,8 @@ def administration_page(request: Request):
         '<script defer src="/web/roster-admin.js"></script>'+
         '<script defer src="/web/facility-admin.js"></script>'+
         '<script defer src="/web/shift-history.js"></script>'+
-        '<script defer src="/web/admin-standalone.js"></script>'))
+        '<script defer src="/web/admin-standalone.js"></script>'+
+        '<script defer src="/web/analytics.js"></script>'))
 
 
 class LoginRequest(BaseModel):
@@ -655,8 +674,79 @@ def logout(request: Request, response: Response):
     response.delete_cookie(SESSION_COOKIE, path='/')
     return {'signed_out': True}
 
+class EndShiftRequest(BaseModel):
+    acknowledge_warnings: bool = False
+
+
+def _end_shift_readiness(conn,row):
+    """A saved, intact EML is mandatory; actual outstanding work is
+    acknowledged, never automatically marked RTS or discarded."""
+    saved=bool(row['report_saved_at'] and row['report_eml'] and row['report_hash'])
+    digest_ok=saved and hashlib.sha256(bytes(row['report_eml'])).hexdigest()==row['report_hash']
+    blockers=[]
+    if not saved:
+        blockers.append('Generate and save the Outlook passdown before End Shift.')
+    elif not digest_ok:
+        blockers.append('Saved Outlook report failed integrity verification; regenerate it.')
+    stage=conn.execute("SELECT applied_at FROM report_stage WHERE shift_id=?",(row['id'],)).fetchone() if conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='report_stage'").fetchone() else None
+    if stage and not stage['applied_at']:
+        blockers.append('A newer Cetaris file is staged but not imported. Confirm its technicians first.')
+    warnings=[]
+    import v31_reporting
+    v31_reporting._table(conn)
+    included=conn.execute("""SELECT COUNT(*) FROM report_wo WHERE shift_id=?
+        AND excluded=0 AND selection_hidden=0""",(row['id'],)).fetchone()[0]
+    outstanding=conn.execute("""SELECT COUNT(*) FROM report_wo WHERE shift_id=?
+        AND excluded=0 AND selection_hidden=0 AND status='PENDING'""",(row['id'],)).fetchone()[0]
+    if outstanding:
+        warnings.append(f'{outstanding} pending work order(s) require follow-up.')
+    audit=conn.execute("SELECT pending_json FROM report_audit WHERE shift_id=?",
+                       (row['id'],)).fetchone()
+    if audit:
+        try:
+            review_count=len(json.loads(audit['pending_json']))
+        except (TypeError,ValueError):
+            review_count=0
+        if review_count:warnings.append(f'{review_count} Cetaris import review item(s) remain unresolved.')
+    # Global OOS and explicit maintenance holds can span multiple shifts.
+    # They are never automatically cleared by End Shift.
+    breakdowns=v31_breakdown.overview(conn,row['id'])
+    active_assets={
+        item['asset'].strip().casefold() for item in
+        (breakdowns['open']+breakdowns['holds']+v31_oos.list_records(conn,open_only=True))
+        if item['asset'].strip()
+    }
+    if active_assets:
+        warnings.append(f'{len(active_assets)} asset(s) remain out of service or on manual hold.')
+    draft=v31_reporting.get_draft(conn,row['id'])
+    if not draft.get('loto'):
+        warnings.append('LOTO verification is not marked complete.')
+    missing=draft.get('missingKeys') or []
+    if missing:
+        warnings.append(f'{len(missing)} LOTO key(s) are marked missing.')
+    completed_pm=conn.execute("SELECT COUNT(*) FROM report_pm WHERE shift_id=? AND selection_hidden=0",
+                              (row['id'],)).fetchone()[0]
+    import v31_pm_needing_completion as v31_pm
+    pm_needs=v31_pm.get(conn,row['id'])['present']
+    has_other=bool((draft.get('notes') or '').strip() or draft.get('vendors') or draft.get('ro'))
+    if not included and not completed_pm and not pm_needs and not has_other:
+        warnings.append('No reportable work or shift notes were entered. Confirm this was a quiet shift.')
+    return {'ready':not blockers,'saved':saved,'hash_verified':bool(digest_ok),
+            'blockers':blockers,'warnings':warnings,
+            'requires_acknowledgement':bool(warnings),
+            'pending_work_orders':outstanding}
+
+
+@app.get('/api/shifts/end/readiness')
+def end_shift_readiness(request:Request):
+    _session,row=_report_access(request)
+    with _db() as conn:
+        return _end_shift_readiness(conn,row)
+
+
 @app.post('/api/shifts/end')
-def end_shift(request: Request, response: Response):
+def end_shift(request: Request, response: Response, payload: EndShiftRequest | None = None):
     """Finish only the bound session; overlapping sessions remain untouched."""
     _origin_check(request)
     session, profile = who(request)
@@ -669,17 +759,31 @@ def end_shift(request: Request, response: Response):
             raise HTTPException(404, 'Active shift not found')
         if not profile.get('all_shifts') and row['owner'] != session['a']:
             raise HTTPException(403, 'Only the shift starter or management may close it')
-        if not row['report_saved_at']:
-            raise HTTPException(409, 'Generate and save the passdown report before ending this shift')
+        if eligible_date(row['code'],datetime.now(TZ)) != date.fromisoformat(row['shift_day']):
+            raise HTTPException(409, 'Reporting window has ended')
+        readiness=_end_shift_readiness(conn,row)
+        if readiness['blockers']:
+            raise HTTPException(409,' '.join(readiness['blockers']))
+        if readiness['warnings'] and not (payload and payload.acknowledge_warnings):
+            raise HTTPException(409,'Review and acknowledge the outstanding End Shift warnings first')
+        now=datetime.now(TZ).isoformat()
+        conn.execute("""CREATE TABLE IF NOT EXISTS shift_end_review(
+            shift_id INTEGER PRIMARY KEY, actor TEXT NOT NULL,
+            warnings_json TEXT NOT NULL, acknowledged_at TEXT NOT NULL)""")
+        conn.execute("""INSERT OR REPLACE INTO shift_end_review
+           (shift_id,actor,warnings_json,acknowledged_at) VALUES(?,?,?,?)""",
+           (row['id'],session['a'],json.dumps(readiness['warnings']),now))
         conn.execute("""UPDATE shifts SET open=0, closed_at=?,closed_reason='completed'
-                        WHERE id=?""",(datetime.now(TZ).isoformat(),session['s']))
+                        WHERE id=?""",(now,session['s']))
     _set_cookie(response, session['a'], 0)
     _record_login_event(session['a'], 'end_shift', session['s'])
     return {'ended': True, 'shift_id': session['s']}
 
 
 class ReportPayload(BaseModel):
-    content: str = Field(min_length=30, max_length=90000)
+    # Legacy browser text is intentionally ignored. The server builds a
+    # canonical report from saved shift work and drafts.
+    content: str | None = Field(default=None,max_length=90000)
 
 
 class AdminAddAssociate(BaseModel):
@@ -837,47 +941,53 @@ def admin_settings_save(payload: FacilitySettingsPayload, request: Request):
     })
 
 
+@app.get('/api/shifts/report/preview')
+def preview_shift_report(request: Request):
+    session,row=_report_access(request)
+    with _db() as conn:
+        report=v31_report_export.build(conn,row['id'],row['code'],row['shift_day'],PRIVATE)
+    return {'html':report['html'],'sha256':report['sha256'],
+            'attachments':report['attachments']}
+
+
 @app.post('/api/shifts/report')
 def save_shift_report(payload: ReportPayload, request: Request):
-    """Store a locally generated passdown before allowing a normal End Shift."""
+    """Generate and persist a canonical EML snapshot from DB, never client text."""
     _origin_check(request)
-    session, profile = who(request)
-    if not session['s']:
-        raise HTTPException(409, 'Choose a shift first')
-    now = datetime.now(TZ)
+    session,row=_report_access(request)
     with _db() as conn:
-        row = conn.execute("SELECT * FROM shifts WHERE id=? AND open=1",(session['s'],)).fetchone()
-        if row is None:
-            raise HTTPException(404, 'No active report selected')
-        day = date.fromisoformat(row['shift_day'])
-        if eligible_date(row['code'],now) != day:
-            raise HTTPException(409, 'Reporting window expired')
-        if not allowed(profile,row['code'],day,session['a']):
-            raise HTTPException(403, 'Shift access no longer authorized')
-        if not profile.get('all_shifts') and row['owner'] != session['a']:
-            raise HTTPException(403, 'Only the shift starter or management can save a report')
-        body = payload.content.strip()
-        if 'SHIFT HAPPENINGS' not in body or 'IND3' not in body:
-            raise HTTPException(422, 'Passdown content is missing required sections')
-        conn.execute("""UPDATE shifts SET report_content=?, report_saved_at=?, report_count=report_count+1
-                        WHERE id=?""",(body,now.isoformat(),session['s']))
-    return {'saved':True, 'shift_id':session['s'], 'saved_at':now.isoformat()}
+        report=v31_report_export.build(conn,row['id'],row['code'],row['shift_day'],PRIVATE)
+        conn.execute("""UPDATE shifts SET
+          report_content=?,report_html=?,report_eml=?,report_hash=?,
+          report_saved_at=?,report_count=report_count+1 WHERE id=?""",
+          (report['html'],report['html'],report['eml'],report['sha256'],
+           report['created_at'],row['id']))
+    return {'saved':True,'shift_id':row['id'],
+            'saved_at':report['created_at'],'sha256':report['sha256'],
+            'filename':report['filename'],'attachments':report['attachments']}
+
+
+@app.get('/api/shifts/report/download')
+def download_shift_report(request: Request):
+    _session,row=_report_access(request)
+    with _db() as conn:
+        saved=conn.execute('SELECT report_eml FROM shifts WHERE id=?',(row['id'],)).fetchone()
+    if not saved or not saved['report_eml']:
+        raise HTTPException(409, 'Generate and save a passdown before download')
+    filename=f"IND3_{row['code']}_{row['shift_day']}_Shift_Passdown.eml"
+    return Response(content=bytes(saved['report_eml']),media_type='message/rfc822',
+                    headers={'Content-Disposition':f'attachment; filename="{filename}"'})
 
 
 @app.get('/api/shifts/report')
 def read_shift_report(request: Request):
-    session, profile = who(request)
-    if not session['s']:
-        raise HTTPException(409, 'Choose a shift')
+    _session,row=_report_access(request)
     with _db() as conn:
-        row=conn.execute("SELECT * FROM shifts WHERE id=?",(session['s'],)).fetchone()
-    if row is None or not allowed(profile,row['code'],date.fromisoformat(row['shift_day']),session['a']):
-        raise HTTPException(404,'Shift not found')
-    if not profile.get('all_shifts') and row['owner'] != session['a']:
-        raise HTTPException(403,'Report belongs to another MST')
-    return {'content':row['report_content'], 'saved_at':row['report_saved_at'],
+        saved=conn.execute('SELECT report_content,report_saved_at,report_hash FROM shifts WHERE id=?',
+                           (row['id'],)).fetchone()
+    return {'content':saved['report_content'],
+            'saved_at':saved['report_saved_at'],'sha256':saved['report_hash'],
             'shift_id':row['id']}
-
 
 def _report_access(request: Request):
     session, profile = who(request)
@@ -899,8 +1009,55 @@ def _report_access(request: Request):
 
 def _invalidate_passdown(conn,shift_id):
     # Edited data cannot be followed by End Shift until a new EML is saved.
-    conn.execute("UPDATE shifts SET report_saved_at='',report_content='' WHERE id=?",
-                 (shift_id,))
+    conn.execute("""UPDATE shifts SET report_saved_at='',report_content='',
+          report_html='',report_hash='',report_eml=X'' WHERE id=?""",(shift_id,))
+
+
+@app.get('/api/pm-needing-completion')
+def pm_needing_completion_state(request:Request):
+    _session,shift=_report_access(request)
+    with _db() as conn:
+        return v31_pm.get(conn,shift['id'])
+
+
+@app.post('/api/pm-needing-completion/upload')
+async def pm_needing_completion_upload(request:Request,file:UploadFile=File(...)):
+    _origin_check(request)
+    session,shift=_report_access(request)
+    try:
+        data=await file.read(v31_pm.MAX_BYTES+1)
+    finally:
+        await file.close()
+    try:
+        with _db() as conn:
+            result=v31_pm.upload(conn,shift['id'],file.filename or '',data,session['a'])
+            _invalidate_passdown(conn,shift['id'])
+    except ValueError as exc:
+        raise HTTPException(422,str(exc))
+    return result
+
+
+@app.get('/api/pm-needing-completion/download')
+def pm_needing_completion_download(request:Request):
+    _session,shift=_report_access(request)
+    with _db() as conn:
+        pm=v31_pm.get(conn,shift['id'],include_data=True)
+    if not pm['present']:
+        raise HTTPException(404,'No PM report uploaded')
+    from urllib.parse import quote
+    return Response(content=pm['file_data'],media_type='application/octet-stream',
+        headers={'Content-Disposition':"attachment; filename*=UTF-8''"+quote(pm['filename'])})
+
+
+@app.delete('/api/pm-needing-completion')
+def pm_needing_completion_delete(request:Request):
+    _origin_check(request)
+    _session,shift=_report_access(request)
+    with _db() as conn:
+        removed=v31_pm.delete(conn,shift['id'])
+        if removed:
+            _invalidate_passdown(conn,shift['id'])
+    return {'removed':removed}
 
 
 class ReportingImport(BaseModel):
@@ -914,7 +1071,7 @@ class ReportingWOEdit(BaseModel):
     cause: str | None = None
     tech: str | None = None
     remarks: str | None = None
-    status: Literal['RTS','OOS'] | None = None
+    status: Literal['RTS','OOS','PENDING'] | None = None
     excluded: bool | None = None
 
 
@@ -1007,12 +1164,199 @@ def reporting_draft(payload:ReportingDraft,request:Request):
     _origin_check(request)
     session,row=_report_access(request)
     content=payload.model_dump()
+    if content['loto'] and content['missingKeys']:
+        raise HTTPException(422,'LOTO cannot be verified while keys are marked missing')
     if sum(len(x) for x in content['vendors']+content['ro'])>15000:
         raise HTTPException(422,'Too much draft content')
     with _db() as conn:
-        v31_reporting.save_draft(conn,row['id'],content)
+        changed=v31_reporting.save_draft(conn,row['id'],content)
+        if changed:
+            _invalidate_passdown(conn,row['id'])
+    return {'saved':True,'changed':changed,'shift_id':row['id']}
+
+
+class AIApproval(BaseModel):
+    text: str = Field(min_length=1,max_length=5000)
+
+
+@app.get('/api/reporting/ai/status')
+def reporting_ai_status(request:Request):
+    _report_access(request)
+    return ai_remark_rewriter.check_ai_available()
+
+
+@app.post('/api/reporting/work-orders/{wo_number}/ai/suggest')
+def reporting_ai_suggest(wo_number:str,request:Request):
+    _origin_check(request)
+    _session,row=_report_access(request)
+    with _db() as conn:
+        result=v31_reporting.request_ai_rewrite(conn,row['id'],wo_number)
+    return result
+
+
+@app.post('/api/reporting/work-orders/{wo_number}/ai/accept')
+def reporting_ai_accept(wo_number:str,payload:AIApproval,request:Request):
+    _origin_check(request)
+    _session,row=_report_access(request)
+    with _db() as conn:
+        saved=conn.execute(
+            'SELECT ai_status FROM report_wo WHERE shift_id=? AND wo_number=?',
+            (row['id'],wo_number)).fetchone()
+        if not saved or saved['ai_status']!='suggested':
+            raise HTTPException(409,'No reviewable local AI suggestion available')
+        v31_reporting.accept_ai_rewrite(conn,row['id'],wo_number,payload.text)
         _invalidate_passdown(conn,row['id'])
-    return {'saved':True,'shift_id':row['id']}
+    return {'accepted':True,'wo_number':wo_number}
+
+
+@app.post('/api/reporting/work-orders/{wo_number}/ai/reject')
+def reporting_ai_reject(wo_number:str,request:Request):
+    _origin_check(request)
+    _session,row=_report_access(request)
+    with _db() as conn:
+        try:
+            v31_reporting.reject_ai_rewrite(conn,row['id'],wo_number)
+        except KeyError as exc:
+            raise HTTPException(404,str(exc))
+    return {'rejected':True}
+
+
+@app.get('/api/breakdowns')
+def breakdown_status(request:Request):
+    _session,row=_report_access(request)
+    with _db() as conn:
+        return v31_breakdown.overview(conn,row['id'])
+
+
+class BreakdownDecision(BaseModel):
+    decision:Literal['rts','keep_oos']
+
+
+@app.post('/api/breakdowns/{wo_number}/decision')
+def breakdown_decision(wo_number:str,payload:BreakdownDecision,request:Request):
+    """V3 Completed Breakdown requires explicit RTS/keep-OOS confirmation."""
+    _origin_check(request)
+    session,row=_report_access(request)
+    try:
+        with _db() as conn:
+            result=v31_breakdown.decide(conn,wo_number,payload.decision,
+                                         row['id'],session['a'])
+            _invalidate_passdown(conn,row['id'])
+    except KeyError as exc:
+        raise HTTPException(409,str(exc))
+    return result
+
+
+class BreakdownHold(BaseModel):
+    asset: str = Field(min_length=1,max_length=120)
+    enabled: bool = True
+    reason: str = Field(default='',max_length=500)
+
+
+@app.post('/api/breakdowns/hold')
+def breakdown_hold(payload:BreakdownHold,request:Request):
+    """Explicit manual OOS hold; a later Cetaris Closed WO may not undo it."""
+    _origin_check(request)
+    session,row=_report_access(request)
+    with _db() as conn:
+        data=v31_breakdown.hold(conn,payload.asset.strip(),payload.enabled,
+                                 session['a'],payload.reason.strip())
+        _invalidate_passdown(conn,row['id'])
+    return data
+
+
+class ManualHappening(BaseModel):
+    asset: str = Field(min_length=1,max_length=120)
+    cause: str = Field(min_length=1,max_length=4000)
+    remarks: str = Field(default='',max_length=5000)
+    category: Literal['Breakdown','Process Interruption','Proactive Repair','Work Request'] = 'Proactive Repair'
+    status: Literal['RTS','OOS','PENDING'] = 'PENDING'
+    wo_reference: str = Field(default='',max_length=100)
+
+
+@app.post('/api/reporting/manual')
+def reporting_manual(payload:ManualHappening,request:Request):
+    """Log real corrective/proactive work not present in a Cetaris export."""
+    _origin_check(request)
+    session,row=_report_access(request)
+    profile=roster()[session['a']]
+    with _db() as conn:
+        linked_oos=None
+        if payload.status=='OOS':
+            active=next((x for x in v31_oos.list_records(conn)
+                         if x['asset'].casefold()==payload.asset.strip().casefold()),None)
+            if active:
+                linked_oos=active['id']
+            else:
+                entry=v31_oos.create(conn,asset=payload.asset.strip(),
+                    cause=payload.cause.strip(),notes=payload.remarks.strip(),
+                    logged_by=session['a'],logged_by_name=profile['name'],
+                    shift_id=row['id'],shift_code=row['code'],
+                    now_iso=datetime.now(TZ).isoformat())
+                linked_oos=entry['id']
+        manual=v31_reporting.add_manual_happening(conn,row['id'],
+            asset=payload.asset,cause=payload.cause,remarks=payload.remarks,
+            category=payload.category,status=payload.status,
+            technician=profile.get('name','Shift Associate'),
+            reference_wo=payload.wo_reference,manual_oos_id=linked_oos)
+        _invalidate_passdown(conn,row['id'])
+    return manual
+
+
+class CarryOverFlag(BaseModel):
+    wo_number: str = Field(min_length=1,max_length=100)
+    enabled: bool = True
+
+
+class CarryOverDecision(BaseModel):
+    source_row_id: int = Field(gt=0)
+    action: Literal['adopt','dismiss']
+
+
+@app.get('/api/reporting/carryovers')
+def reporting_carryovers(request:Request):
+    _session,row=_report_access(request)
+    with _db() as conn:
+        rows=v31_reporting.available_carry_overs(conn,row['id'],row['shift_day'])
+    return {'available':rows}
+
+
+@app.post('/api/reporting/carryovers/flag')
+def reporting_flag_carryover(payload:CarryOverFlag,request:Request):
+    _origin_check(request)
+    _session,row=_report_access(request)
+    try:
+        with _db() as conn:
+            result=v31_reporting.flag_carry_over(conn,row['id'],
+                payload.wo_number,payload.enabled)
+            _invalidate_passdown(conn,row['id'])
+    except KeyError as exc:
+        raise HTTPException(404,str(exc))
+    return result
+
+
+@app.post('/api/reporting/carryovers/decision')
+def reporting_resolve_carryover(payload:CarryOverDecision,request:Request):
+    _origin_check(request)
+    session,row=_report_access(request)
+    try:
+        with _db() as conn:
+            result=v31_reporting.resolve_carry_over(conn,row['id'],
+                 row['shift_day'],payload.source_row_id,payload.action,session['a'])
+            _invalidate_passdown(conn,row['id'])
+    except KeyError as exc:
+        raise HTTPException(409,str(exc))
+    return result
+
+
+@app.get('/api/analytics/summary')
+def analytics_summary(request:Request,
+                      period:Literal['7d','30d','90d','all']='30d'):
+    """Actual recorded V3.1 shift metrics only; no fake uptime or V2/V3 mixing."""
+    session,profile=who(request)
+    scope=None if profile.get('all_shifts') else session['a']
+    with _db() as conn:
+        return v31_analytics.summarize(conn,scope,period,datetime.now(TZ).date())
 
 
 @app.get('/api/history/legacy')
@@ -1075,31 +1419,26 @@ def shift_history(request: Request, limit: int = 25, offset: int = 0):
 
 
 @app.get('/api/history/shifts/{shift_id}/eml')
-def shift_history_eml(shift_id: int, request: Request):
-    """Regenerate a historical shift's passdown .eml from what actually
-    persists (report_wo/report_pm + the autosaved draft) -- see
-    v31_reporting.build_passdown_html() for exactly what that reconstructs
-    and what it can't (nothing is fabricated for fields that were truly
-    never saved)."""
-    session, profile = who(request)
-    admin = bool(profile.get('all_shifts'))
+def shift_history_eml(shift_id:int,request:Request):
+    """Download the EXACT EML saved at report creation, never regenerate it."""
+    session,profile=who(request)
     with _db() as conn:
-        row = conn.execute('SELECT * FROM shifts WHERE id=?', (shift_id,)).fetchone()
-        if row is None:
-            raise HTTPException(404, 'Shift not found')
-        if not admin and row['owner'] != session['a']:
-            raise HTTPException(403, 'Not your shift')
-        body = v31_reporting.build_passdown_html(conn, shift_id, row['code'])
-    facility = v31_facility.public_fields(v31_facility.load(PRIVATE))
-    dc = facility.get('distribution_center') or 'IND3'
-    eml = ('To: ' + facility.get('recipients', '') + '\r\n'
-           'Subject: ' + dc + ' - ' + row['code'] + ' Shift Passdown - ' + row['shift_day'] + '\r\n'
-           'MIME-Version: 1.0\r\nContent-Type: text/html; charset=UTF-8\r\n'
-           'Content-Transfer-Encoding: 8bit\r\n\r\n' + body.replace('\n', '\r\n'))
-    filename = f"IND3_{row['code']}_{row['shift_day']}_Shift_Passdown.eml"
-    return Response(content=eml, media_type='message/rfc822',
-                     headers={'Content-Disposition': f'attachment; filename="{filename}"'})
-
+        row=conn.execute('SELECT * FROM shifts WHERE id=?',(shift_id,)).fetchone()
+        if not row:raise HTTPException(404,'Shift not found')
+        if not profile.get('all_shifts') and row['owner']!=session['a']:
+            raise HTTPException(403,'Not your shift')
+        if row['report_eml']:
+            content=bytes(row['report_eml'])
+        elif row['report_saved_at']:
+            # Old V3.1 history: fallback for records saved before this
+            # snapshot migration, never pretend this is a byte-identical copy.
+            content=v31_report_export.build(conn,shift_id,row['code'],
+                     row['shift_day'],PRIVATE)['eml']
+        else:
+            raise HTTPException(404,'No saved passdown for this shift')
+    filename=f"IND3_{row['code']}_{row['shift_day']}_Shift_Passdown.eml"
+    return Response(content=content,media_type='message/rfc822',
+                    headers={'Content-Disposition':f'attachment; filename="{filename}"'})
 
 class ManualOOSCreate(BaseModel):
     asset: str = Field(min_length=1, max_length=120)

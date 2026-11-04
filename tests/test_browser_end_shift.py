@@ -28,6 +28,8 @@ import pytest
 pytest.importorskip("playwright.sync_api")
 from playwright.sync_api import sync_playwright  # noqa: E402
 
+from browser_shift_support import shift_for_browser, local_work_time
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
@@ -43,7 +45,7 @@ def live_server(tmp_path):
     with roster_csv.open("w", newline="") as f:
         w = csv.writer(f)
         w.writerow(["Name", "Assoc. #", "Shift", "Job Title"])
-        w.writerow(["Browser Check Tech", "555099", "S1", "MST"])
+        w.writerow(["Browser Check Tech", "555099", shift_for_browser(), "MST"])
 
     env = os.environ.copy()
     env["IND3_V31_PRIVATE_DIR"] = str(tmp_path)
@@ -110,8 +112,12 @@ def test_end_shift_button_really_closes_the_shift_server_side(live_server):
         )
         assert saved["status"] == 200, saved
 
+        page.locator("#end-shift").click()
+        page.locator("#modal-actions .btn-end").wait_for(timeout=10000)
+        if page.locator("#v31-end-ack").count():
+            page.locator("#v31-end-ack").check()
         with page.expect_response(lambda r: "/api/shifts/end" in r.url) as response_info:
-            page.locator("#end-shift").click()
+            page.locator("#modal-actions .btn-end").click()
         response = response_info.value
         assert response.status == 200, response.status
 
