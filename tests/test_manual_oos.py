@@ -147,12 +147,12 @@ def test_manual_oos_changes_invalidate_previous_passdown_before_end_shift(client
     assert client.post('/api/shifts/report',json={'content':draft}).status_code == 200
     oos = client.post('/api/oos',json={'asset':'TEST-001'})
     assert oos.status_code == 200
-    assert client.post('/api/shifts/end').status_code == 409
+    assert client.post('/api/shifts/end',json={'acknowledge_warnings':True}).status_code == 409
     assert client.post('/api/shifts/report',json={'content':draft}).status_code == 200
     assert client.post(f"/api/oos/{oos.json()['id']}/rts",json={}).status_code == 200
-    assert client.post('/api/shifts/end').status_code == 409
+    assert client.post('/api/shifts/end',json={'acknowledge_warnings':True}).status_code == 409
     assert client.post('/api/shifts/report',json={'content':draft}).status_code == 200
-    assert client.post('/api/shifts/end').status_code == 200
+    assert client.post('/api/shifts/end',json={'acknowledge_warnings':True}).status_code == 200
 
 
 def test_resolved_manual_oos_appears_in_regenerated_historical_eml(client, monkeypatch):
@@ -163,7 +163,7 @@ def test_resolved_manual_oos_appears_in_regenerated_historical_eml(client, monke
     saved = client.post("/api/shifts/report",
         json={"content": "IND3 S1 SHIFT HAPPENINGS: None."})
     assert saved.status_code == 200, saved.text
-    ended = client.post("/api/shifts/end", json={})
+    ended = client.post("/api/shifts/end",json={"acknowledge_warnings":True})
     assert ended.status_code == 200, ended.text
 
     eml = client.get(f"/api/history/shifts/{shift_id}/eml")
