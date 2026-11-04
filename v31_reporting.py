@@ -422,11 +422,13 @@ def update_wo(conn,shift_id,wo_number,data:dict):
     permitted={"asset","category","cause","tech","remarks","status","excluded"}
     fields={k:v for k,v in data.items() if k in permitted}
     if not fields:raise ValueError("No supported work-order changes")
+    if row["status"]=="PENDING" and "status" in fields and fields["status"]!="PENDING":
+        raise ValueError("Pending Cetaris closure must be verified by a new Closed WO import; editing other fields is allowed")
     for k,v in fields.items():
         if k=="excluded":
             if not isinstance(v,bool):raise ValueError("Excluded must be true or false")
             fields[k]=int(v)
-        elif not isinstance(v,str) or len(v)>5000 or (k=="status" and v not in ("RTS","OOS")):
+        elif not isinstance(v,str) or len(v)>5000 or (k=="status" and v not in ("RTS","OOS","PENDING")):
             raise ValueError("Invalid value for "+k)
         else:fields[k]=v.strip()
     setters=", ".join(k+"=?" for k in fields)
