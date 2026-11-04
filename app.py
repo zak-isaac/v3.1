@@ -914,7 +914,7 @@ class ReportingWOEdit(BaseModel):
     cause: str | None = None
     tech: str | None = None
     remarks: str | None = None
-    status: Literal['RTS','OOS'] | None = None
+    status: Literal['RTS','OOS','PENDING'] | None = None
     excluded: bool | None = None
 
 
