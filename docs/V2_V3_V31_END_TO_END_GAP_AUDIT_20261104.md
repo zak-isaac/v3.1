@@ -69,3 +69,31 @@
 - V3.1: [app.py](https://github.com/zak-isaac/v3.1/blob/main/app.py), [v31_roster.py](https://github.com/zak-isaac/v3.1/blob/main/v31_roster.py), [v31_reporting.py](https://github.com/zak-isaac/v3.1/blob/main/v31_reporting.py), [v31_split.py](https://github.com/zak-isaac/v3.1/blob/main/v31_split.py), [web/shift-data.js](https://github.com/zak-isaac/v3.1/blob/main/web/shift-data.js), [prototypes/shift-report.html](https://github.com/zak-isaac/v3.1/blob/main/prototypes/shift-report.html), [v31_oos.py](https://github.com/zak-isaac/v3.1/blob/main/v31_oos.py).
 - Draft change: https://github.com/zak-isaac/v3.1/pull/14
 - No real employee names, roster content, equipment inventory, credentials, or work-order exports are included in this public review document.
+
+
+## Additional confirmed audit findings (source-level, not facility-tested)
+
+### P0 — PENDING work-order status can become RTS unintentionally
+- In `prototypes/shift-report.html`, `editRow()` always sends a `status` from a dropdown with only **RTS** and **OOS** options. The import engine legitimately stores **PENDING** for a non-PM `Completed` WO awaiting Cetaris closure. When the form opens for a PENDING record, neither option is selected; the browser defaults to the first option (**RTS**). Saving an unrelated remark or asset edit can therefore mark the WO RTS without a positive completion-status decision.
+- Fix: represent PENDING explicitly and preserve the original value on unrelated edits; require a distinct documented status action to move from PENDING/OOS to RTS; add real-browser regression tests and independent backend transition guards.
+- Source: `prototypes/shift-report.html` `editRow()`; `v31_reporting.py` `import_selection()` and `update_wo()`.
+
+### P0 — Final report can be saved without server-verified report content
+- `POST /api/shifts/report` accepts caller-supplied text if it includes `IND3` and `SHIFT HAPPENINGS`, regardless of whether the saved text faithfully includes the qualifying WOs, pending closure, OOS/RTS, LOTO, or PMs currently in the database. The backend then marks `report_saved_at`, enabling End Shift. This does **not** establish that the report is accurate, and the synthetic E2E test explicitly saves an arbitrary short placeholder.
+- Fix: server renders and persists a canonical, immutable passdown snapshot from the shift's persisted data, validates required workflow checks, and ties preview/EML/History/End Shift to that snapshot version. Preserve original content, creation actor, and a digest for audit.
+- Source: `app.py` `save_shift_report()`, `end_shift()`; `tests/test_e2e_shift_workflow.py`.
+
+### P1 — Work timestamp is stored but not displayed in the current WO detail/report
+- `v31_reporting.py` stores `work_at` for an imported WO, yet `prototypes/shift-report.html` `applySnapshot()` drops it and the detail/preview/EML do not show its evidence timestamp. V3 has an explicit WO work-time label/source in its model.
+- Fix: display a clearly labeled actual work-evidence time and source, keeping it distinct from Cetaris administrative WO closure time, without inventing timestamps.
+
+### P1 — Shift may expire without a generated passdown
+- `expire_shifts()` automatically closes a shift one hour after its scheduled end even if `report_saved_at` is empty; unlike a successful user-triggered End Shift, that closure leaves an incomplete/unreviewed passdown. This may be intentionally safer than an always-open session, but operations need an explicit exception queue, owner/manager alert and recoverable close-out process.
+- Do not automatically invent or send an incomplete passdown.
+
+### P1 — Test assurance gap
+- The CI job now runs all Python tests but the Playwright modules remain skipped unless installed/configured. Some login-to-end unit tests contain permissive assertions (e.g., `or True`) that fail to enforce no-reopen guarantees. Add real browser CI and assertions that can actually fail.
+- A passing CI suite alone is **not** an onsite user-acceptance test.
+
+### Audit policy
+- These are *identified issues*; no production change or merge is authorized by this report. Source-based risks should be reproduced with synthetic test fixtures before changing business rules, then validated on an approved staging environment.
