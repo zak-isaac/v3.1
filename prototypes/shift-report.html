@@ -349,7 +349,19 @@ ${state.notes||'None'}
 LOTO Verification: ${state.loto?'Verified':'Not verified'}${state.missingKeys?.length?`\nMissing Keys: ${state.missingKeys.join(', ')}`:''}
 
 V3.1 LOCAL SHIFT REPORT — NO EMAIL SENT`;}
-function previewReport(){showModal('Shift Passdown Preview','Review the selected shift and imported work before creating the Outlook EML.',`<div class="preview-document">${esc(createReport())}</div>`,[{text:'Close',onClick:closeModal},{text:'Generate Outlook EML',kind:'btn-primary',onClick:()=>{closeModal();emlDownload();}}]);}
+async function previewReport(){
+  try{
+    await window.V31Reporting?.flushDraft();
+    const resp=await fetch('/api/shifts/report/preview',{credentials:'same-origin'});
+    const result=await resp.json().catch(()=>({}));
+    if(!resp.ok)throw Error(result.detail||'Could not render saved shift data.');
+    showModal('Shift Passdown Preview','Authoritative server-generated report; the downloaded EML uses this same snapshot.','<iframe id="v31-server-report-preview" title="Passdown report" sandbox="" style="width:100%;min-height:370px;border:1px solid #dce5f0;border-radius:8px;background:white"></iframe>',[
+      {text:'Close',onClick:closeModal},
+      {text:'Generate Outlook EML',kind:'btn-primary',onClick:()=>{closeModal();emlDownload();}}
+    ],{wide:true});
+    $('#v31-server-report-preview').srcdoc=result.html;
+  }catch(err){toast(err.message);}
+}
 function buildEmailHtml(){
   const shift=window.__v31ShiftContext?.code||'Unassigned';
   const inc=state.rows.filter(r=>!r.excluded);
@@ -402,37 +414,29 @@ function buildEmailHtml(){
     loto+missingKeyHtml+'</body></html>';
 }
 async function emlDownload(){
-  await window.V31Reporting?.flushDraft();
-  const report=createReport();
   const generate=$('#generate-eml');
   generate.disabled=true;
-  try {
-    // Server-owned shift record is the prerequisite for End Shift.
-    const response=await fetch('/api/shifts/report',{
-      method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({content:report})
-    });
-    if(!response.ok) {
-      const info=await response.json().catch(()=>({}));
-      throw Error(info.detail||'Could not save this shift passdown.');
+  try{
+    // A failed draft save must prevent report finalization.
+    await window.V31Reporting?.flushDraft();
+    const saved=await fetch('/api/shifts/report',{method:'POST',credentials:'same-origin',
+      headers:{'Content-Type':'application/json'},body:'{}'});
+    const receipt=await saved.json().catch(()=>({}));
+    if(!saved.ok)throw Error(receipt.detail||'Could not save authoritative passdown.');
+    const download=await fetch('/api/shifts/report/download',{credentials:'same-origin'});
+    if(!download.ok){
+      const error=await download.json().catch(()=>({}));
+      throw Error(error.detail||'Could not download saved EML.');
     }
-    const shift=window.__v31ShiftContext?.code||'Unassigned';
-    const facility=window.__v31Facility||{};
-    const dc=facility.distribution_center||'IND3';
-    const body=buildEmailHtml().replace(/\r?\n/g,'\r\n');
-    const eml='To: '+(facility.recipients||'')+'\r\nSubject: '+dc+' - '+shift+' Shift Passdown - V3.1\r\n'+
-      'MIME-Version: 1.0\r\nContent-Type: text/html; charset=UTF-8\r\n'+
-      'Content-Transfer-Encoding: 8bit\r\n\r\n'+body;
-    const url=URL.createObjectURL(new Blob([eml],{type:'message/rfc822'}));
+    const url=URL.createObjectURL(await download.blob());
     const link=document.createElement('a');
-    link.href=url;link.download='IND3_'+shift+'_Shift_Passdown_Preview.eml';
+    link.href=url;link.download=receipt.filename||'IND3_Shift_Passdown.eml';
     document.body.append(link);link.click();link.remove();
     setTimeout(()=>URL.revokeObjectURL(url),2000);
-    $('#last-saved').textContent='Shift passdown saved · Outlook EML created';
-    toast('Passdown saved. Outlook EML downloaded; email not sent.');
-  }catch(error){
-    toast(error.message);
-  }finally{generate.disabled=false;}
+    $('#last-saved').textContent='Canonical passdown saved · Outlook EML downloaded';
+    toast('Passdown saved and downloaded. Email not sent.');
+  }catch(error){toast(error.message);}
+  finally{generate.disabled=false;}
 }
 function confirmEnd(){showModal('End this shift?','This closes the shift in the real V3.1 database. A saved passdown is required first.',`<p>End the <strong>${esc(window.__v31ShiftContext?.code||'selected')}</strong> shift?</p><p class="field-help">This cannot be undone from this screen. Generate and save the passdown first if you have not already.</p>`,[{text:'Cancel',onClick:closeModal},{text:'End shift',kind:'btn-end',onClick:async()=>{
   const endButton=$('#end-shift');if(endButton)endButton.disabled=true;
