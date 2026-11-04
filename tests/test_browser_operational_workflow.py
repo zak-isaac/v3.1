@@ -9,7 +9,7 @@ import sqlite3
 
 import pytest
 pytest.importorskip("playwright.sync_api")
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 
 from test_browser_end_shift import live_server
 
@@ -48,8 +48,25 @@ def test_real_browser_manual_pm_breakdown_passdown_and_end_shift(live_server):
         page.locator('#v31-manual-form').wait_for(timeout=5000)
         assert page.locator('#v31-manual-form').evaluate(
             "(form) => form.checkValidity()"), "Manual work form did not validate"
-        with page.expect_response(lambda r:'/api/reporting/manual' in r.url) as changed:
-            page.get_by_role('button',name='Save Manual Happening').click()
+        script_errors=[]
+        page.on('pageerror',lambda exc:script_errors.append(str(exc)))
+        try:
+            with page.expect_response(
+                lambda r:'/api/reporting/manual' in r.url,timeout=12000
+            ) as changed:
+                page.get_by_role('button',name='Save Manual Happening').click()
+        except PlaywrightTimeoutError as exc:
+            diag=page.evaluate("""() => ({
+              modalVisible:!document.querySelector('#modal-root')?.hidden,
+              valid:document.querySelector('#v31-manual-form')?.checkValidity(),
+              asset:document.querySelector('#m-asset')?.value,
+              toast:document.querySelector('#toast')?.textContent,
+              saveButton:document.querySelector('#modal-actions')?.textContent
+            })""")
+            raise AssertionError(
+                f'Manual Save request never reached server: {diag}, '
+                f'JavaScript exceptions: {script_errors}'
+            ) from exc
         assert changed.value.status==200
         state=page.evaluate("""async () => (await (await fetch(
             '/api/reporting/state',{credentials:'same-origin'})).json())""")
