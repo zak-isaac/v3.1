@@ -314,9 +314,9 @@ async function saveDraft(notify=false){
   await api('/api/reporting/draft',view.draft());
   document.querySelector('#last-saved').textContent='Draft saved to selected shift';
   if(notify)view.toast('Shift draft saved');
- }catch(e){view.toast(e.message);}
+ }catch(e){view.toast('Draft save failed: '+e.message);throw e;}
 }
-function queueDraft(){clearTimeout(saveTimer);saveTimer=setTimeout(()=>saveDraft(false),650);}
+function queueDraft(){clearTimeout(saveTimer);saveTimer=setTimeout(()=>saveDraft(false).catch(()=>{}),650);}
 async function flushDraft(){clearTimeout(saveTimer);await saveDraft(false);}
 window.V31Reporting={upload,chooseTechs,updateWO,saveDraft,queueDraft,flushDraft,refresh};
 refresh().catch(e=>view.toast('Reporting data could not load: '+e.message));
