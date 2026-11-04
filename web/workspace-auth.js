@@ -58,19 +58,8 @@
     }
   }
   $('#v31-signout')?.addEventListener('click',signout);
-  const endButton=$('#end-shift');
-  if (endButton) endButton.addEventListener('click',async e=>{
-    e.stopImmediatePropagation();
-    e.preventDefault();
-    const selected=context?.selected;
-    if(!selected) {window.location.replace('/');return;}
-    if(!window.confirm('End '+selected.code+' report? This closes the selected shift session, not any overlapping shifts.')) return;
-    endButton.disabled=true;
-    try {
-      await request('/api/shifts/end',{});
-      window.location.replace('/');
-    } catch(err) {window.alert(err.message);endButton.disabled=false;}
-  },true);
+  // End Shift is handled once by shift-report.html's styled confirmation.
+  // Do not intercept clicks in the capture phase or bypass the modal.
   $('#go-to-login')?.addEventListener('click',e=>{e.stopImmediatePropagation();signout();},true);
   await draw();
   // Keeps the sidebar clock ticking and catches an expired/closed shift
