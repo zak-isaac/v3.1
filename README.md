@@ -18,7 +18,7 @@ Open <http://127.0.0.1:8980/> and use Command+Shift+R to refresh the UI after up
 
 ## Connect the approved Drax workbook
 
-For real MST logins, V3.1 needs an **approved copy or authorized synchronized path** to the Drax roster. It **does not connect to the production V3 database** and does not download the live Excel roster automatically.
+For authorized Drax-backed local logins, V3.1 needs an **approved copy or authorized synchronized path** to the Drax roster. It **does not connect to the production V3 database** and does not download the live Excel roster automatically.
 
 The workbook must contain the existing Drax columns `Name`, `Assoc. #`, `Default ID`, `Shift`, and `Job Title`. The original double-spaced filename `Drax  Associates.xlsx` and its exact Windows OneDrive location are recognized.
 
@@ -49,10 +49,23 @@ The manager roster console is accessible both through **Manage Drax Roster** on 
 
 ## Correct login flow
 
-- **MST:** Enter authorized associate number on the first login screen. V3.1 checks the Drax-backed role, date, ownership and assigned shift. It starts/resumes the MST's own shift and opens **Shift Report → Shift Happenings** directly.
+- **Active Drax associate, any Job Title:** Enter the authorized associate number. V3.1 checks the active Drax record, assigned S1–S5 shift, scheduled reporting hours, and exclusive report ownership. The original owner may resume; unrelated associates on the same shift cannot join. A non-MST report owner can use the normal Shift Report workspace.
+- **MST relief:** An MST assigned to that shift can explicitly take over a report originally started by a non-MST technician. V3.1 asks for confirmation and records previous owner, new owner and timestamp. It is not an automatic join; the former owner loses edit access. MST-to-MST takeover is blocked.
+- **MST overtime:** Only an active MST with a management-approved grant for one specific shift code and date may start/resume an off-shift report. Regular non-MST users cannot receive cross-shift grants. Management grants/revokes are currently implemented by the protected `POST /api/admin/mst-overtime` API; the management UI has not yet been added.
 - **Management preview identifiers:** `8972` and `2759` go to the **S1–S5 shift-selection dialog**. Managers may start an eligible shift or resume an open one.
 - **Active Shift Detected / New Shift Ready:** Resume and Start ask for the associate number in a popup on the same screen. The selected shift ID is verified server-side, without bouncing back to the first login page.
-- **Authorization:** A regular MST cannot resume or modify another associate's shift. Management can access eligible open sessions. **Overtime is disabled entirely in V3.1 for now.** MSTs are restricted to their Drax-assigned S1–S5 shift, and management can select from S1–S5.
+- **Authorization:** Only the current owner or management can work in a report, except the explicit audited MST relief of a technician-owned report. All non-management users are confined to their assigned shift unless a dated MST overtime grant exists. Management can select eligible S1–S5 shifts. Regular associate numbers are **not secure identity verification**; this remains localhost-only.
+
+
+
+### Staffing availability prompt (design pending)
+
+A possible start-shift prompt is **"Is an MST on site today?"**. This is **not**
+enforced yet: a yes/no answer from the person attempting login is not a
+verified roster attendance or security check. Decide how staffing will be
+confirmed, who may attest, and whether it blocks opening or only warns before
+adding a hard access gate. Current code enforces Drax assignment, shift hours,
+exclusive ownership, and explicit MST relief.
 
 ### Reporting times (Indianapolis facility clock)
 
@@ -82,7 +95,7 @@ The sidebar now uses the genuine Walmart 2025 vector artwork (official shapes an
 
 The existing approved Shift Report UI is wired to the new, private V3.1 database.
 
-1. Sign in as an authorized MST (Drax-assigned shift) or select a shift as management.
+1. Sign in as an authorized active Drax associate for your assigned shift, or select an eligible shift as management.
 2. **Import Cetaris** accepts validated XLSX or CSV work-order exports, bounded to 12 MB / 30,000 labor rows. Staging the file **does not yet add work orders**.
 3. Select the actual technicians present in the export. V3.1 imports only the selected technicians' rows and uses the reviewed V3 actual-work attribution engine. Drax shift assignments resolve overlapping work when technician identity matches, without assuming that selecting a technician proves ownership.
 4. **Shift Happenings** groups selected labor by WO number, preserves individual remarks and combines multiple technicians, and uses the Cetaris Service/Repair Description as the displayed cause. Preventive-maintenance WOs are counted once and excluded from normal happenings.
