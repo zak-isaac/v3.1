@@ -43,6 +43,7 @@ def client(tmp_path, monkeypatch):
         writer.writerow(['Temporary Test F', '666666', 'S1', 'MST'])
         writer.writerow(['Other Role', '777777', 'S1', 'Associate'])
         writer.writerow(['Second Role', '777778', 'S1', 'Maintenance Technician'])
+        writer.writerow(['S2 Non-MST', '777779', 'S2', 'Associate'])
         writer.writerow(['Night Technician', '888888', 'S3', 'Maintenance Technician'])
         writer.writerow(['Weekend Technician', '888889', 'S5', 'Associate'])
         writer.writerow(['No Shift', '888890', '', 'Associate'])
@@ -257,6 +258,29 @@ def test_second_technician_blocked_and_old_session_revoked_after_mst_takeover(cl
     assert client.post('/api/shifts/end').status_code == 403
     client.cookies.set(m.SESSION_COOKIE, mst_cookie)
     assert client.get('/api/reporting/state').status_code == 200
+
+
+def test_mst_overtime_cannot_be_used_for_cross_shift_takeover(client, monkeypatch):
+    freeze(monkeypatch, at(2026, 10, 27, 13))
+    assert sign_in(client,'777779').status_code == 200
+    s2 = client.get('/api/me').json()['selected']['id']
+    client.post('/api/logout')
+
+    assert sign_in(client,'8972').status_code == 200
+    assert client.post('/api/admin/mst-overtime',json={
+        'associate':'111111','code':'S2','shift_day':'2026-10-27','approved':True
+    }).status_code == 200
+    client.post('/api/logout')
+
+    # S1 MST has approval to work overtime on S2, but must NEVER take over
+    # a report already opened by an S2 technician.
+    assert sign_in(client,'111111',intent='select').status_code == 200
+    assert client.post('/api/shifts/resume',json={'shift_id':s2}).status_code == 403
+    assert client.post('/api/shifts/takeover',json={'shift_id':s2}).status_code == 403
+    with m._db() as db:
+        row=db.execute('SELECT owner,owner_role FROM shifts WHERE id=?',(s2,)).fetchone()
+        assert tuple(row) == ('777779','technician')
+        assert not db.execute('SELECT 1 FROM shift_owner_transfers WHERE shift_id=?',(s2,)).fetchone()
 
 
 def test_mst_overtime_requires_management_grant_and_specific_shift_date(client, monkeypatch):
