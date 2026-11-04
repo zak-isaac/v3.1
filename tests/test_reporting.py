@@ -82,6 +82,67 @@ def test_selected_shift_required_for_reporting(client,monkeypatch):
     assert result["rows"]==[] and result["pm_count"]==0
 
 
+def test_new_assigned_technicians_on_replacement_are_preselected_without_reenabling_old_deselections(client,monkeypatch):
+    clock(monkeypatch)
+    enter(client)
+    first=upload(client,[row("TECH101",tech="Synthetic A"),
+                         row("TECH102",tech="Synthetic B")])
+    assert first.status_code==200
+    assert import_techs(client,["Synthetic A"]).status_code==200
+    stage=client.get('/api/reporting/state').json()['stage']
+    assert stage['imported'] is True
+    assert upload(client,[row("TECH103",tech="Synthetic A"),
+                          row("TECH104",tech="Synthetic B"),
+                          row("TECH105",tech="Synthetic C")]).status_code==200
+    new_stage=client.get('/api/reporting/state').json()['stage']
+    assert not new_stage['imported']
+    assert set(new_stage['prior_stage_technicians'])=={"Synthetic A","Synthetic B"}
+    assert set(client.get('/api/reporting/state').json()['technicians'])=={"Synthetic A"}
+    # Browser preselection combines previously-selected A with newly
+    # encountered C; B remains deliberately deselected.
+    frontend=client.get('/web/shift-data.js').text
+    assert 'previousStage.has(tech.name)' in frontend
+    assert 'snapshot.stage.prior_stage_technicians' in frontend
+
+
+def test_verified_cetaris_closed_reconciles_edited_pending_without_erasing_remarks(client,monkeypatch):
+    clock(monkeypatch)
+    enter(client)
+    assert upload(client,[row("CLSR001",status="Completed")]).status_code==200
+    imported=client.post('/api/reporting/import',json={
+        'technicians':['Synthetic A'],'closure_reviews':{'CLSR001':'add'}})
+    assert imported.status_code==200,imported.text
+    assert client.get('/api/reporting/state').json()['rows'][0]['status']=='PENDING'
+    assert client.post('/api/reporting/work-orders/CLSR001',
+                       json={'remarks':'Verified motor checks, waiting for final Cetaris closure'}).status_code==200
+    assert upload(client,[row("CLSR001",status="Closed")]).status_code==200
+    assert import_techs(client,['Synthetic A']).status_code==200
+    updated=client.get('/api/reporting/state').json()['rows'][0]
+    assert updated['status']=='RTS'
+    assert updated['edited']==1
+    assert 'waiting for final Cetaris' in updated['remarks']
+
+
+def test_unchanged_draft_preserves_saved_eml_but_new_draft_invalidates_it(client,monkeypatch):
+    clock(monkeypatch)
+    enter(client)
+    payload={"vendors":[],"ro":[],"notes":"Inspect bay 12","loto":True,"missingKeys":[]}
+    init=client.post('/api/reporting/draft',json=payload)
+    assert init.status_code==200 and init.json()['changed'] is True
+    report=client.post('/api/shifts/report',json={})
+    assert report.status_code==200,report.text
+    etag=report.json()['sha256']
+    again=client.post('/api/reporting/draft',json=payload)
+    assert again.status_code==200 and again.json()['changed'] is False
+    saved=client.get('/api/shifts/report').json()
+    assert saved['sha256']==etag and saved['saved_at']
+    assert client.get('/api/shifts/report/download').status_code==200
+    different=client.post('/api/reporting/draft',json={**payload,"notes":"Inspect bay 12 and bay 13"})
+    assert different.status_code==200 and different.json()['changed'] is True
+    assert client.get('/api/shifts/report').json()['saved_at']==''
+    assert client.get('/api/shifts/report/download').status_code==409
+
+
 def test_two_tech_one_closed_wo_grouped_with_remarks(client,monkeypatch):
     clock(monkeypatch)
     enter(client)
