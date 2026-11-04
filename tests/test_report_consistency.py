@@ -182,8 +182,8 @@ def test_manual_edit_survives_reimport_and_matches_in_preview_and_eml(page_ctx):
     # this through the real user flow: open Preview, read it, then use the
     # modal's own "Generate Outlook EML" button.
     page.locator("#preview-report").click()
-    page.wait_for_timeout(300)
-    preview_text = page.evaluate("document.querySelector('.preview-document')?.textContent")
+    page.locator('#v31-server-report-preview').wait_for(timeout=10000)
+    preview_text = page.evaluate("document.querySelector('#v31-server-report-preview')?.srcdoc")
     assert "MST confirmed: unit received full service." in preview_text
     assert "9601" in preview_text
 
@@ -218,7 +218,7 @@ def test_html_special_characters_and_unicode_survive_into_the_eml(page_ctx):
     assert "5°" in content
 
 
-def test_pending_pm_section_states_unavailable_not_fabricated_none(page_ctx):
+def test_pm_needing_completion_section_never_invents_unuploaded_rows(page_ctx):
     page, base_url, _ = page_ctx
     _stage_and_import(page, base_url, "9801", "Routine check", "PM support")
     page.wait_for_timeout(200)
@@ -227,6 +227,6 @@ def test_pending_pm_section_states_unavailable_not_fabricated_none(page_ctx):
         page.locator("#generate-eml").click()
     content = download_info.value.path().read_text(encoding="utf-8")
 
-    assert "Needing to be Completed" in content
-    assert "not yet connected" in content
+    assert "PMs Needing Completion" in content
+    assert "No PMs Needing Completion report uploaded" in content
     assert "No PMs pending this shift." not in content
