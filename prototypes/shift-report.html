@@ -99,7 +99,7 @@
             
             
             <section id="audit" class="audit-panel"><div><strong>Imported WO Audit</strong><p>No Cetaris audit yet. Import a file and confirm the technicians to see diagnostics.</p></div></section>
-            <section class="work-area" aria-label="Shift work details"><div class="tabstrip" role="tablist" aria-label="Report sections"><button data-tab="happenings" class="tab current" role="tab" aria-selected="true"><svg class="icon"><use href="#i-stack"/></svg>Shift Happenings <span id="tab-wo-count">(0)</span></button><button data-tab="pm" class="tab" role="tab" aria-selected="false"><svg class="icon"><use href="#i-clipboard"/></svg>PMs <span id="pm-tab-count">(0 / 0)</span></button><button data-tab="breakdown" class="tab" role="tab" aria-selected="false"><svg class="icon"><use href="#i-wrench"/></svg>Breakdown / OOS</button><button data-tab="vendors" class="tab" role="tab" aria-selected="false"><svg class="icon"><use href="#i-truck"/></svg>Vendors <span id="vendor-tab-count">(0)</span></button><button data-tab="ro" class="tab" role="tab" aria-selected="false"><svg class="icon"><use href="#i-file"/></svg>RO <span id="ro-tab-count">(0)</span></button></div><div id="tab-content" class="tab-content" role="tabpanel"></div></section>
+            <section class="work-area" aria-label="Shift work details"><div style="display:flex;flex-wrap:wrap;justify-content:flex-end;gap:9px;margin:12px 12px 2px"><button id="v31-add-manual" class="btn btn-primary" type="button">+ Manual Happening</button><button id="v31-review-carryovers" class="btn btn-light" type="button">Review Carry-overs</button></div><div class="tabstrip" role="tablist" aria-label="Report sections"><button data-tab="happenings" class="tab current" role="tab" aria-selected="true"><svg class="icon"><use href="#i-stack"/></svg>Shift Happenings <span id="tab-wo-count">(0)</span></button><button data-tab="pm" class="tab" role="tab" aria-selected="false"><svg class="icon"><use href="#i-clipboard"/></svg>PMs <span id="pm-tab-count">(0 / 0)</span></button><button data-tab="breakdown" class="tab" role="tab" aria-selected="false"><svg class="icon"><use href="#i-wrench"/></svg>Breakdown / OOS</button><button data-tab="vendors" class="tab" role="tab" aria-selected="false"><svg class="icon"><use href="#i-truck"/></svg>Vendors <span id="vendor-tab-count">(0)</span></button><button data-tab="ro" class="tab" role="tab" aria-selected="false"><svg class="icon"><use href="#i-file"/></svg>RO <span id="ro-tab-count">(0)</span></button></div><div id="tab-content" class="tab-content" role="tabpanel"></div></section>
           </section>
           <aside class="report-actions" aria-label="Report Actions"><div class="actions-heading"><div><span class="actions-eyebrow">WORKSPACE TOOLS</span><h2>Report Actions</h2></div></div>
             <div class="action-item pm-action"><div class="action-item-title"><span class="action-icon blue-icon"><svg class="icon"><use href="#i-calendar"/></svg></span><div><strong>PMs Needing Completion</strong><small>Separate unfinished-PM report · Excel/CSV automatically parsed</small></div></div><button id="upload-pending" class="btn btn-light pm-upload"><svg class="icon"><use href="#i-upload"/></svg> Upload File</button><small id="pending-filename" class="chosen-file"></small></div>
@@ -267,8 +267,24 @@ function workTab(){
 }
 function populateRows(){const tbody=$('#wo-rows');if(!tbody)return;const pillWrap=$('#wo-filter-pills');if(pillWrap)pillWrap.innerHTML=renderCategoryPills();const rows=state.rows.filter(r=> {const match=category==='excluded'?r.excluded:!r.excluded&&(category==='all'||r.category===category);return match && [r.asset,r.wo,r.cause,r.tech,r.category].some(v=>v.toLowerCase().includes(search.toLowerCase()));});tbody.innerHTML=rows.length?rows.map((r,i)=>`<tr class="${r.excluded?'excluded-row':''}"><td>${i+1}</td><td class="asset-cell"><strong>${esc(r.asset)}</strong><small>WO# ${esc(r.wo)}</small></td><td><span class="category-pill ${catClass(r.category)}">${esc(r.category)}</span></td><td class="cause-cell" title="Technician: ${esc(r.tech)}">${esc(r.cause)}<small>${esc(r.tech)}</small></td><td><span class="status-pill ${r.excluded?'excluded':r.status==='PENDING'?'excluded':r.status.toLowerCase()}">${r.excluded?'Excluded':r.status==='RTS'?`${ico('check')} RTS`:r.status==='PENDING'?'Pending closure':`${ico('alert')} OOS`}</span></td><td><div class="row-buttons"><button class="row-btn" data-detail="${r.id}" title="View work order details" aria-label="View ${esc(r.asset)}">${ico('file')}<span>View</span></button><button class="row-btn" data-edit="${r.id}" title="Edit work order" aria-label="Edit ${esc(r.asset)}">${ico('edit')}<span>Edit</span></button><button class="row-btn ${r.excluded?'':'row-btn-danger'}" data-exclude="${r.id}" title="${r.excluded?'Restore':'Exclude'} work order" aria-label="${r.excluded?'Restore':'Exclude'} ${esc(r.asset)}">${ico(r.excluded?'eye':'eyeoff')}<span>${r.excluded?'Restore':'Exclude'}</span></button></div></td></tr>`).join(''):`<tr><td colspan="6" class="empty-table">No work orders yet. Import a Cetaris file to begin your Shift Happenings.</td></tr>`;
 $$('[data-edit]',tbody).forEach(b=>b.addEventListener('click',()=>editRow(Number(b.dataset.edit))));$$('[data-exclude]',tbody).forEach(b=>b.addEventListener('click',()=>{const r=state.rows.find(r=>r.id===Number(b.dataset.exclude));const desired=!r.excluded;window.V31Reporting.updateWO(r.wo,{excluded:desired}).then(()=>{r.excluded=desired;updateMetrics();populateRows();toast(`${r.asset} ${r.excluded?'excluded from':'restored to'} Shift Happenings`);}).catch(err=>toast(err.message));}));$$('[data-detail]',tbody).forEach(b=>b.addEventListener('click',()=>rowDetail(Number(b.dataset.detail))));}
-function editRow(id){const r=state.rows.find(r=>r.id===id);showModal(`Edit ${r.asset}`,'Work order changes are saved to this selected shift.',`<div class="field"><label for="edit-asset">Asset ID</label><input id="edit-asset" value="${esc(r.asset)}"></div><div class="field"><label for="edit-cause">Cause / work performed</label><textarea id="edit-cause">${esc(r.cause)}</textarea></div><div class="field"><label for="edit-remarks">Technician remarks</label><textarea id="edit-remarks">${esc(r.remarks||'')}</textarea></div><div class="field"><label for="edit-tech">Technicians</label><input id="edit-tech" value="${esc(r.tech)}"></div><div class="field"><label for="edit-status">Equipment status</label><select id="edit-status" ${r.status==='PENDING'?'disabled':''}>${r.status==='PENDING'?'<option value="PENDING" selected>Pending closure — reimport after Cetaris closes</option>':''}<option value="RTS" ${r.status==='RTS'?'selected':''}>Returned to Service (RTS)</option><option value="OOS" ${r.status==='OOS'?'selected':''}>Out of Service (OOS)</option></select></div>`,[{text:'Cancel',onClick:closeModal},{text:'Save changes',kind:'btn-primary',onClick:async()=>{const changes={asset:$('#edit-asset').value.trim()||r.asset,cause:$('#edit-cause').value.trim()||r.cause,tech:$('#edit-tech').value.trim()||r.tech,remarks:$('#edit-remarks').value.trim(),status:$('#edit-status').value};try{await window.V31Reporting.updateWO(r.wo,changes);Object.assign(r,changes);closeModal();updateMetrics();renderTab();toast('Work order updated and saved');}catch(err){toast(err.message);}}}]);}
-function rowDetail(id){const r=state.rows.find(r=>r.id===id);showModal(`Work Order #${r.wo}`,'Read-only work order details',`<div class="detail-list"><p><strong>Asset:</strong> ${esc(r.asset)}</p><p><strong>Category:</strong> ${esc(r.category)}</p><p><strong>Technicians:</strong> ${esc(r.tech)}</p><p><strong>Status:</strong> ${esc(r.status)}</p><p><strong>Reported work:</strong> ${esc(r.cause)}</p><p><strong>Technician remarks:</strong> ${esc(r.remarks||'No remarks')}</p><p><strong>Work evidence time:</strong> ${esc(r.workAt||'Not available')}</p><p><strong>Reporting:</strong> ${r.selectionHidden?'Hidden by technician selection':r.excluded?'Excluded':'Included'}</p></div>`,[{text:'Close',onClick:closeModal},{text:'Edit',kind:'btn-primary',onClick:()=>editRow(id)}]);}
+function editRow(id){const r=state.rows.find(r=>r.id===id);showModal(`Edit ${r.asset}`,'Work order changes are saved to this selected shift.',`<div class="field"><label for="edit-asset">Asset ID</label><input id="edit-asset" value="${esc(r.asset)}"></div><div class="field"><label for="edit-cause">Cause / work performed</label><textarea id="edit-cause">${esc(r.cause)}</textarea></div><div class="field"><label for="edit-remarks">Technician remarks</label><textarea id="edit-remarks">${esc(r.remarks||'')}</textarea></div><div class="field"><label for="edit-tech">Technicians</label><input id="edit-tech" value="${esc(r.tech)}"></div><div class="field"><label for="edit-status">Equipment status</label><select id="edit-status" ${r.status==='PENDING'&&!r.isManual?'disabled':''}>${r.status==='PENDING'?'<option value="PENDING" selected>Pending closure — reimport after Cetaris closes</option>':''}<option value="RTS" ${r.status==='RTS'?'selected':''}>Returned to Service (RTS)</option><option value="OOS" ${r.status==='OOS'?'selected':''}>Out of Service (OOS)</option></select></div>`,[{text:'Cancel',onClick:closeModal},{text:'Save changes',kind:'btn-primary',onClick:async()=>{const changes={asset:$('#edit-asset').value.trim()||r.asset,cause:$('#edit-cause').value.trim()||r.cause,tech:$('#edit-tech').value.trim()||r.tech,remarks:$('#edit-remarks').value.trim(),status:$('#edit-status').value};try{await window.V31Reporting.updateWO(r.wo,changes);Object.assign(r,changes);closeModal();updateMetrics();renderTab();toast('Work order updated and saved');}catch(err){toast(err.message);}}}]);}
+function rowDetail(id){
+  const r=state.rows.find(r=>r.id===id);
+  const mark=r.isManual?'Manual entry':r.referenceWo?'Source WO# '+r.referenceWo:'Cetaris WO# '+r.wo;
+  showModal('Work details · '+r.asset,'All reporting changes are audited per shift.',
+    '<div class="detail-list"><p><strong>Type:</strong> '+esc(mark)+'</p><p><strong>Asset:</strong> '+esc(r.asset)+'</p><p><strong>Category:</strong> '+esc(r.category)+'</p><p><strong>Technicians:</strong> '+esc(r.tech)+'</p><p><strong>Status:</strong> '+esc(r.status)+'</p><p><strong>Reported work:</strong> '+esc(r.cause)+'</p><p><strong>Remarks:</strong> '+esc(r.remarks||'No remarks')+'</p><p><strong>Work evidence:</strong> '+esc(r.workAt||'Manual entry / not provided')+'</p></div>',[
+    {text:'Close',onClick:closeModal},
+    {text:r.carryOver?'Cancel Carry-over':'Flag Carry-over',onClick:async()=>{
+      try{
+        const response=await fetch('/api/reporting/carryovers/flag',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({wo_number:r.wo,enabled:!r.carryOver})});
+        const data=await response.json();
+        if(!response.ok)throw Error(data.detail||'Unable to flag carry-over');
+        closeModal();await window.V31Reporting?.refresh();toast(data.carry_over?'Flagged for the next shift':'Carry-over flag cleared');
+      }catch(e){toast(e.message);}
+    }},
+    {text:'Edit',kind:'btn-primary',onClick:()=>editRow(id)}
+  ]);
+}
 function listPane(kind){let list=kind==='vendors'?state.vendors:state.ro;let title=kind==='vendors'?'Vendor Activity':'RO / Work Requests';return `<div class="secondary-pane"><div class="pane-header"><div><h3>${title}</h3><p>Items entered manually for this shift's final report.</p></div><button class="btn btn-primary" id="add-list-entry">+ Add ${kind==='vendors'?'Vendor':'RO'}</button></div><div class="item-list">${list.length?list.map((t,i)=>`<div class="item-card"><div><strong>${esc(t)}</strong><small>Manual reporting entry</small></div><button class="btn btn-light btn-small" data-list-edit="${i}">Edit</button></div>`).join(''):'<p>No entries have been added for this shift.</p>'}</div></div>`;}
 function pmTab(){
   const needed=state.pmNeeds||{present:false,count:0,rows:[]};
@@ -299,6 +315,57 @@ function renderTab(){ $$('.tab').forEach(t=>{const yes=t.dataset.tab===selectedT
 else if(selectedTab==='breakdown'){window.dispatchEvent(new Event('v31:breakdown-tab'));}}
 function editList(kind,index=null){const isVendor=kind==='vendors';let list=isVendor?state.vendors:state.ro;let old=index===null?'':list[index];let name=isVendor?'Vendor':'RO';showModal(`${index===null?'Add':'Edit'} ${name}`,`Manual ${name.toLowerCase()} information to include in the passdown.`,`<div class="field"><label for="list-text">${name} details</label><textarea id="list-text" maxlength="1000" placeholder="Enter details about ${isVendor?'vendor service, follow-up, and status':'repair order, asset, and pending work'}">${esc(old)}</textarea></div>`,[{text:'Cancel',onClick:closeModal},...(index===null?[]:[{text:'Delete',onClick:()=>{list.splice(index,1);closeModal();updateMetrics();renderTab();touch();toast(`${name} entry deleted`);}}]),{text:index===null?'Add entry':'Save entry',kind:'btn-primary',onClick:()=>{const v=$('#list-text').value.trim();if(!v){toast('Enter details first');return;}if(index===null)list.push(v);else list[index]=v;closeModal();updateMetrics();renderTab();touch();toast(`${name} entry saved`);}}]);}
 function editNotes(){showModal('Shift Notes','Add final reporting notes, follow-ups, or reminders.',`<div class="field"><label for="notes-text">Shift notes</label><textarea id="notes-text" maxlength="3000" placeholder="Enter shift notes...">${esc(state.notes)}</textarea><span class="field-help">These notes remain inside this preview unless you export the sample EML.</span></div>`,[{text:'Cancel',onClick:closeModal},{text:'Save notes',kind:'btn-primary',onClick:()=>{state.notes=$('#notes-text').value;closeModal();touch();toast('Shift notes saved in preview');}}]);}
+async function v31ReportPost(path,payload){
+  const response=await fetch(path,{method:'POST',credentials:'same-origin',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+  const data=await response.json().catch(()=>({}));
+  if(!response.ok)throw Error(data.detail||'Could not save shift action');
+  return data;
+}
+function manualEntry(){
+  showModal('Add Manual Happening','For proactive repairs, issues discovered during PMs, or other work not yet in Cetaris.',
+    '<div class="field"><label>Asset ID<input id="m-asset" maxlength="120" required placeholder="ASSET ID"></label></div>'+
+    '<div class="field"><label>Issue / Work Performed<textarea id="m-cause" maxlength="4000" required></textarea></label></div>'+
+    '<div class="field"><label>Category<select id="m-category"><option>Proactive Repair</option><option>Breakdown</option><option>Process Interruption</option><option>Work Request</option></select></label></div>'+
+    '<div class="field"><label>Equipment Status<select id="m-status"><option value="PENDING">Pending / follow-up required</option><option value="RTS">Returned to service — confirmed</option><option value="OOS">Out of service</option></select></label></div>'+
+    '<div class="field"><label>WO Number (optional, if known)<input id="m-wo" maxlength="100"></label></div>'+
+    '<div class="field"><label>Technician Remarks<textarea id="m-remarks" maxlength="5000"></textarea></label></div>',[
+      {text:'Cancel',onClick:closeModal},
+      {text:'Save Manual Happening',kind:'btn-primary',onClick:async()=>{
+        const payload={asset:$('#m-asset').value.trim(),cause:$('#m-cause').value.trim(),
+          category:$('#m-category').value,status:$('#m-status').value,
+          wo_reference:$('#m-wo').value.trim(),remarks:$('#m-remarks').value.trim()};
+        if(!payload.asset||!payload.cause){toast('Enter the asset and issue first.');return;}
+        try{
+          await v31ReportPost('/api/reporting/manual',payload);
+          closeModal();await window.V31Reporting?.refresh();
+          toast('Manual happening saved to this shift');
+        }catch(err){toast(err.message);}
+      }}
+    ],{wide:true});
+}
+async function reviewCarryOvers(){
+  try{
+    const r=await fetch('/api/reporting/carryovers',{credentials:'same-origin'});
+    const data=await r.json();if(!r.ok)throw Error(data.detail||'Cannot load carry-overs');
+    const available=data.available||[];
+    const content=available.length?available.map(x=>'<div class="item-card" data-carry-id="'+x.id+'"><div><strong>'+esc(x.asset)+' · '+esc(x.code)+' '+esc(x.shift_day)+'</strong><small>'+esc(x.cause)+' · '+esc(x.wo_number)+'</small></div><div><button class="btn btn-primary btn-small" data-action="adopt" data-id="'+x.id+'">Adopt</button> <button class="btn btn-light btn-small" data-action="dismiss" data-id="'+x.id+'">Dismiss</button></div></div>').join(''):
+      '<p>No flagged carry-overs from completed earlier shifts.</p>';
+    showModal('Review Carry-overs','Adopting creates a follow-up entry, not a falsely completed WO.',content,[
+      {text:'Close',onClick:closeModal}],{wide:true});
+    $('#modal-body [data-action]').forEach(button=>button.addEventListener('click',async()=>{
+      button.disabled=true;
+      try{
+        const data=await v31ReportPost('/api/reporting/carryovers/decision',{
+          source_row_id:Number(button.dataset.id),action:button.dataset.action});
+        closeModal();await window.V31Reporting?.refresh();
+        toast('Carry-over '+data.action+' recorded');await reviewCarryOvers();
+      }catch(err){toast(err.message);button.disabled=false;}
+    }));
+  }catch(error){toast(error.message);}
+}
+$('#v31-add-manual').addEventListener('click',manualEntry);
+$('#v31-review-carryovers').addEventListener('click',reviewCarryOvers);
 function techModal(){
   const html='<div class="field"><label for="manual-techs">Technician names (one per line)</label><textarea id="manual-techs" placeholder="Enter technician names here"></textarea><span class="field-help">Roster sync is not yet connected. These names are only in your current browser preview.</span></div>';
   showModal('Change Technicians','Enter the technicians for this report.',html,[
@@ -487,7 +554,8 @@ window.v31ReportView={
   applySnapshot(data){
     state.rows=(data.rows||[]).map(r=>({
       id:r.id,wo:r.wo_number,asset:r.asset,category:r.category,cause:r.cause,
-      tech:r.tech,remarks:r.remarks,status:r.status,workAt:r.work_at||'',selectionHidden:!!r.selection_hidden,excluded:!!r.excluded
+      tech:r.tech,remarks:r.remarks,status:r.status,workAt:r.work_at||'',selectionHidden:!!r.selection_hidden,excluded:!!r.excluded,
+      isManual:!!r.is_manual,referenceWo:r.reference_wo||'',carryOver:!!r.carry_over,manualOosId:r.manual_oos_id||null
     }));
     state.techs=data.technicians||[];
     state.pms=data.pms||[];
