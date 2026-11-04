@@ -108,6 +108,70 @@ def test_two_tech_one_closed_wo_grouped_with_remarks(client,monkeypatch):
     assert data["pm_count"]==0
 
 
+def test_reimport_deselection_hides_and_restores_wo_and_pm_without_erasing_manual_edits(client,monkeypatch):
+    clock(monkeypatch)
+    enter(client)
+    records=[
+        row("SEL100",tech="Synthetic A",remarks="A note"),
+        row("SEL200",tech="Synthetic B",remarks="B note"),
+        row("SEL300",tech="Synthetic B",category="Preventive Maintenance",pm="RNPK.001.PKM")
+    ]
+    assert upload(client,records).status_code == 200
+    assert import_techs(client,["Synthetic A","Synthetic B"]).status_code == 200
+    assert client.get('/api/reporting/state').json()['pm_count'] == 1
+    assert client.post('/api/reporting/work-orders/SEL100',json={
+        'remarks':'Manually corrected repair', 'excluded':True
+    }).status_code == 200
+    assert import_techs(client,["Synthetic A"]).status_code == 200
+    state=client.get('/api/reporting/state').json()
+    by={r['wo_number']:r for r in state['rows']}
+    assert by['SEL100']['remarks']=='Manually corrected repair'
+    assert by['SEL100']['manual_excluded'] is True
+    assert by['SEL100']['selection_hidden'] is False
+    assert by['SEL200']['selection_hidden'] is True and by['SEL200']['excluded']
+    assert state['pm_count'] == 0
+    assert import_techs(client,["Synthetic A","Synthetic B"]).status_code == 200
+    restored=client.get('/api/reporting/state').json()
+    by={r['wo_number']:r for r in restored['rows']}
+    assert not by['SEL200']['selection_hidden']
+    assert restored['pm_count'] == 1
+    assert by['SEL100']['manual_excluded'] and by['SEL100']['excluded']
+    assert by['SEL100']['remarks']=='Manually corrected repair'
+
+
+def test_reimport_deselects_old_technician_even_if_new_export_omits_wo(client,monkeypatch):
+    clock(monkeypatch)
+    enter(client)
+    assert upload(client,[row("OLD100",tech="Synthetic A")]).status_code == 200
+    assert import_techs(client,["Synthetic A"]).status_code == 200
+    assert upload(client,[row("NEW200",tech="Synthetic B")]).status_code == 200
+    assert import_techs(client,["Synthetic B"]).status_code == 200
+    data=client.get('/api/reporting/state').json()
+    old={r['wo_number']:r for r in data['rows']}['OLD100']
+    assert old['selection_hidden'] and old['excluded']
+    assert 'NEW200' in {r['wo_number'] for r in data['rows'] if not r['excluded']}
+
+
+def test_pending_closure_remains_pending_on_manual_edit(client,monkeypatch):
+    clock(monkeypatch)
+    enter(client)
+    assert upload(client,[row("PEND01",status="Completed")]).status_code == 200
+    selected=client.post('/api/reporting/import',json={
+        'technicians':['Synthetic A'],'closure_reviews':{'PEND01':'add'}
+    })
+    assert selected.status_code==200,selected.text
+    old=client.get('/api/reporting/state').json()['rows'][0]
+    assert old['status']=='PENDING'
+    assert client.post('/api/reporting/work-orders/PEND01',json={
+        'remarks':'Needs Cetaris closure','status':'PENDING'
+    }).status_code==200
+    assert client.post('/api/reporting/work-orders/PEND01',json={'status':'RTS'}).status_code==422
+    final=client.get('/api/reporting/state').json()['rows'][0]
+    assert final['status']=='PENDING'
+    ui=client.get('/shift-report.html').text
+    assert 'Pending closure — reimport after Cetaris closes' in ui
+
+
 def test_pm_counts_once_and_does_not_enter_shift_happenings(client,monkeypatch):
     clock(monkeypatch)
     enter(client)
@@ -560,7 +624,7 @@ def test_shift_report_repositions_cetaris_and_uses_real_walmart_logo(client,monk
     assert '#replace-file.v31-cetaris-primary' in stylesheet.text
     js=client.get("/web/shift-data.js").text
     assert "v31-tech-group" in js
-    assert "Drax MSTs" in js
+    assert "Drax Technicians" in js
     assert "snapshot.stage.imported" in js
 
 
