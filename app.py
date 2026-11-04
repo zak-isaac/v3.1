@@ -1079,9 +1079,10 @@ def reporting_draft(payload:ReportingDraft,request:Request):
     if sum(len(x) for x in content['vendors']+content['ro'])>15000:
         raise HTTPException(422,'Too much draft content')
     with _db() as conn:
-        v31_reporting.save_draft(conn,row['id'],content)
-        _invalidate_passdown(conn,row['id'])
-    return {'saved':True,'shift_id':row['id']}
+        changed=v31_reporting.save_draft(conn,row['id'],content)
+        if changed:
+            _invalidate_passdown(conn,row['id'])
+    return {'saved':True,'changed':changed,'shift_id':row['id']}
 
 
 class AIApproval(BaseModel):
