@@ -42,6 +42,7 @@ def client(tmp_path, monkeypatch):
         writer.writerow(['Temporary Test E', '555555', 'S5', 'MST'])
         writer.writerow(['Temporary Test F', '666666', 'S1', 'MST'])
         writer.writerow(['Other Role', '777777', 'S1', 'Associate'])
+        writer.writerow(['Second Role', '777778', 'S1', 'Maintenance Technician'])
         writer.writerow(['Night Technician', '888888', 'S3', 'Maintenance Technician'])
         writer.writerow(['Weekend Technician', '888889', 'S5', 'Associate'])
         writer.writerow(['No Shift', '888890', '', 'Associate'])
@@ -229,6 +230,33 @@ def test_technician_owned_shift_requires_explicit_audited_mst_takeover(client, m
     # Management can still resume a report now owned by the MST.
     assert sign_in(client,'2759').status_code == 200
     assert client.post('/api/shifts/resume',json={'shift_id':sid}).status_code == 200
+
+
+def test_second_technician_blocked_and_old_session_revoked_after_mst_takeover(client, monkeypatch):
+    freeze(monkeypatch, at(2026, 10, 27, 13))
+    assert sign_in(client, '777777').status_code == 200
+    sid = client.get('/api/me').json()['selected']['id']
+    first_owner_cookie = client.cookies.get(m.SESSION_COOKIE)
+    assert client.get('/api/reporting/state').status_code == 200
+    client.post('/api/logout')
+
+    # Signing out must not release ownership to a second assigned technician.
+    assert sign_in(client, '777778').status_code == 409
+    assert sign_in(client, '777778', intent='select').status_code == 200
+    assert client.post('/api/shifts/resume',json={'shift_id':sid}).status_code == 403
+    assert client.post('/api/shifts/takeover',json={'shift_id':sid}).status_code == 403
+    client.post('/api/logout')
+
+    assert sign_in(client, '111111').json()['takeover_required'] is True
+    assert client.post('/api/shifts/takeover',json={'shift_id':sid}).status_code == 200
+    mst_cookie = client.cookies.get(m.SESSION_COOKIE)
+
+    # A still-valid signed cookie is NOT enough to bypass the new owner.
+    client.cookies.set(m.SESSION_COOKIE, first_owner_cookie)
+    assert client.get('/api/reporting/state').status_code == 403
+    assert client.post('/api/shifts/end').status_code == 403
+    client.cookies.set(m.SESSION_COOKIE, mst_cookie)
+    assert client.get('/api/reporting/state').status_code == 200
 
 
 def test_mst_overtime_requires_management_grant_and_specific_shift_date(client, monkeypatch):
