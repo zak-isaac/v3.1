@@ -179,9 +179,12 @@ def profiles(private, database, management, rules):
     for row in rows:
         is_mst = row["override_mst"] if row["override_mst"] is not None else row["is_mst"]
         assigned = row["override_shift"] if row["override_shift"] is not None else row["shift"]
-        if is_mst and assigned in rules and row["number"] not in management:
+        # An active Drax associate with a valid S1-S5 assignment can use
+        # their own shift, regardless of Job Title. MST remains an independent
+        # privilege for explicit relief/takeover and approved overtime.
+        if assigned in rules and row["number"] not in management:
             data[row["number"]] = {"name": row["override_name"] or row["full_name"], "all_shifts":False,
-                                   "shift":assigned, "default_id":row["default_id"], "is_mst":True}
+                                   "shift":assigned, "default_id":row["default_id"], "is_mst":bool(is_mst)}
     return data
 
 
