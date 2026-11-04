@@ -30,6 +30,7 @@ import v31_drax_bridge
 import v31_reporting
 import v31_facility
 import v31_oos
+import v31_pm_needing_completion as v31_pm
 
 ROOT = Path(__file__).resolve().parent
 PRIVATE = Path(os.environ.get('IND3_V31_PRIVATE_DIR', str(ROOT / '.local-data'))).resolve()
@@ -901,6 +902,53 @@ def _invalidate_passdown(conn,shift_id):
     # Edited data cannot be followed by End Shift until a new EML is saved.
     conn.execute("UPDATE shifts SET report_saved_at='',report_content='' WHERE id=?",
                  (shift_id,))
+
+
+@app.get('/api/pm-needing-completion')
+def pm_needing_completion_state(request:Request):
+    _session,shift=_report_access(request)
+    with _db() as conn:
+        return v31_pm.get(conn,shift['id'])
+
+
+@app.post('/api/pm-needing-completion/upload')
+async def pm_needing_completion_upload(request:Request,file:UploadFile=File(...)):
+    _origin_check(request)
+    session,shift=_report_access(request)
+    try:
+        data=await file.read(v31_pm.MAX_BYTES+1)
+    finally:
+        await file.close()
+    try:
+        with _db() as conn:
+            result=v31_pm.upload(conn,shift['id'],file.filename or '',data,session['a'])
+            _invalidate_passdown(conn,shift['id'])
+    except ValueError as exc:
+        raise HTTPException(422,str(exc))
+    return result
+
+
+@app.get('/api/pm-needing-completion/download')
+def pm_needing_completion_download(request:Request):
+    _session,shift=_report_access(request)
+    with _db() as conn:
+        pm=v31_pm.get(conn,shift['id'],include_data=True)
+    if not pm['present']:
+        raise HTTPException(404,'No PM report uploaded')
+    from urllib.parse import quote
+    return Response(content=pm['file_data'],media_type='application/octet-stream',
+        headers={'Content-Disposition':"attachment; filename*=UTF-8''"+quote(pm['filename'])})
+
+
+@app.delete('/api/pm-needing-completion')
+def pm_needing_completion_delete(request:Request):
+    _origin_check(request)
+    _session,shift=_report_access(request)
+    with _db() as conn:
+        removed=v31_pm.delete(conn,shift['id'])
+        if removed:
+            _invalidate_passdown(conn,shift['id'])
+    return {'removed':removed}
 
 
 class ReportingImport(BaseModel):
