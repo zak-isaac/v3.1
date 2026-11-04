@@ -255,7 +255,7 @@ def test_second_technician_blocked_and_old_session_revoked_after_mst_takeover(cl
     # A still-valid signed cookie is NOT enough to bypass the new owner.
     client.cookies.set(m.SESSION_COOKIE, first_owner_cookie)
     assert client.get('/api/reporting/state').status_code == 403
-    assert client.post('/api/shifts/end').status_code == 403
+    assert client.post('/api/shifts/end',json={'acknowledge_warnings':True}).status_code == 403
     client.cookies.set(m.SESSION_COOKIE, mst_cookie)
     assert client.get('/api/reporting/state').status_code == 200
 
@@ -353,10 +353,10 @@ def test_end_shift_only_changes_selected_one(client, monkeypatch):
     sign_in(client,'8972')
     first = client.post('/api/shifts/start',json={'code':'S1'}).json()['id']
     second = client.post('/api/shifts/start',json={'code':'S2'}).json()['id']
-    assert client.post('/api/shifts/end').status_code == 409
+    assert client.post('/api/shifts/end',json={'acknowledge_warnings':True}).status_code == 409
     saved=client.post('/api/shifts/report',json={'content':'IND3 S2 SHIFT HAPPENINGS: No work orders. Shift completed and ready for handoff.'})
     assert saved.status_code == 200, saved.text
-    assert client.post('/api/shifts/end').json()['shift_id'] == second
+    assert client.post('/api/shifts/end',json={'acknowledge_warnings':True}).json()['shift_id'] == second
     with m._db() as db:
         rows = {r['id']: r['open'] for r in db.execute('SELECT id,open FROM shifts')}
     assert rows[first]==1 and rows[second]==0
