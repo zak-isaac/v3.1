@@ -74,6 +74,34 @@ def test_drax_roster_sync_and_manager_visibility(client, monkeypatch):
     assert client.get('/api/me').json()['role'] == 'technician'
 
 
+def test_management_associate_who_is_also_in_drax_still_appears_in_roster(client, tmp_path, monkeypatch):
+    """A hardcoded management login must never hide a real Drax row.
+
+    Someone can legitimately be both a full-privilege app user (via
+    MANAGEMENT_ASSOCIATES) and an actual working technician in Drax. Their
+    Drax row must still be cached and visible in Administration, and must
+    still be matchable by name during Cetaris technician selection --
+    management-login precedence is handled entirely by profiles(), never
+    by hiding the row from the roster cache.
+    """
+    freeze(monkeypatch, at())
+    sign(client)
+    write_roster(tmp_path / "mst-roster.csv", extra=[
+        ["Management", "8972", "mgr1", "S3", "MST"],
+    ])
+    status = client.post("/api/admin/roster/reload", json={})
+    assert status.status_code == 200, status.text
+    data = status.json()
+    assert data["entries"] == 4
+    records = {r["number"]: r for r in data["associates"]}
+    assert "8972" in records, "Management associate's Drax row must still be cached"
+    assert records["8972"]["drax_shift"] == "S3"
+    # Login precedence is unaffected: the hardcoded management profile still
+    # wins (all_shifts access), not the Drax-assigned S3 shift.
+    me = client.get("/api/me").json()
+    assert me["role"] == "manager"
+
+
 def test_drax_reload_inserts_updates_and_disables_removed_rows(client, tmp_path, monkeypatch):
     freeze(monkeypatch, at())
     sign(client)
@@ -244,7 +272,7 @@ def test_workbook_excel_source_format(client,tmp_path,monkeypatch):
     file=tmp_path/"Drax  Associates.xlsx"
     workbook.save(file)
     (tmp_path/"mst-roster.csv").unlink()
-    roster_module.sync(tmp_path,tmp_path/"v31.sqlite3",set(m.MANAGEMENT_ASSOCIATES),force=True)
+    roster_module.sync(tmp_path,tmp_path/"v31.sqlite3",force=True)
     assert m.roster()["888888"]["shift"]=="S3"
 
 

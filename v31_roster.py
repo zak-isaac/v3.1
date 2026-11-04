@@ -74,7 +74,7 @@ def _normalize_number(raw):
     return value if value.isdecimal() and len(value) <= 12 else ""
 
 
-def _parse(file: Path, reserved: set):
+def _parse(file: Path):
     if file.suffix.lower() == ".csv":
         with file.open(encoding="utf-8-sig", newline="") as reader:
             records = list(csv.DictReader(reader))
@@ -99,7 +99,7 @@ def _parse(file: Path, reserved: set):
     for source_row in records:
         row = {str(key or "").strip().casefold(): value for key,value in source_row.items()}
         num = _normalize_number(row.get("assoc. #", row.get("assoc #")))
-        if not num or num in reserved:
+        if not num:
             continue
         name = str(row.get("name") or "").strip()
         if not name:
@@ -118,11 +118,17 @@ def _meta(conn, key, value):
                  (key, str(value)))
 
 
-def sync(private: Path, database: Path, reserved: set, force=False):
+def sync(private: Path, database: Path, force=False):
     """Check at most every five minutes unless forced. Mtime avoids extra parses.
 
     Never wipe existing cached records when a source is temporarily offline
     or invalid. Admin overrides remain intact after Drax reload.
+
+    Every Drax row is cached here, including people who also hold a
+    hardcoded management login (profiles() below is solely responsible for
+    giving the management profile login precedence) -- a management
+    associate who is genuinely a working technician must still show up in
+    the Administration roster and in Cetaris technician-name matching.
     """
     global _last_check
     current = time.monotonic()
@@ -145,7 +151,7 @@ def sync(private: Path, database: Path, reserved: set, force=False):
             if not force and old and old["value"] == identity:
                 _meta(conn, "error", "")
                 return
-            entries = _parse(source, reserved)
+            entries = _parse(source)
             # Require a valid readable header even when workbook contains no MST.
             seen_at = datetime.now(_TZ).isoformat()
             for item in entries.values():
@@ -172,7 +178,7 @@ def sync(private: Path, database: Path, reserved: set, force=False):
 
 
 def profiles(private, database, management, rules):
-    sync(private, database, set(management))
+    sync(private, database)
     data = {number: dict(profile) for number, profile in management.items()}
     with _connect(database) as conn:
         rows = conn.execute("SELECT * FROM roster_associates WHERE source_active=1").fetchall()

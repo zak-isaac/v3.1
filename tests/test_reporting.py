@@ -491,7 +491,7 @@ def test_drax_assignments_resolve_s1_s2_overlap(client,monkeypatch,tmp_path):
         writer=csv.writer(output)
         writer.writerow(["Name","Assoc. #","Shift","Job Title"])
         writer.writerow(["Synthetic A","111111","S1","MST"])
-    v31_roster.sync(tmp_path,tmp_path/"v31.sqlite3",set(m.MANAGEMENT_ASSOCIATES),force=True)
+    v31_roster.sync(tmp_path,tmp_path/"v31.sqlite3",force=True)
     enter(client,"S1")
     upload(client,[row("OVERLAP1",started="2026-10-26 12:45",
                        serviced="2026-10-26 13:05")])
@@ -533,7 +533,7 @@ def test_cross_shift_breakdown_can_transition_from_oos_to_rts(client,monkeypatch
         writer=csv.writer(output)
         writer.writerow(["Name","Assoc. #","Shift","Job Title"])
         writer.writerow(["Synthetic A","111111","S2","MST"])
-    v31_roster.sync(tmp_path,tmp_path/"v31.sqlite3",set(m.MANAGEMENT_ASSOCIATES),force=True)
+    v31_roster.sync(tmp_path,tmp_path/"v31.sqlite3",force=True)
     s1=enter(client,"S1")
     upload(client,[row("BREAK1",status="In Process",category="Breakdown",
                        started="2026-10-26 09:00",serviced=None,
@@ -708,7 +708,7 @@ def test_drax_preselects_any_assigned_active_tech_not_only_msts(client,monkeypat
         writer.writerow(["A Synthetic","111111","S1","MST"])
         writer.writerow(["B Synthetic","222222","S2","MST"])
         writer.writerow(["C Synthetic","333333","S1","Associate"])
-    v31_roster.sync(tmp_path,tmp_path/"v31.sqlite3",set(m.MANAGEMENT_ASSOCIATES),force=True)
+    v31_roster.sync(tmp_path,tmp_path/"v31.sqlite3",force=True)
     enter(client,"S1")
     response=upload(client,[
         row("D100",tech="Synthetic, A"),

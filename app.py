@@ -91,7 +91,7 @@ async def _periodic_maintenance():
             expire_shifts()
             tick += 1
             if tick % 5 == 0:
-                v31_roster.sync(PRIVATE, DB_FILE, set(MANAGEMENT_ASSOCIATES), force=True)
+                v31_roster.sync(PRIVATE, DB_FILE, force=True)
         except Exception:
             # Do not terminate reporting due to temporary unreadable workbook.
             pass
@@ -865,7 +865,7 @@ def admin_roster(request: Request):
 def admin_roster_reload(request: Request):
     _origin_check(request)
     require_manager(request)
-    v31_roster.sync(PRIVATE, DB_FILE, set(MANAGEMENT_ASSOCIATES), force=True)
+    v31_roster.sync(PRIVATE, DB_FILE, force=True)
     return v31_roster.status(DB_FILE, include_rows=True)
 
 

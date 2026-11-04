@@ -39,7 +39,7 @@ def run_full_shift(client, tmp_path, monkeypatch, associate, name, shift_code="S
     import v31_roster
     clock(monkeypatch, day=26, hour=hour)
     write_roster(tmp_path, [[name, associate, shift_code, "MST"]])
-    v31_roster.sync(tmp_path, tmp_path / "v31.sqlite3", set(m.MANAGEMENT_ASSOCIATES), force=True)
+    v31_roster.sync(tmp_path, tmp_path / "v31.sqlite3", force=True)
     assert client.post("/api/login", json={"associate": associate, "intent": "direct"}).status_code == 200
     staged = client.post("/api/reporting/stage",
         files={"file": ("cetaris.xlsx", workbook([
@@ -101,7 +101,7 @@ def test_missing_loto_keys_show_in_regenerated_eml(client, tmp_path, monkeypatch
     import v31_roster
     clock(monkeypatch, day=26, hour=6)
     write_roster(tmp_path, [["Third Tech", "555003", "S1", "MST"]])
-    v31_roster.sync(tmp_path, tmp_path / "v31.sqlite3", set(m.MANAGEMENT_ASSOCIATES), force=True)
+    v31_roster.sync(tmp_path, tmp_path / "v31.sqlite3", force=True)
     client.post("/api/login", json={"associate": "555003", "intent": "direct"})
     client.post("/api/reporting/draft", json={
         "vendors": [], "ro": [], "notes": "", "loto": False, "missingKeys": ["Panel A2", "LOTO Box 4"],
@@ -124,7 +124,7 @@ def test_ordinary_mst_sees_only_own_shifts_and_cannot_download_others(client, tm
     import v31_roster
     write_roster(tmp_path, [["Reliability Tech", "555001", "S1", "MST"],
                             ["Other Tech", "555004", "S1", "MST"]])
-    v31_roster.sync(tmp_path, tmp_path / "v31.sqlite3", set(m.MANAGEMENT_ASSOCIATES), force=True)
+    v31_roster.sync(tmp_path, tmp_path / "v31.sqlite3", force=True)
     client.post("/api/logout", json={})
     clock(monkeypatch, day=27, hour=6)
     assert client.post("/api/login", json={"associate": "555004", "intent": "direct"}).status_code == 200

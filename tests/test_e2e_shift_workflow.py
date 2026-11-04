@@ -58,7 +58,7 @@ def test_full_s1_journey_login_through_end_shift(client, tmp_path, monkeypatch):
     import v31_roster
     clock(monkeypatch, day=26, hour=6)  # inside S1's 5:30a-4p window
     write_roster(tmp_path, [["Reliability Tech", "555001", "S1", "MST"]])
-    v31_roster.sync(tmp_path, tmp_path / "v31.sqlite3", set(m.MANAGEMENT_ASSOCIATES), force=True)
+    v31_roster.sync(tmp_path, tmp_path / "v31.sqlite3", force=True)
 
     # --- Phase 1: login should auto-detect and start the Drax-assigned shift
     login = client.post("/api/login", json={"associate": "555001", "intent": "direct"})
@@ -129,7 +129,7 @@ def test_s3_overnight_journey_uses_correct_shift_day_throughout(client, tmp_path
     import v31_roster
     clock(monkeypatch, day=26, hour=23)  # 11pm, inside S3 window, pre-midnight
     write_roster(tmp_path, [["Overnight Tech", "555002", "S3", "MST"]])
-    v31_roster.sync(tmp_path, tmp_path / "v31.sqlite3", set(m.MANAGEMENT_ASSOCIATES), force=True)
+    v31_roster.sync(tmp_path, tmp_path / "v31.sqlite3", force=True)
 
     login = client.post("/api/login", json={"associate": "555002", "intent": "direct"})
     assert login.status_code == 200, login.text
@@ -166,7 +166,7 @@ def test_s5_weekend_journey_uses_friday_start_date(client, tmp_path, monkeypatch
     # Friday 2026-10-30, 6pm -- inside S5's 5:30p-6a window.
     clock(monkeypatch, year=2026, month=10, day=30, hour=18)
     write_roster(tmp_path, [["Weekend Tech", "555003", "S5", "MST"]])
-    v31_roster.sync(tmp_path, tmp_path / "v31.sqlite3", set(m.MANAGEMENT_ASSOCIATES), force=True)
+    v31_roster.sync(tmp_path, tmp_path / "v31.sqlite3", force=True)
 
     login = client.post("/api/login", json={"associate": "555003", "intent": "direct"})
     assert login.status_code == 200, login.text

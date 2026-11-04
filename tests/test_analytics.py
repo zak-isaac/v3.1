@@ -68,7 +68,7 @@ def test_analytics_only_shows_own_shift_to_regular_associates(client,tmp_path,mo
         w=csv.writer(output)
         w.writerow(['Name','Assoc. #','Shift','Job Title'])
         w.writerow(['Different Tech','555002','S2','Associate'])
-    v31_roster.sync(tmp_path,tmp_path/'v31.sqlite3',set(__import__('app').MANAGEMENT_ASSOCIATES),force=True)
+    v31_roster.sync(tmp_path,tmp_path/'v31.sqlite3',force=True)
     clock(monkeypatch,day=26,hour=13)
     assert client.post('/api/login',json={'associate':'555002','intent':'direct'}).status_code==200
     data=client.get('/api/analytics/summary').json()

@@ -88,7 +88,7 @@ def test_different_associate_can_see_and_resolve_a_globally_open_record(client, 
         w.writerow(["Name", "Assoc. #", "Shift", "Job Title"])
         w.writerow(["First Tech", "555001", "S1", "MST"])
         w.writerow(["Second Tech", "555002", "S2", "MST"])
-    v31_roster.sync(tmp_path, tmp_path / "v31.sqlite3", set(m.MANAGEMENT_ASSOCIATES), force=True)
+    v31_roster.sync(tmp_path, tmp_path / "v31.sqlite3", force=True)
 
     assert client.post("/api/login", json={"associate": "555001", "intent": "direct"}).status_code == 200
     oos_id = client.post("/api/oos", json={"asset": "BALER-3", "cause": "Hydraulic leak"}).json()["id"]
@@ -113,7 +113,7 @@ def test_stale_technician_owner_cannot_edit_manual_oos_after_mst_relief(client, 
         w.writerow(["Name", "Assoc. #", "Shift", "Job Title"])
         w.writerow(["Assigned Non-MST", "555001", "S1", "Associate"])
         w.writerow(["Assigned MST", "555002", "S1", "MST"])
-    v31_roster.sync(tmp_path, tmp_path / "v31.sqlite3", set(m.MANAGEMENT_ASSOCIATES), force=True)
+    v31_roster.sync(tmp_path, tmp_path / "v31.sqlite3", force=True)
 
     assert client.post('/api/login',json={'associate':'555001'}).status_code == 200
     owner_cookie=client.cookies.get(m.SESSION_COOKIE)
