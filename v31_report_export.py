@@ -28,7 +28,7 @@ def build(conn,shift_id,shift_code,shift_day,private):
     if recipients:
         msg['To']=', '.join(recipients)
     msg.set_content(f'{dc} {shift_code} End of Shift Passdown. Open the HTML part of this message.')
-    msg.add_alternative(html,subtype='html')
+    msg.add_alternative(html,subtype='html',cte='8bit')
     attached=pm_needs.get(conn,shift_id,include_data=True)
     if attached['present']:
         msg.add_attachment(attached['file_data'],maintype='application',
