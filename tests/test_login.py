@@ -42,6 +42,9 @@ def client(tmp_path, monkeypatch):
         writer.writerow(['Temporary Test E', '555555', 'S5', 'MST'])
         writer.writerow(['Temporary Test F', '666666', 'S1', 'MST'])
         writer.writerow(['Other Role', '777777', 'S1', 'Associate'])
+        writer.writerow(['Night Technician', '888888', 'S3', 'Maintenance Technician'])
+        writer.writerow(['Weekend Technician', '888889', 'S5', 'Associate'])
+        writer.writerow(['No Shift', '888890', '', 'Associate'])
     with TestClient(m.app) as c:
         yield c
 
@@ -136,11 +139,127 @@ def test_manager_can_choose_and_resume_another_mst_report(client, monkeypatch):
     assert client.get('/shift-report.html').status_code == 200
 
 
-def test_unknown_or_nonmst_associates_rejected(client):
-    assert sign_in(client, '777777').status_code == 401
+def test_active_drax_associates_can_log_in_without_mst_job_title(client, monkeypatch):
+    freeze(monkeypatch, at(2026, 10, 27, 8))
+    result = sign_in(client, '777777')
+    assert result.status_code == 200, result.text
+    assert result.json()['role'] == 'technician'
+    me = client.get('/api/me').json()
+    assert me['role'] == 'technician'
+    assert me['assigned_shift'] == 'S1'
+    assert me['selected']['code'] == 'S1'
+    assert client.post('/api/shifts/start', json={'code':'S2'}).status_code == 403
+    assert client.get('/api/admin/roster').status_code == 403
+
+
+def test_unknown_unassigned_and_malformed_associates_rejected(client, monkeypatch):
+    freeze(monkeypatch, at(2026, 10, 27, 8))
+    assert sign_in(client, '888890').status_code == 401
     assert sign_in(client, '999999').status_code == 401
     assert sign_in(client, '123abc').status_code == 422
     assert sign_in(client, '').status_code == 422
+
+
+def test_technician_limited_to_shift_window_and_overnight_grace(client, monkeypatch):
+    freeze(monkeypatch, at(2026, 10, 26, 19))
+    assert sign_in(client, '888888').status_code == 409
+    freeze(monkeypatch, at(2026, 10, 26, 20, 30))
+    assert sign_in(client, '888888').status_code == 200
+    sid = client.get('/api/me').json()['selected']['id']
+    client.post('/api/logout')
+    freeze(monkeypatch, at(2026, 10, 27, 7, 30))
+    assert sign_in(client, '888888').status_code == 200
+    assert client.get('/api/me').json()['selected']['id'] == sid
+    client.post('/api/logout')
+    freeze(monkeypatch, at(2026, 10, 27, 8, 1))
+    assert sign_in(client, '888888').status_code == 409
+
+
+def test_weekend_technician_resumes_only_in_s5_window(client, monkeypatch):
+    freeze(monkeypatch, at(2026, 10, 30, 20))
+    assert sign_in(client, '888889').status_code == 200
+    sid = client.get('/api/me').json()['selected']['id']
+    client.post('/api/logout')
+    freeze(monkeypatch, at(2026, 10, 31, 6, 30))
+    assert sign_in(client, '888889').status_code == 200
+    assert client.get('/api/me').json()['selected']['id'] == sid
+    client.post('/api/logout')
+    freeze(monkeypatch, at(2026, 10, 31, 7, 1))
+    assert sign_in(client, '888889').status_code == 409
+
+
+def test_technician_owned_shift_requires_explicit_audited_mst_takeover(client, monkeypatch):
+    freeze(monkeypatch, at(2026, 10, 27, 13))
+    assert sign_in(client, '777777').status_code == 200
+    original = client.get('/api/me').json()['selected']
+    sid = original['id']
+    with m._db() as conn:
+        row = conn.execute('SELECT owner,owner_role FROM shifts WHERE id=?',(sid,)).fetchone()
+        assert tuple(row) == ('777777','technician')
+    client.post('/api/logout')
+
+    # Another non-MST on this shift may not join the existing report.
+    assert sign_in(client, '777777', intent='select').status_code == 200
+    assert client.post('/api/shifts/resume',json={'shift_id':sid}).status_code == 200
+    client.post('/api/logout')
+    assert sign_in(client, '111111').json()['takeover_required'] is True
+    with m._db() as conn:
+        assert conn.execute('SELECT owner FROM shifts WHERE id=?',(sid,)).fetchone()[0] == '777777'
+
+    transfer = client.post('/api/shifts/takeover',json={'shift_id':sid})
+    assert transfer.status_code == 200, transfer.text
+    assert transfer.json()['taken_over'] is True
+    assert client.get('/api/me').json()['selected']['id'] == sid
+    with m._db() as conn:
+        row = conn.execute('SELECT owner,owner_role FROM shifts WHERE id=?',(sid,)).fetchone()
+        assert tuple(row) == ('111111','mst')
+        audited = conn.execute('SELECT previous_owner,new_owner FROM shift_owner_transfers WHERE shift_id=?',
+                               (sid,)).fetchall()
+        assert [tuple(x) for x in audited] == [('777777','111111')]
+    client.post('/api/logout')
+    assert sign_in(client, '777777').status_code == 409
+    assert sign_in(client, '666666').status_code == 409
+
+    # A different-shift MST is not authorized to take ownership.
+    assert sign_in(client, '222222', intent='select').status_code == 200
+    assert client.post('/api/shifts/takeover',json={'shift_id':sid}).status_code == 403
+    client.post('/api/logout')
+    # Management can still resume a report now owned by the MST.
+    assert sign_in(client,'2759').status_code == 200
+    assert client.post('/api/shifts/resume',json={'shift_id':sid}).status_code == 200
+
+
+def test_mst_overtime_requires_management_grant_and_specific_shift_date(client, monkeypatch):
+    freeze(monkeypatch, at(2026, 10, 27, 13))
+    assert sign_in(client, '111111', intent='select').status_code == 200
+    assert client.post('/api/shifts/start', json={'code':'S2'}).status_code == 403
+    assert client.post('/api/admin/mst-overtime',json={
+        'associate':'111111','code':'S2','shift_day':'2026-10-27','approved':True
+    }).status_code == 403
+    client.post('/api/logout')
+
+    assert sign_in(client, '8972').status_code == 200
+    assert client.post('/api/admin/mst-overtime',json={
+        'associate':'777777','code':'S2','shift_day':'2026-10-27'
+    }).status_code == 403
+    grant = client.post('/api/admin/mst-overtime',json={
+        'associate':'111111','code':'S2','shift_day':'2026-10-27','approved':True
+    })
+    assert grant.status_code == 200,grant.text
+    client.post('/api/logout')
+    assert sign_in(client, '111111', intent='select').status_code == 200
+    state = client.get('/api/me').json()
+    assert 'S2' in {item['code'] for item in state['ready']}
+    assert client.post('/api/shifts/start',json={'code':'S2'}).status_code == 200
+    assert not m.allowed(m.roster()['111111'],'S2',date(2026,10,28),'111111')
+
+    client.post('/api/logout')
+    assert sign_in(client,'8972').status_code == 200
+    revoke = client.post('/api/admin/mst-overtime',json={
+        'associate':'111111','code':'S2','shift_day':'2026-10-27','approved':False
+    })
+    assert revoke.status_code == 200
+    assert not m.allowed(m.roster()['111111'],'S2',date(2026,10,27),'111111')
 
 
 def test_time_window_one_hour_before_after_and_overnight():
