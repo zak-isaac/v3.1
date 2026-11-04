@@ -443,7 +443,8 @@ def landing(request: Request):
         '<script defer src="/web/facility-admin.js"></script>'+
         '<script defer src="/web/shift-history.js"></script>'+
         '<script defer src="/web/manual-oos.js"></script>'+
-        '<script defer src="/web/shift-data.js"></script>'))
+        '<script defer src="/web/shift-data.js"></script>'+
+        '<script defer src="/web/pm-needing-completion.js"></script>'))
 
 
 @app.get('/administration', response_class=HTMLResponse)
