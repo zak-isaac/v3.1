@@ -2,6 +2,26 @@
 
 This is a **new, independent local development application**, separate from the live Workshop V3 and `zak-isaac/ind3-shift-passdown`. Its database, roster cache, and sessions are private to this project.
 
+## Windows workstation pilot (localhost only)
+
+V3.1 has **not** been installed or validated on a real Walmart workstation. Windows CI tests are an additional safeguard, not proof of approved operational deployment.
+
+On a machine with Python 3.12, an authorized local checkout of V3.1, and the approved Drax workbook:
+
+```powershell
+cd C:\path\to\v3.1
+py -3.12 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt pytest httpx
+python -m pytest -q tests/
+$env:IND3_V31_ROSTER_PATH = "C:\approved\Drax  Associates.xlsx"
+python -m uvicorn app:app --host 127.0.0.1 --port 8980
+```
+
+Open `http://127.0.0.1:8980/` on the **same host**. The default app rejects off-host browser connections, so **other MST laptops cannot use this deployment** as-is. Do not disable the restriction or expose it on the corporate network without employer IT approval and a reviewed authentication/access design. An associate number alone identifies a roster entry but does not prove who is typing it.
+
+Validate a test S1–S5 login, valid/invalid ownership, dry-run Cetaris import, S3/S5 attribution, reimport, PMs Needing Completion, manual proactive repair, unresolved OOS and carry-over, saved EML byte equality, history, analytics, and End Shift with synthetic data first. Take a backup of the private SQLite database before any later upgrade or migration. Never overwrite the old V3 production database.
+
 ## Launch on your Mac
 
 ```bash
@@ -87,7 +107,7 @@ At most **two shift sessions** may be active. Overnight work remains assigned to
 
 Cetaris import status, **Import Cetaris**, **Change Technicians**, and **Import Audit** are now grouped next to the Shift Report title. The Shift Progress bar remains visible and is **0% when no work has been staged**. It represents actual report-preparation milestones, not time elapsed: staged file (20%), imported with no qualifying WOs (30%), imported with qualifying WOs/PMs (75%), saved passdown (100%).
 
-The red Cetaris button starts XLSX/CSV staging; **staging is not the same as importing**. A selection dialog opens immediately. It prechecks only exact technician-name matches to active Drax MSTs on the selected shift, then displays other-shift MSTs and unmatched Cetaris technicians as optional groups. Manually selecting an additional/overtime technician **does not change login permissions or automatically establish WO ownership**. Confirm **Import Selected Work Orders** to persist the work. Missing or ambiguous completion evidence stays visible in Import Audit. The app now distinguishes an unconfirmed staged replacement file from an imported file, preserving earlier saved WOs.
+The red Cetaris button starts XLSX/CSV staging; **staging is not the same as importing**. A selection dialog opens immediately. It prechecks uniquely matched active Drax associates assigned to the selected shift, irrespective of their Job Title or who opened the report; it displays other-shift and unmatched/ambiguous technicians for explicit review. Reimports preserve deliberately deselected technicians while automatically checking newly encountered assigned technicians. Manually selecting an additional/overtime technician **does not change login permissions or automatically establish WO ownership**. Confirm **Import Selected Work Orders** to persist the work. Missing or ambiguous completion evidence stays visible in Import Audit. The app now distinguishes an unconfirmed staged replacement file from an imported file, preserving earlier saved WOs.
 
 The sidebar now uses the genuine Walmart 2025 vector artwork (official shapes and colors), with IND3 and MST Reliability Operations separated into readable rows. This change does not alter V3, the historical archive, or Drax workbooks.
 
@@ -104,7 +124,7 @@ The existing approved Shift Report UI is wired to the new, private V3.1 database
 7. Edit, exclude, and restore are persisted. Reimporting a file merges WOs by number, preserves manual edits, and leaves previously imported WOs intact. Missing or ambiguous labor timestamps remain in the Import Audit rather than receiving guessed shift attribution.
 8. Vendors, RO entries, notes and LOTO draft values autosave in the selected shift database. Creating the Outlook EML saves the current passdown to the selected shift; **End Shift requires a saved report**. Emails are not sent by the app.
 
-**Not wired yet:** AI rewrite/proofreading preview, processing the separate pending-PM file, real Cetaris automation (imports require the user to supply the export), and production identity verification. Continue using the live Workshop production workflow until independently accepted on approved equipment.
+**Current review implementation:** The separate **PMs Needing Completion** CSV/Excel/PDF/image upload is stored privately and appears in the report; spreadsheet rows are parsed, while PDF/image files remain clearly labeled reference attachments. Manual proactive/PM discoveries, carry-over adoption, breakdown confirmation/holds, historical EML snapshots, and read-only analytics are connected. Optional AI suggestions require an approved local model already present and never download one automatically. Cetaris imports still require a user-supplied export, and production identity verification and company-network rollout are not implemented. Continue using the existing live Workshop V3 workflow until the Windows pilot and operational acceptance checklist are approved.
 
 ## Preserve historical V2/V3 shift records
 
@@ -150,7 +170,7 @@ This is a **limited, guarded two-way synchronization bridge, not an unconditiona
 
 - **Associate number alone is not secure employee identity verification.** This prototype is **localhost only**; do not deploy on the Walmart facility network, open a tunnel, or enable public access. Enterprise SSO and proper authorization are required before real deployment.
 - Any official roster or Cetaris data must be handled only through approved company systems and locations. Never commit such data or secrets to this public repository.
-- The Shift Report starts with **zero sample work orders**, but real Cetaris XLSX/CSV parsing and shift-scoped work-order persistence are now connected. Generated local EML files are not sent; the report is not yet production-certified. Pending-PM export parsing and AI rewriting are separate upcoming stages.
+- The Shift Report starts with **zero sample work orders**, but real Cetaris XLSX/CSV parsing and shift-scoped work-order persistence are now connected. Generated local EML files are not sent; the report is not yet production-certified. PMs Needing Completion spreadsheet parsing is connected; optional local AI requires an approved model and may be unavailable on restricted devices.
 - The original Workshop app, repository, and database remain untouched.
 
 See [login and shift-lifecycle audit](docs/V31_LOGIN_AUDIT.md) for the comparison matrix and remaining environment-dependent verification.
