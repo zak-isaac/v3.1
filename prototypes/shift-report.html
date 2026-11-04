@@ -368,26 +368,56 @@ async function v31ReportPost(path,payload){
   return data;
 }
 function manualEntry(){
-  showModal('Add Manual Happening','For proactive repairs, issues discovered during PMs, or other work not yet in Cetaris.',
-    '<div class="field"><label>Asset ID<input id="m-asset" maxlength="120" required placeholder="ASSET ID"></label></div>'+
-    '<div class="field"><label>Issue / Work Performed<textarea id="m-cause" maxlength="4000" required></textarea></label></div>'+
-    '<div class="field"><label>Category<select id="m-category"><option>Proactive Repair</option><option>Breakdown</option><option>Process Interruption</option><option>Work Request</option></select></label></div>'+
-    '<div class="field"><label>Equipment Status<select id="m-status"><option value="PENDING">Pending / follow-up required</option><option value="RTS">Returned to service — confirmed</option><option value="OOS">Out of service</option></select></label></div>'+
-    '<div class="field"><label>WO Number (optional, if known)<input id="m-wo" maxlength="100"></label></div>'+
-    '<div class="field"><label>Technician Remarks<textarea id="m-remarks" maxlength="5000"></textarea></label></div>',[
-      {text:'Cancel',onClick:closeModal},
-      {text:'Save Manual Happening',kind:'btn-primary',onClick:async()=>{
-        const payload={asset:$('#m-asset').value.trim(),cause:$('#m-cause').value.trim(),
-          category:$('#m-category').value,status:$('#m-status').value,
-          wo_reference:$('#m-wo').value.trim(),remarks:$('#m-remarks').value.trim()};
-        if(!payload.asset||!payload.cause){toast('Enter the asset and issue first.');return;}
-        try{
-          await v31ReportPost('/api/reporting/manual',payload);
-          closeModal();await window.V31Reporting?.refresh();
-          toast('Manual happening saved to this shift');
-        }catch(err){toast(err.message);}
-      }}
-    ],{wide:true});
+  // Use native form validation/submission instead of a detached modal footer
+  // callback. A transient focus/modal update cannot silently drop the Save.
+  showModal('Add Manual Happening',
+    'For proactive repairs, issues discovered during PMs, or other work not yet in Cetaris.',
+    '<form id="v31-manual-form" autocomplete="off">'+
+    '<div class="field"><label>Asset ID<input id="m-asset" name="asset" maxlength="120" required placeholder="ASSET ID"></label></div>'+
+    '<div class="field"><label>Issue / Work Performed<textarea id="m-cause" name="cause" maxlength="4000" required></textarea></label></div>'+
+    '<div class="field"><label>Category<select id="m-category" name="category"><option>Proactive Repair</option><option>Breakdown</option><option>Process Interruption</option><option>Work Request</option></select></label></div>'+
+    '<div class="field"><label>Equipment Status<select id="m-status" name="status"><option value="PENDING">Pending / follow-up required</option><option value="RTS">Returned to service — confirmed</option><option value="OOS">Out of service</option></select></label></div>'+
+    '<div class="field"><label>WO Number (optional, if known)<input id="m-wo" name="wo_reference" maxlength="100"></label></div>'+
+    '<div class="field"><label>Technician Remarks<textarea id="m-remarks" name="remarks" maxlength="5000"></textarea></label></div>'+
+    '</form>',
+    [{text:'Cancel',onClick:closeModal},
+     {text:'Save Manual Happening',kind:'btn-primary',onClick:()=>{
+       const form=$('#v31-manual-form');
+       if(!form){toast('Manual entry form changed; reopen it.');return;}
+       form.requestSubmit();
+     }}],
+    {wide:true});
+  const form=$('#v31-manual-form');
+  let saving=false;
+  form.addEventListener('submit',async event=>{
+    event.preventDefault();
+    if(saving)return;
+    const values=new FormData(form);
+    const payload={
+      asset:String(values.get('asset')||'').trim(),
+      cause:String(values.get('cause')||'').trim(),
+      category:String(values.get('category')||'Proactive Repair'),
+      status:String(values.get('status')||'PENDING'),
+      wo_reference:String(values.get('wo_reference')||'').trim(),
+      remarks:String(values.get('remarks')||'').trim()
+    };
+    if(!payload.asset||!payload.cause){
+      toast('Enter both the asset and the issue before saving.');
+      return;
+    }
+    saving=true;
+    const submit=$$('#modal-actions button').find(x=>x.textContent==='Save Manual Happening');
+    if(submit){submit.disabled=true;submit.textContent='Saving manual happening…';}
+    try{
+      await v31ReportPost('/api/reporting/manual',payload);
+      closeModal();
+      await window.V31Reporting?.refresh();
+      toast('Manual happening saved to this shift');
+    }catch(error){
+      toast('Unable to save manual happening: '+error.message);
+      if(submit&&submit.isConnected){submit.disabled=false;submit.textContent='Save Manual Happening';}
+    }finally{saving=false;}
+  });
 }
 async function reviewCarryOvers(){
   try{
