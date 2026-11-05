@@ -9,6 +9,7 @@ from __future__ import annotations
 import v31_oos
 import v31_breakdown
 import v31_reporting
+import v31_returned_to_service
 
 
 def _key(asset):
@@ -31,7 +32,7 @@ def summary(conn, shift_id):
                w.work_at,w.imported_at,w.id
         FROM report_wo w JOIN shifts s ON s.id=w.shift_id
         WHERE w.excluded=0 AND w.selection_hidden=0 AND trim(w.asset)<>''
-          AND w.status IN ('OOS','RTS')
+          AND w.status IN ('OOS','RTS') AND w.category='Breakdown'
         ORDER BY s.shift_day,w.work_at,w.imported_at,w.id
     """).fetchall()
     latest={}
@@ -73,27 +74,12 @@ def summary(conn, shift_id):
                   'reason':row.get('reason') or 'Hold remains active',
                   'hold':True,'pending_decision':prior.get('pending_decision',False)}
 
-    rts={}
-    for row in shift_rows:
-        if row['status']=='RTS':
-            rts.setdefault(_key(row['asset']),{'asset':row['asset'],
-                 'source':'Shift work order','wo_number':row['wo_number']})
-    for row in manual_rts:
-        rts.setdefault(_key(row['asset']),{'asset':row['asset'],
-                 'source':'Manual RTS','wo_number':'',
-                 'direct_rts':bool(row.get('direct_rts'))})
-    for row in breakdown['resolved_this_shift']:
-        rts.setdefault(_key(row['asset']),{'asset':row['asset'],
-                 'source':'Verified breakdown','wo_number':row['wo_number']})
-
-    confirmed={}
-    for row in shift_rows:
-        if row['category'].casefold()=='breakdown' and row['status']=='RTS':
-            confirmed[row['wo_number']]={'asset':row['asset'],
-                'wo_number':row['wo_number'],'source':'Completed breakdown RTS'}
-    for row in breakdown['resolved_this_shift']:
-        confirmed[row['wo_number']]={'asset':row['asset'],
-            'wo_number':row['wo_number'],'source':'Confirmed breakdown RTS'}
+    # Keep displayed RTS and the Outlook email in sync via one authoritative
+    # list. Count breakdown WOs only after a documented RTS confirmation.
+    verified=v31_returned_to_service.confirmed_returns(conn,shift_id)
+    rts={_key(item['asset']):item for item in verified}
+    confirmed={item['wo_number']:item for item in verified
+               if item['breakdown'] and item['wo_number']}
 
     return {'oos':sorted(oos.values(),key=lambda item:item['asset'].casefold()),
             'rts':sorted(rts.values(),key=lambda item:item['asset'].casefold()),
