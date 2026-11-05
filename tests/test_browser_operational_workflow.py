@@ -207,7 +207,7 @@ def test_loto_missing_key_saves_without_false_missing_element_error(live_server)
             page.reload()
             page.wait_for_function("""() => !!window.V31Reporting
                 && document.querySelectorAll('#missing-keys .loto-key').length===20
-                && document.querySelector('#missing-keys .loto-key:nth-child(3) input')?.checked""")
+                && document.querySelectorAll('#missing-keys .loto-key')[2]?.checked""")
             assert page.locator('#missing-keys .loto-key').nth(2).is_checked()
             assert page.locator('#loto-state').inner_text()=='Verified'
             # Toggling verification off and back on must never erase missing keys.
