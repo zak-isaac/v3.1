@@ -566,7 +566,7 @@ function techModal(){
 }
 function createReport(){const inc=state.rows.filter(r=>!r.excluded);
   const manualOpen=window.__v31ManualOOS?.open||[];
-  const manualRts=(window.__v31ManualOOS?.rts_this_shift||[]).filter(m=>!m.direct_rts);
+  const manualRts=[]; // Manual status-only RTS belongs to the KPI, not the breakdown email.
   const rtsLines=[...new Set([...inc.filter(r=>r.status==='RTS'&&r.category==='Breakdown').map(r=>r.asset),
     ...manualRts.map(m=>m.asset)].filter(Boolean))];
   const oosLines=[...inc.filter(r=>r.status==='OOS').map(r=>r.asset),
@@ -632,11 +632,8 @@ function buildEmailHtml(){
   (window.__v31ManualOOS?.open||[]).forEach(m=>{
     oos.push(`<strong>${esc(m.asset)}</strong>${m.cause?' &mdash; '+esc(m.cause):''} (manually reported)`);
   });
-  (window.__v31ManualOOS?.rts_this_shift||[]).filter(m=>!m.direct_rts).forEach(m=>{
-    if(!rtsAssets.some(asset=>asset.toLowerCase()===m.asset.toLowerCase())){
-      rtsAssets.push(m.asset);rts.push(`<strong>${esc(m.asset)}</strong>`);
-    }
-  });
+  // Manual status-only RTS stays in the Shift RTS KPI and does not appear
+  // in the breakdown-only email section.
   const loto=state.loto
     ?`<p style="font-size:14px;font-family:Calibri,Arial,sans-serif;margin-top:18px;"><strong style="color:#2a8703;">&#10003; LOTO Verified</strong></p>`
     :`<p style="font-size:14px;font-family:Calibri,Arial,sans-serif;margin-top:18px;"><strong style="color:#b45309;">&#9888; LOTO Verification Pending</strong></p>`;
