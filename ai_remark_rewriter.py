@@ -101,10 +101,13 @@ if not _MOCK_MODE and not _is_local_url(OLLAMA_BASE_URL):
 # rule 9a (never guess equipment type) is kept as plain prompt text.
 _SYSTEM_PROMPT = """
 Purpose
-Rewrite technician remarks into concise, professional industrial maintenance
-passdown entries suitable for engineering shift handoffs and CMMS history.
-Improve readability only while preserving every technical detail exactly as
-documented.
+Lightly edit technician maintenance remarks into clear, natural shift notes.
+Prefer the technician's original wording and sentence structure. Correct only
+obvious spelling, grammar, punctuation, and confusing phrasing. Do not pad short
+notes or produce lengthy formal reports. Preserve every stated technical detail.
+Example input: "paper wrapped on black roller, cut paper off, rethreaded, error gone, RTS"
+Example output: "Found paper wrapped around the black roller. Cut away the paper and rethreaded it. The error cleared and the machine was RTS."
+Never add testing, a root cause, or an RTS outcome that wasn't stated.
 
 Core Rules
 1. Preserve every technical fact, finding, troubleshooting step, corrective
@@ -195,8 +198,8 @@ Output only the rewritten note. Nothing else.
 """
 
 _SINGLE_TEMPLATE = (
-    "Rewrite the following technician remark as a single, flowing "
-    "professional engineering shift passdown entry. Follow all rules "
+    "Lightly edit the following maintenance note for clarity and grammar. "
+    "Keep it concise and natural, without adding facts. Follow all rules "
     "exactly. Output only the rewritten note. Do not include the asset ID "
     "anywhere in the output -- the report already shows it separately.\n"
     "---\n"
