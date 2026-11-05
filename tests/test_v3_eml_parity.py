@@ -71,7 +71,7 @@ def test_eml_includes_ind3_next_gen_signature_with_embedded_spark_image(client, 
     assert "cid:ind3-walmart-spark" in html
     # The yellow Walmart spark is small and in-line with the wordmark.
     assert 'Walmart&nbsp;<img' in html
-    assert 'width="11" height="11"' in html
+    assert 'width="20" height="20"' in html
     assert "white-space:nowrap" in html
 
     inline_images = [p for p in msg.walk() if p.get_content_type() == "image/png"]
