@@ -138,11 +138,25 @@ def stage(conn, shift_id, payload: bytes, filename: str, actor: str):
     _table(conn)
     stats={}
     rows=parse_excel(payload,stats)
+    technicians=technician_counts(rows)
+    # Keep a tiny technician index alongside the full imported rows.
+    # Loading a month's raw JSON on every report refresh was unnecessary.
+    stats["technicians"]=technicians
     filename=Path(filename.replace("\\","/")).name[:120] or "cetaris.xlsx"
-    previous=conn.execute("SELECT raw_json,applied_at FROM report_stage WHERE shift_id=?",
+    previous=conn.execute("SELECT stats_json,applied_at FROM report_stage WHERE shift_id=?",
                           (shift_id,)).fetchone()
-    prior_names=([p["name"] for p in technician_counts(json.loads(previous["raw_json"]))]
-                 if previous and previous["applied_at"] else [])
+    prior_names=[]
+    if previous and previous["applied_at"]:
+        old_stats=json.loads(previous["stats_json"])
+        cached=old_stats.get("technicians")
+        if isinstance(cached,list):
+            prior_names=[p["name"] for p in cached]
+        else:
+            # Older staged reports have no technician index; migrate lazily.
+            prior_blob=conn.execute(
+                "SELECT raw_json FROM report_stage WHERE shift_id=?",(shift_id,)).fetchone()
+            if prior_blob:
+                prior_names=[p["name"] for p in technician_counts(json.loads(prior_blob["raw_json"]))]
     conn.execute("""INSERT INTO report_stage
         (shift_id,filename,raw_json,stats_json,uploaded_by,uploaded_at,applied_at,prior_techs_json)
         VALUES(?,?,?,?,?,?,NULL,?) ON CONFLICT(shift_id) DO UPDATE SET
@@ -150,22 +164,33 @@ def stage(conn, shift_id, payload: bytes, filename: str, actor: str):
         uploaded_by=excluded.uploaded_by,uploaded_at=excluded.uploaded_at,applied_at=NULL,
         prior_techs_json=excluded.prior_techs_json""",
         (shift_id,filename,_json(rows),_json(stats),actor,_now(),_json(prior_names)))
-    return {"filename":filename,"technicians":technician_counts(rows),
+    return {"filename":filename,"technicians":technicians,
             "stats":stats,"staged":True,"requires_selection":True}
 
 
 def stage_details(conn, shift_id):
     _table(conn)
-    stage_row=conn.execute("SELECT * FROM report_stage WHERE shift_id=?",(shift_id,)).fetchone()
+    # Fetch metadata only: a full-month raw_json blob is often much larger
+    # than the entire current shift's report and must not be loaded on refresh.
+    stage_row=conn.execute("""SELECT filename,stats_json,applied_at,prior_techs_json
+                              FROM report_stage WHERE shift_id=?""",(shift_id,)).fetchone()
     if not stage_row:
         return {"staged":False,"imported":False,"filename":"","technicians":[],"stats":{},
                 "prior_stage_technicians":[]}
-    rows=json.loads(stage_row["raw_json"])
+    stats=json.loads(stage_row["stats_json"])
+    cached=stats.get("technicians")
+    if isinstance(cached,list):
+        technicians=cached
+    else:
+        # Backward compatibility with files staged before this optimization.
+        old=conn.execute("SELECT raw_json FROM report_stage WHERE shift_id=?",
+                         (shift_id,)).fetchone()
+        technicians=technician_counts(json.loads(old["raw_json"])) if old else []
     return {"staged":True,"imported":bool(stage_row["applied_at"]),
             "filename":stage_row["filename"],
-            "technicians":technician_counts(rows),
+            "technicians":technicians,
             "prior_stage_technicians":json.loads(stage_row["prior_techs_json"] or "[]"),
-            "stats":json.loads(stage_row["stats_json"])}
+            "stats":stats}
 
 
 def _existing_elsewhere(conn,shift_id,wo,new_status):
