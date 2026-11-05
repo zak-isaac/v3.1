@@ -4,7 +4,6 @@
 const view=window.v31ReportView;
 if(!view)return;
 let snapshot=null,saveTimer;
-const closureChoices={};
 async function api(url,body){
  const options={credentials:'same-origin',headers:{Accept:'application/json'}};
  if(body!==undefined){
@@ -23,44 +22,9 @@ function feedback(message,kind='info'){
  node.textContent=message||'';
  node.className=kind==='warning'?'warning':kind==='error'?'error':'';
 }
-function revealAudit(){
- const panel=document.querySelector('#audit');if(panel)panel.hidden=false;
-}
 async function refresh(){
  snapshot=await api('/api/reporting/state');
  view.applySnapshot(snapshot);
- const audit=document.querySelector('#audit > div');
- if(audit){
-  audit.replaceChildren();
-  // Import Audit owns all import diagnostics; they are not shift-progress blockers.
-  const em=snapshot.audit.evening_morning;
-  if(em&&em.applicable){
-    const emLine=document.createElement('p');
-    emLine.textContent='Evening (before midnight): '+em.evening+' WO · Morning (after midnight): '+em.morning+' WO';
-    audit.append(emLine);
-  }
-  if(snapshot.stage?.imported){
-    const button=document.createElement('button');
-    button.type='button';button.className='btn btn-primary btn-small';
-    button.textContent='Open Import Audit';
-    button.onclick=()=>view.showImportAudit();
-    audit.append(button);
-  }
-  const pendingClosed=(snapshot.audit.pending||[]).filter(x=>
-    String(x.reason||'').startsWith('Completed but not Closed'));
-  if(pendingClosed.length){
-    const button=document.createElement('button');
-    button.type='button';button.className='btn btn-light btn-small';
-    button.textContent='Optional closure reminders';
-    button.onclick=()=>reviewCompleted(pendingClosed);
-    audit.append(button);
-  }
-  // Nothing to show (no Cetaris import yet, or a clean import with no
-  // evening/morning split, pending reviews, or ignored records) -- an
-  // empty bordered box with no content is just visual clutter.
-  const panel=document.querySelector('#audit');
-  if(panel)panel.hidden=audit.children.length===0;
- }
  const label=document.querySelector('#v31-import-btn-label');
  if(label)label.textContent=snapshot.stage.staged?'Replace Cetaris File':'Import Cetaris';
  if(snapshot.stage.staged){
@@ -72,10 +36,9 @@ async function refresh(){
   if(!snapshot.stage.imported){
     feedback(count+' labor rows staged. Select/confirm technicians to finish importing this file.','warning');
   } else if(!(snapshot.rows.length+snapshot.pm_count)){
-    feedback('No work orders qualified for this selected shift. Check Import Audit for technician, date, status and overlap reasons.','warning');
+    feedback('No qualifying work orders for this shift. Check the selected technicians and Cetaris work dates.','warning');
   } else {
-    feedback('Imported '+snapshot.rows.length+' work orders and '+snapshot.pm_count+
-      ' PMs. View Import Audit for excluded, next-day or pending records.');
+    feedback('Imported '+snapshot.rows.length+' work orders and '+snapshot.pm_count+' PMs.');
   }
  }else{
   feedback('');
@@ -101,7 +64,7 @@ async function upload(file){
    const n=result.stats.parsed_rows||0;
    if(!n){
      feedback('File accepted but no technician labor rows were found. Review the Cetaris export and header columns.','warning');
-     revealAudit();return;
+     return;
    }
    feedback(n+' labor rows parsed. Drax-matched technicians are selected below; confirm to import.');
    chooseTechs();
@@ -219,15 +182,11 @@ function chooseTechs(){
     feedback('Attributing selected technician work orders to '+selectedShift+'…');
     const result=await api('/api/reporting/import',{technicians:names});
     view.closeModal();await refresh();
-    const sum=result.summary||{};
     const n=snapshot.rows.length+snapshot.pm_count;
     if(!n){
-      feedback('Cetaris imported, but 0 WOs qualified. Check Import Audit for missing timestamps, unclosed records, or work assigned to another shift.','warning');
-      revealAudit();
+      feedback('Cetaris imported, but no WOs qualified for this shift. Check selected technicians and Cetaris work dates.','warning');
     }else{
-      feedback('Imported '+snapshot.rows.length+' work orders and '+snapshot.pm_count+
-        ' PMs. Open Import Audit for any excluded or unattributed records.');
-      if(sum.pending_review||sum.ignored)revealAudit();
+      feedback('Imported '+snapshot.rows.length+' work orders and '+snapshot.pm_count+' PMs.');
     }
     view.toast(n+' qualifying work orders/PMs saved to '+selectedShift+'.');
    }catch(e){feedback(e.message,'error');view.toast(e.message);}
@@ -237,32 +196,6 @@ function chooseTechs(){
  if(body)body.append(container);
 }
 
-function reviewCompleted(items){
- const block=document.createElement('div');
- block.style.cssText='display:grid;gap:10px;max-height:320px;overflow:auto';
- for(const item of items){
-  const label=document.createElement('label');
-  label.style.cssText='display:flex;gap:10px;align-items:center';
-  const check=document.createElement('input');
-  check.type='checkbox';check.className='v31-closure-review';
-  check.value=item.wo_number;check.checked=closureChoices[item.wo_number]==='add';
-  label.append(check,document.createTextNode('WO# '+item.wo_number+
-    ' — Add closure reminder to passdown'));
-  block.append(label);
- }
- view.showModal('Completed Work Orders','Choose Add to Passdown for closure reminders; unchecked WOs are ignored until Cetaris is closed.','',[
-   {text:'Cancel',onClick:view.closeModal},
-   {text:'Apply review',kind:'btn-primary',onClick:async()=>{
-     const chosen=new Set([...document.querySelectorAll('#modal-body .v31-closure-review:checked')].map(e=>e.value));
-     for(const item of items)closureChoices[item.wo_number]=chosen.has(item.wo_number)?'add':'ignore';
-     try{
-       await api('/api/reporting/import',{technicians:snapshot.technicians,closure_reviews:closureChoices});
-       view.closeModal();await refresh();view.toast('Closure decisions saved');
-     }catch(e){view.toast(e.message);}
-   }}
- ]);
- document.querySelector('#modal-body').append(block);
-}
 async function updateWO(wo,changes){
  return api('/api/reporting/work-orders/'+encodeURIComponent(wo),changes);
 }
