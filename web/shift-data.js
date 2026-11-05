@@ -196,6 +196,9 @@ function chooseTechs(){
  if(body)body.append(container);
 }
 
+async function setMissingKey(key,missing){
+ return api('/api/reporting/loto/missing-key',{key,missing});
+}
 async function updateWO(wo,changes){
  return api('/api/reporting/work-orders/'+encodeURIComponent(wo),changes);
 }
@@ -209,6 +212,6 @@ async function saveDraft(notify=false){
 }
 function queueDraft(){clearTimeout(saveTimer);saveTimer=setTimeout(()=>saveDraft(false).catch(()=>{}),650);}
 async function flushDraft(){clearTimeout(saveTimer);await saveDraft(false);}
-window.V31Reporting={upload,chooseTechs,updateWO,saveDraft,queueDraft,flushDraft,refresh};
+window.V31Reporting={upload,chooseTechs,setMissingKey,updateWO,saveDraft,queueDraft,flushDraft,refresh};
 refresh().catch(e=>view.toast('Reporting data could not load: '+e.message));
 })();
