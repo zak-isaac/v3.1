@@ -1017,7 +1017,7 @@ def admin_settings_save(payload: FacilitySettingsPayload, request: Request):
         raise HTTPException(422, str(exc))
     return v31_facility.save(PRIVATE, {
         'distribution_center': payload.distribution_center.strip() or 'IND3',
-        'recipients': ', '.join(addresses),
+        'recipients': ','.join(addresses),
         'sender_name': payload.sender_name.strip() or 'IND3 Shift Passdown',
     })
 
