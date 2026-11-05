@@ -161,19 +161,30 @@
       const status = document.createElement('small');
       status.style.cssText='color:#687a90;font-size:12px';
       status.textContent = entry.action === 'resume' ? 'Open report · ' + entry.date :
-        entry.action === 'start' ? 'Ready to start · ' + entry.date : 'Outside reporting window';
+        entry.action === 'start' ? 'Ready to start · ' + entry.date :
+        entry.action === 'reopen' ? 'Closed report · ' + entry.date :
+        (entry.reason || 'Outside reporting window');
       label.append(heading,status);
       const button=document.createElement('button');
       button.type='button';
-      button.textContent=entry.action==='resume'?'Resume':entry.action==='start'?'Start':'Unavailable';
+      button.textContent=entry.action==='resume'?'Resume':
+        entry.action==='start'?'Start':
+        entry.action==='reopen'?'Reopen':'Unavailable';
       button.disabled=entry.action==='unavailable';
       button.style.cssText='min-width:98px;background:#0968d5;color:white;border:0;border-radius:9px;padding:10px 13px;font-weight:700;cursor:pointer';
       button.addEventListener('click', async () => {
         button.disabled=true;
         errorNode.hidden=true;
         try {
-          await api(entry.action==='resume'?'/api/shifts/resume':'/api/shifts/start',
-            entry.action==='resume'?{shift_id:entry.id}:{code:entry.code});
+          if(entry.action==='reopen' && !window.confirm(
+            'Reopen the previously closed '+entry.code+' report for '+entry.date+'? '+
+            'Existing WOs and saved passdown history will be preserved. '+
+            'New edits can change this historical report.')) {
+            button.disabled=false;return;
+          }
+          const endpoint=entry.action==='resume'?'/api/shifts/resume':
+            entry.action==='reopen'?'/api/shifts/reopen':'/api/shifts/start';
+          await api(endpoint,entry.action==='resume'?{shift_id:entry.id}:{code:entry.code});
           enterReport();
         } catch(err) {
           errorNode.textContent=err.message;
