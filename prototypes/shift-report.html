@@ -739,6 +739,11 @@ keyGrid.addEventListener('change',async e=>{
   // Marking a missing key records a completed inspection, not an unverified one.
   if(box.checked)toggle.checked=true;
   lotoVisual();
+  // Do not allow an EML download while a new facility key warning is still
+  // being saved; otherwise the canonical report could miss a just-clicked key.
+  const generateButton=$('#generate-eml');
+  const wasGenerateDisabled=!!generateButton?.disabled;
+  if(generateButton)generateButton.disabled=true;
   $$('.loto-key',keyGrid).forEach(c=>c.disabled=true);
   try{
     const result=await window.V31Reporting.setMissingKey(box.value,box.checked);
@@ -755,7 +760,10 @@ keyGrid.addEventListener('change',async e=>{
     toast('Missing key save failed: '+error.message);
     // Refresh authoritative server state if one of the two writes succeeded.
     window.V31Reporting?.refresh()?.catch(()=>{});
-  }finally{$$('.loto-key',keyGrid).forEach(c=>c.disabled=false);}
+  }finally{
+    $$('.loto-key',keyGrid).forEach(c=>c.disabled=false);
+    if(generateButton)generateButton.disabled=wasGenerateDisabled;
+  }
 });
 $('#loto-keys-toggle').addEventListener('click',()=>{const area=$('#loto-select-area');const open=area.hidden;area.hidden=!open;$('#loto-keys-toggle').setAttribute('aria-expanded',String(open));});
 $('#generate-eml').addEventListener('click',()=>emlDownload());
