@@ -125,6 +125,12 @@ def test_real_browser_manual_pm_breakdown_passdown_and_end_shift(live_server):
         with page.expect_download() as dl:
             page.locator('#generate-eml').click()
         eml=dl.value.path().read_text(encoding='utf-8')
+        # Download completion alone does not prove the UI handled success:
+        # a removed #last-saved element previously raised a null.textContent
+        # exception after the EML was already downloaded.
+        page.wait_for_function("""() => document.querySelector('#toast')?.textContent
+            ?.includes('Passdown saved and downloaded')""",timeout=10000)
+        assert 'Cannot set properties of null' not in page.locator('#toast').inner_text()
         assert 'VOIDFILL-UI' in eml
         assert 'PMUI001' in eml
         assert 'CONV-BROWSER' in eml
