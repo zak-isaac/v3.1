@@ -21,6 +21,9 @@ function feedback(message,kind='info'){
  if(!node)return;
  node.textContent=message||'';
  node.className=kind==='warning'?'warning':kind==='error'?'error':'';
+ // Only show actionable progress/warnings/errors; successful imports already
+ // update the report's live KPIs and should leave no banner under the buttons.
+ node.hidden=!message;
 }
 async function refresh(){
  snapshot=await api('/api/reporting/state');
@@ -38,7 +41,7 @@ async function refresh(){
   } else if(!(snapshot.rows.length+snapshot.pm_count)){
     feedback('No qualifying work orders for this shift. Check the selected technicians and Cetaris work dates.','warning');
   } else {
-    feedback('Imported '+snapshot.rows.length+' work orders and '+snapshot.pm_count+' PMs.');
+    feedback('');
   }
  }else{
   feedback('');
@@ -186,7 +189,7 @@ function chooseTechs(){
     if(!n){
       feedback('Cetaris imported, but no WOs qualified for this shift. Check selected technicians and Cetaris work dates.','warning');
     }else{
-      feedback('Imported '+snapshot.rows.length+' work orders and '+snapshot.pm_count+' PMs.');
+      feedback('');
     }
     view.toast(n+' qualifying work orders/PMs saved to '+selectedShift+'.');
    }catch(e){feedback(e.message,'error');view.toast(e.message);}
