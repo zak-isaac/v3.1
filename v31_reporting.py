@@ -887,36 +887,13 @@ def build_passdown_html(conn, shift_id, shift_code, lead_name=''):
     # manual RTS. Routine completed/closed Shift Happenings never qualify.
     rts=[f'<strong>{esc(item["asset"])}</strong>' for item in
          v31_returned_to_service.confirmed_returns(conn,shift_id)]
-    oos = [f'<strong>{esc(r["asset"])}</strong>' for r in inc
-           if r["status"] == "OOS" and r["category"].casefold() == "breakdown"]
-    # Current globally-open manually reported equipment is included in the
-    # current shift's canonical report snapshot. Snapshot bytes will never
-    # change retroactively after the equipment is returned to service.
-    seen_oos={r["asset"].strip().casefold() for r in inc
-              if r["status"]=="OOS" and r["category"].casefold()=="breakdown"}
-    for record in v31_oos.list_records(conn,open_only=True):
-        asset=record["asset"].strip()
-        if asset.casefold() not in seen_oos:
-            oos.append(f'<strong>{esc(asset)}</strong>'
-                       f'{(" — "+esc(record["cause"])) if record["cause"] else ""}')
-            seen_oos.add(asset.casefold())
-    # V3-style global breakdown lifecycle. Previously flagged OOS assets
-    # remain visible on later shifts until a verified Closed WO or an
-    # explicit reviewed RTS decision clears them.
-    global_open={x["asset"].strip().casefold() for x in inc if x["status"]=="OOS"}
-    global_open.update(x["asset"].strip().casefold() for x in v31_oos.list_records(conn))
-    for entry in v31_breakdown.overview(conn,shift_id)["open"]:
-        asset=entry["asset"].strip()
-        if asset.casefold() not in global_open:
-            oos.append(f'<strong>{esc(asset)}</strong> — Breakdown WO# {esc(entry["wo_number"])} (awaiting RTS)')
-            global_open.add(asset.casefold())
-    for held in v31_breakdown.overview(conn,shift_id)["holds"]:
-        asset=held["asset"].strip()
-        if asset.casefold() not in global_open:
-            reason=held["reason"].strip()
-            oos.append(f'<strong>{esc(asset)}</strong> — Manual OOS hold'
-                       + (f': {esc(reason)}' if reason else ''))
-            global_open.add(asset.casefold())
+    # Use the same facility-wide active OOS inventory as the dashboard.
+    # Historical unresolved breakdowns may not appear in this shift's
+    # report_wo rows, and previously resolved equipment must not reappear.
+    # Local import avoids a module-level cycle (asset_status imports reporting).
+    import v31_asset_status
+    oos = [f'<strong>{esc(item["asset"])}</strong>'
+           for item in v31_asset_status.summary(conn, shift_id)["oos"]]
     loto_html = (
         '<p style="font-size:14px;font-family:Calibri,Arial,sans-serif;margin-top:18px;">'
         '<strong style="color:#2a8703;">&#10003; LOTO Verified</strong></p>'
