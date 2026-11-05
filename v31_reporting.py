@@ -913,7 +913,11 @@ def build_passdown_html(conn, shift_id, shift_code, lead_name=''):
     # live/current globally-open list, which would drift for an archived
     # shift's report every time something new goes down or comes back up.
     for record in v31_oos.resolved_this_shift(conn, shift_id):
-        add_breakdown_rts(record["asset"])
+        # Direct 'Mark RTS' is an operational status update, not evidence
+        # that a Breakdown WO was completed. Keep it in the shift RTS KPI,
+        # but never invent a repaired breakdown for the Outlook RTS section.
+        if not record.get("direct_rts"):
+            add_breakdown_rts(record["asset"])
 
     # V3-style global breakdown lifecycle. Previously flagged OOS assets
     # remain visible on later shifts until a verified Closed WO or an
