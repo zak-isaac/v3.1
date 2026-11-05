@@ -435,6 +435,14 @@ def test_completed_non_pm_pending_review_not_silently_closed(client,monkeypatch)
     result=client.get("/api/reporting/state").json()
     assert result["rows"]==[]
     assert any(x["wo_number"]=="9301" for x in result["audit"]["pending"])
+    # Import diagnostics are visible in the app but never injected into
+    # the Outlook passdown or made a report-generation requirement.
+    generated=client.post("/api/shifts/report",json={})
+    assert generated.status_code==200,generated.text
+    eml=client.get("/api/shifts/report/download")
+    assert eml.status_code==200
+    assert b"9301" not in eml.content
+    assert b"Cetaris import review" not in eml.content
 
 
 def test_invalid_workbook_does_not_replace_prior_stage(client,monkeypatch):
@@ -475,12 +483,11 @@ def test_frontend_shift_data_controller_is_connected(client,monkeypatch):
     script=client.get("/web/shift-data.js")
     assert script.status_code==200
     assert "/api/reporting/stage" in script.text
-    # The audit panel's Added/Updated/PM/Pending/Ignored/Next-day count
-    # summary and the Next-Day Work Orders section were removed as
-    # duplicates of the WO Review Items metric card; the backend audit
-    # data (audit.next_day etc.) still exists, just is not re-rendered here.
-    assert "Cetaris Import Audit" not in script.text
-    assert "Next-Day Work Orders" not in script.text
+    # The Import Audit tile opens a detailed read-only diagnostic view;
+    # the audit panel retains a separate Open Import Audit button.
+    # No audit warning blocks passdown generation.
+    assert "Open Import Audit" in script.text
+    assert "view.showImportAudit()" in script.text
 
 
 def test_drax_assignments_resolve_s1_s2_overlap(client,monkeypatch,tmp_path):
