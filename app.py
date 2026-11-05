@@ -941,11 +941,18 @@ def admin_settings_save(payload: FacilitySettingsPayload, request: Request):
     })
 
 
+def _owner_name(row) -> str:
+    """Display name of whoever actually owns this shift (not necessarily the
+    current viewer -- a manager can view/generate another MST's shift),
+    for the IND3 Next Gen Outlook signature."""
+    return roster().get(row['owner'], {}).get('name', '')
+
+
 @app.get('/api/shifts/report/preview')
 def preview_shift_report(request: Request):
     session,row=_report_access(request)
     with _db() as conn:
-        report=v31_report_export.build(conn,row['id'],row['code'],row['shift_day'],PRIVATE)
+        report=v31_report_export.build(conn,row['id'],row['code'],row['shift_day'],PRIVATE,_owner_name(row))
     return {'html':report['html'],'sha256':report['sha256'],
             'attachments':report['attachments']}
 
@@ -956,7 +963,7 @@ def save_shift_report(payload: ReportPayload, request: Request):
     _origin_check(request)
     session,row=_report_access(request)
     with _db() as conn:
-        report=v31_report_export.build(conn,row['id'],row['code'],row['shift_day'],PRIVATE)
+        report=v31_report_export.build(conn,row['id'],row['code'],row['shift_day'],PRIVATE,_owner_name(row))
         conn.execute("""UPDATE shifts SET
           report_content=?,report_html=?,report_eml=?,report_hash=?,
           report_saved_at=?,report_count=report_count+1 WHERE id=?""",
@@ -1433,7 +1440,7 @@ def shift_history_eml(shift_id:int,request:Request):
             # Old V3.1 history: fallback for records saved before this
             # snapshot migration, never pretend this is a byte-identical copy.
             content=v31_report_export.build(conn,shift_id,row['code'],
-                     row['shift_day'],PRIVATE)['eml']
+                     row['shift_day'],PRIVATE,_owner_name(row))['eml']
         else:
             raise HTTPException(404,'No saved passdown for this shift')
     filename=f"IND3_{row['code']}_{row['shift_day']}_Shift_Passdown.eml"

@@ -17,6 +17,7 @@ import json
 import sqlite3
 
 from pm_pending_parser import parse_pm_pending
+import v31_pm_table_style as pm_style
 
 TZ=ZoneInfo("America/Indiana/Indianapolis")
 ALLOWED_EXTS={".xlsx",".xls",".csv",".pdf",".png",".jpg",".jpeg"}
@@ -89,17 +90,29 @@ def report_section(conn,shift_id):
     pm=get(conn,shift_id)
     headline='<p style="margin:16px 0 2px"><strong style="font-size:16px">PMs Needing Completion</strong></p>'
     if not pm["present"]:
-        return headline+'<p>No PMs Needing Completion report uploaded for this shift.</p>'
+        return headline+'<p style="margin:0 0 6px;font-size:14px;color:#6b7280;font-style:italic;">No PMs Needing Completion report uploaded for this shift.</p>'
     detail='<p>Uploaded report: '+escape(pm["filename"])+'</p>'
     if not pm["parsed"]:
-        return headline+detail+'<p>Reference file attached; its contents were not machine-parsed.</p>'
+        return headline+detail+'<p style="margin:0 0 6px;font-size:14px;color:#6b7280;font-style:italic;">Reference file attached; its contents were not machine-parsed.</p>'
     if not pm["rows"]:
-        return headline+detail+'<p>Report contains no parsed PM rows.</p>'
-    parts=[]
-    for row in pm["rows"]:
-        line='<strong>WO# '+escape(row["wo_number"])+'</strong>'
-        if row["asset_num"]:line+=' — Asset '+escape(row["asset_num"])
-        if row["pm_due_date"]:line+='; due '+escape(row["pm_due_date"])
-        if row["promise_date"]:line+='; promised '+escape(row["promise_date"])
-        parts.append('<li>'+line+'</li>')
-    return headline+detail+'<ul style="padding-left:20px">'+''.join(parts)+'</ul>'
+        return headline+detail+'<p style="margin:0 0 6px;font-size:14px;color:#6b7280;font-style:italic;">Report contains no parsed PM rows.</p>'
+    # Same bordered/zebra table styling as V3's real Outlook passdown --
+    # single source of truth in v31_pm_table_style.py.
+    border="border:1px solid #d1d5db;"
+    th_s=f"padding:8px 12px;text-align:left;font-size:14px;font-weight:bold;background:#{pm_style.PM_HEADER_HEX};color:#fff;font-family:Calibri,Arial,sans-serif;{border}"
+    td_s=f"padding:7px 12px;font-size:14px;font-family:Calibri,Arial,sans-serif;{border}"
+    hdr=(f"<tr><th style='{th_s}'>WO #</th><th style='{th_s}'>Asset</th>"
+         f"<th style='{th_s}'>PM Due Date</th><th style='{th_s}'>Promise Date / Time</th>"
+         f"<th style='{th_s}'>WO Date / Time</th></tr>")
+    body_rows=""
+    for i,row in enumerate(pm["rows"]):
+        row_bg=f"#{pm_style.pm_zebra_hex(i)}"
+        body_rows+=(f"<tr style='background:{row_bg};'>"
+                    f"<td style='{td_s}font-family:monospace;'>{escape(row['wo_number'])}</td>"
+                    f"<td style='{td_s}font-weight:bold;'>{escape(row['asset_num'] or '')}</td>"
+                    f"<td style='{td_s}font-weight:bold;'>{escape(row['pm_due_date'] or '')}</td>"
+                    f"<td style='{td_s}'>{escape(row['promise_date'] or '')}</td>"
+                    f"<td style='{td_s}color:#666;'>{escape(row['wo_date'] or '')}</td></tr>")
+    table=(f"<table style='width:100%;border-collapse:collapse;margin-top:4px;'>"
+           f"<thead>{hdr}</thead><tbody>{body_rows}</tbody></table>")
+    return headline+detail+table

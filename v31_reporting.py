@@ -18,6 +18,7 @@ import ai_remark_rewriter
 import html as _html
 import spelling_fix
 import v31_oos
+import v31_signature
 import v31_pm_needing_completion as v31_pm
 import v31_breakdown
 
@@ -726,7 +727,7 @@ def happenings_counts(conn, shift_ids):
     return {r["shift_id"]: r["n"] for r in rows}
 
 
-def build_passdown_html(conn, shift_id, shift_code):
+def build_passdown_html(conn, shift_id, shift_code, lead_name=''):
     """Python mirror of the client-side buildEmailHtml() in shift-report.html,
     used only so Shift History can regenerate a historical shift's EML after
     the browser tab holding its live in-memory `state` is long gone. Rebuilt
@@ -734,7 +735,11 @@ def build_passdown_html(conn, shift_id, shift_code):
     spelling-corrected text the MST saw) plus report_drafts (vendors/ro/
     notes/loto/missingKeys, via the existing autosave debounce). Section
     wording/order must stay in lockstep with buildEmailHtml() -- update both
-    together if either changes."""
+    together if either changes.
+
+    lead_name appends the real IND3 Next Gen Outlook signature (matching
+    the live V3 workshop app's exact format) -- blank renders a generic
+    'IND3 Maintenance Team' signature rather than omitting one."""
     state = get_state(conn, shift_id)
     draft = get_draft(conn, shift_id)
     esc = _html.escape
@@ -848,7 +853,7 @@ def build_passdown_html(conn, shift_id, shift_code):
     pm_html = v31_pm.report_section(conn,shift_id)
     vendors = [esc(v) for v in (draft.get("vendors") or [])]
     ro = [esc(v) for v in (draft.get("ro") or [])]
-    return (
+    html_body = (
         '<html><body style="font-family:Calibri,Arial,sans-serif;font-size:14px;color:#111;'
         'max-width:700px;line-height:1.6;">'
         f'<p style="margin:0 0 18px;font-size:18px;"><strong>{esc(shift_code)} End of Shift Passdown</strong></p>'
@@ -860,3 +865,4 @@ def build_passdown_html(conn, shift_id, shift_code):
         + sec("Out of Service &mdash; Returned to Service (RTS)", bullet_list(rts))
         + sec("Current Out of Service", bullet_list(oos))
         + loto_html + missing_html + '</body></html>')
+    return v31_signature.append_signature(html_body, lead_name)

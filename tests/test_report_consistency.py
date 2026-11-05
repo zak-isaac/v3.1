@@ -282,3 +282,31 @@ def test_generate_passdown_blocked_until_shift_progress_is_100_percent(page_ctx)
     assert page.locator('#progress-number').inner_text() == "100%"
     with page.expect_download():
         page.locator('#generate-eml').click()
+
+
+def test_loto_toggle_updates_progress_live_and_survives_a_quick_refresh(page_ctx):
+    """Toggling LOTO must update Shift Progress instantly (no stale refresh
+    needed), and un-verifying it must survive an immediate page reload --
+    the autosave used for free text (650ms debounce) is too slow for a
+    discrete safety toggle and can silently lose an un-verify click.
+    """
+    page, base_url, _ = page_ctx
+    _stage_and_import(page, base_url, "9902", "Routine check", "Inspection", complete_loto=False)
+    assert page.locator('#progress-number').inner_text() != "100%"
+
+    # Toggle LOTO on via the real switch -- progress must update immediately,
+    # with no explicit refresh() call in between.
+    page.locator('label.switch .switch-track').click()
+    assert page.locator('#loto-toggle').is_checked()
+    assert page.locator('#progress-number').inner_text() == "100%"
+
+    # Toggle it back off, then refresh right away -- the un-verify must not
+    # be silently lost to a pending debounced save.
+    page.locator('label.switch .switch-track').click()
+    assert not page.locator('#loto-toggle').is_checked()
+    assert page.locator('#progress-number').inner_text() != "100%"
+    page.reload()
+    page.wait_for_function("!!window.V31Reporting", timeout=10000)
+    assert not page.locator('#loto-toggle').is_checked(), \
+        "LOTO un-verify was lost after a quick refresh -- debounced autosave raced the reload"
+    assert page.locator('#progress-number').inner_text() != "100%"
