@@ -91,7 +91,7 @@
               <div class="metric metric-amber"><div class="metric-icon"><svg class="icon"><use href="#i-alert"/></svg></div><div><span>OOS In Process</span><strong id="metric-oos">0</strong></div></div>
               <div class="metric metric-red"><div class="metric-icon"><svg class="icon"><use href="#i-wrench"/></svg></div><div><span>Breakdowns</span><strong id="metric-breakdown">0</strong></div></div>
               <div class="metric metric-purple"><div class="metric-icon"><svg class="icon"><use href="#i-clipboard"/></svg></div><div><span>PMs Completed</span><strong id="metric-pms-completed">0</strong></div></div>
-              <div class="metric metric-softblue"><div class="metric-icon"><svg class="icon"><use href="#i-calendar"/></svg></div><div><span id="metric-daynight-label">Evening / Morning WOs</span><strong id="metric-daynight">—</strong></div></div>
+              <div class="metric metric-softblue" id="v31-review-metric" role="button" tabindex="0" aria-label="View work order review items"><div class="metric-icon"><svg class="icon"><use href="#i-calendar"/></svg></div><div><span id="metric-daynight-label">Evening / Morning WOs</span><strong id="metric-daynight">—</strong></div></div>
             </section>
         </section>
         <div class="workspace-grid">
@@ -325,9 +325,20 @@ function progressChecklist(){
     {label:'Cetaris import confirmed (if a file was chosen)',done:!state.cetarisFile||state.stageImported},
     {label:'Work orders or PMs recorded for this shift',done:(state.rows.length+state.pmCount)>0},
     {label:'LOTO key verification completed (verified, or missing keys documented)',done:lotoDone},
-    {label:'No outstanding WO Review Items',done:(state.audit?.pending?.length||0)===0},
+    // Review warnings are shown and acknowledged before report generation, not silently counted as blockers.
   ];
 }
+function reviewItemsMarkup(){
+  const items=state.audit?.pending||[];
+  if(!items.length)return '<p>No outstanding Cetaris work-order review items.</p>';
+  return '<p>These Cetaris audit entries require attention. They are not automatically closed, excluded, or marked RTS.</p>'+items.map((item,i)=>{
+    const wo=String(item.wo_number||item.wo||'Not supplied');
+    const matched=state.rows.find(row=>String(row.wo)===wo);
+    const fields=[['WO',wo],['Asset',item.asset||matched?.asset],['Technician',item.technician||matched?.tech],['Reason',item.reason||'Review required']].filter(x=>x[1]);
+    return '<section style="padding:12px;margin:10px 0;border:1px solid #d7e4f6;border-radius:10px;background:#f7faff"><strong>Review item '+(i+1)+'</strong>'+fields.map(([label,value])=>'<p style="margin:5px 0"><strong>'+esc(label)+':</strong> '+esc(value)+'</p>').join('')+'</section>';
+  }).join('');
+}
+function showReviewItems(){showModal('WO Review Items','Review every outstanding Cetaris audit item before completing the passdown.',reviewItemsMarkup(),[{text:'Close',onClick:closeModal}],{wide:true});}
 function computeProgress(){
   const items=progressChecklist();
   const percent=Math.round(items.filter(x=>x.done).length/items.length*100);
@@ -337,6 +348,7 @@ function updateMetrics(){const inc=state.rows.filter(r=>!r.excluded);const set=(
   const em=state.audit.evening_morning;
   if(em&&em.applicable){$('#metric-daynight-label').textContent='Evening / Morning WOs';$('#metric-daynight').textContent=`${em.evening} / ${em.morning}`;}
   else{$('#metric-daynight-label').textContent='WO Review Items';$('#metric-daynight').textContent=String(state.audit.pending.length);}
+  const metric=$('#v31-review-metric');if(metric){metric.title='Click to review all '+state.audit.pending.length+' Cetaris audit items';metric.style.cursor='pointer';}
   $('#metric-pms-completed').textContent=state.pmCount;$('#pm-tab-count').textContent=`(${state.pmCount} / ${state.pmNeeds?.count||0})`;
   const progress=computeProgress();state.progress=progress.percent;
   $('#progress-number').textContent=`${progress.percent}%`;$('#progress-fill').style.width=`${progress.percent}%`;$('#progress-fill').setAttribute('aria-valuenow',String(progress.percent));
@@ -613,7 +625,14 @@ function buildEmailHtml(){
     sec('Current Out of Service',bulletList(oos))+
     loto+missingKeyHtml+'</body></html>';
 }
-async function emlDownload(){
+async function emlDownload(acknowledged=false){
+  if(!acknowledged && (state.audit?.pending?.length||0)>0){
+    showModal('Review before generating','These items will remain documented as unresolved in the passdown. No work-order statuses will be changed.',reviewItemsMarkup(),[
+      {text:'Cancel',onClick:closeModal},
+      {text:'Generate with review noted',kind:'btn-primary',onClick:()=>{closeModal();emlDownload(true);}}
+    ],{wide:true});
+    return;
+  }
   const progress=computeProgress();
   if(progress.percent<100){
     const missing=progress.items.filter(x=>!x.done).map(x=>x.label).join('; ');
@@ -696,7 +715,10 @@ const keyGrid=$('#missing-keys');for(let i=1;i<=20;i++){const label=document.cre
   // silently discard an un-verify action.
   window.V31Reporting?.flushDraft().then(()=>{const now=new Date();$('#last-saved').textContent=`Changed ${now.toLocaleTimeString([], {hour:'numeric',minute:'2-digit'})}`;}).catch(e=>toast('LOTO save failed: '+e.message));}toggle.addEventListener('change',()=>{if(toggle.checked){$$('.loto-key',keyGrid).forEach(c=>c.checked=false);}lotoSync();});keyGrid.addEventListener('change',e=>{if(!e.target.classList.contains('loto-key'))return;if(e.target.checked)toggle.checked=false;lotoSync();const keys=checkedKeys();toast(keys.length?`${keys.length} key${keys.length>1?'s':''} marked missing`:'Missing-key selection cleared');});
 $('#loto-keys-toggle').addEventListener('click',()=>{const area=$('#loto-select-area');const open=area.hidden;area.hidden=!open;$('#loto-keys-toggle').setAttribute('aria-expanded',String(open));});
-$('#generate-eml').addEventListener('click',emlDownload);$('#end-shift').addEventListener('click',confirmEnd);
+$('#generate-eml').addEventListener('click',()=>emlDownload());
+const reviewMetric=$('#v31-review-metric');
+reviewMetric?.addEventListener('click',showReviewItems);
+reviewMetric?.addEventListener('keydown',event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();showReviewItems();}});$('#end-shift').addEventListener('click',confirmEnd);
 function navTo(page){
   $$('.nav-link').forEach(b=>b.classList.toggle('selected',b.dataset.nav===page));
   $('#report-screen').hidden=page!=='report';
@@ -740,7 +762,7 @@ window.v31ReportView={
     updateMetrics();renderTab();
   },
   draft(){return {vendors:state.vendors,ro:state.ro,notes:state.notes,loto:state.loto,missingKeys:state.missingKeys};},
-  toast,showModal,closeModal
+  toast,showModal,closeModal,showReviewItems
 };
 updateMetrics();renderTab();
 })();
