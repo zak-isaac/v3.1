@@ -38,23 +38,20 @@ def get_signature_html(lead_name: str, *, spark_src: str = f"cid:{SPARK_CID}") -
     safe_name = html.escape(name)
     id_html = f" - {html.escape(known_id)}" if known_id else ""
     safe_src = html.escape(spark_src, quote=True)
-    line_style = "font-family:Georgia,'Times New Roman',serif;font-weight:700;color:#4472c4;"
+    # Keep the signature typography identical to the 14px Calibri/Arial
+    # Outlook body, using only subtle hierarchy and compact line spacing.
+    line_style = "font-family:Calibri,Arial,sans-serif;font-size:14px;line-height:20px;color:#253349;"
 
     return SIGNATURE_MARKER + f"""<table role="presentation" cellspacing="0" cellpadding="0" border="0"
-      style="width:100%;max-width:560px;margin:20px 0 0;border-collapse:collapse;">
-      <tr><td style="{line_style}font-size:18px;line-height:24px;padding:0 0 4px;">{safe_name}{id_html}</td></tr>
-      <tr><td style="{line_style}font-size:18px;line-height:24px;padding:0 0 4px;">{html.escape(FACILITY)}</td></tr>
-      <tr><td style="{line_style}font-size:18px;line-height:24px;padding:0 0 10px;">{html.escape(ADDRESS)}</td></tr>
-      <tr><td style="padding:0 0 6px;">
-        <span style="{line_style}font-style:italic;font-size:19px;line-height:24px;">Walmart</span>
-        <img src="{safe_src}" width="16" height="16" alt="Spark"
-         style="display:inline-block;width:16px;height:16px;border:0;vertical-align:middle;margin-left:4px;" />
+      style="width:100%;max-width:560px;margin:16px 0 0;border-collapse:collapse;">
+      <tr><td style="{line_style}font-weight:700;padding:0 0 2px;">{safe_name}{id_html}</td></tr>
+      <tr><td style="{line_style}padding:0 0 2px;">{html.escape(FACILITY)}</td></tr>
+      <tr><td style="{line_style}padding:0 0 6px;">{html.escape(ADDRESS)}</td></tr>
+      <tr><td style="{line_style}font-weight:700;padding:0 0 2px;">
+        Walmart <img src="{safe_src}" width="13" height="13" alt="Spark"
+         style="display:inline-block;width:13px;height:13px;border:0;vertical-align:middle;margin-left:3px;" />
       </td></tr>
-      <tr><td style="font-family:Georgia,'Times New Roman',serif;font-weight:700;
-        font-style:italic;font-size:19px;line-height:24px;">
-        <span style="color:#c0491e;">Save money.</span>
-        <span style="color:#8b6f1a;"> Live better</span>
-      </td></tr>
+      <tr><td style="{line_style}font-style:italic;">Save money. Live better.</td></tr>
     </table>"""
 
 
