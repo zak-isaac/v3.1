@@ -67,10 +67,10 @@
         <div class="signin-card elevated-card">
           <div class="brand-app-icon"><span class="spark"></span></div>
           <h2 id="login-title">Welcome back</h2>
-          <p class="signin-instructions">Enter your associate number to load your assigned shift.</p>
+          <p class="signin-instructions">Your assigned shift loads automatically.</p>
           <form id="login-form" novalidate>
             <label for="associate-input">Associate Number</label>
-            <div class="input-wrap"><svg><use href="#ic-user"/></svg><input id="associate-input" name="associate" type="text" inputmode="numeric" autocomplete="off" pattern="[0-9]+" maxlength="12" placeholder="Enter your associate number" required aria-describedby="login-error"></div>
+            <div class="input-wrap"><svg><use href="#ic-user"/></svg><input id="associate-input" name="associate" type="text" inputmode="numeric" autocomplete="off" pattern="[0-9]+" maxlength="12" placeholder="Enter number" required aria-describedby="login-error"></div>
             <p class="field-error" id="login-error" role="alert" hidden>Enter your associate number using digits only.</p>
             <button class="button button-primary signin-button" type="submit">Sign In <svg><use href="#ic-arrow"/></svg></button>
           </form>
