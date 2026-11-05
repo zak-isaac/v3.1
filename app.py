@@ -1254,7 +1254,23 @@ def reporting_work_order(wo_number:str,payload:ReportingWOEdit,request:Request):
 
 
 class MissingKeyUpdate(BaseModel):
-    key: str = Field(pattern=r'^Key (?:[1-9]|1[0-9]|20)(payload:ReportingDraft,request:Request):
+    key: str = Field(pattern=r'^Key (?:[1-9]|1[0-9]|20)$',max_length=6)
+    missing: bool
+
+
+@app.post('/api/reporting/loto/missing-key')
+def update_missing_loto_key(payload:MissingKeyUpdate,request:Request):
+    """Update one shared key; require an authorized open shift for audit."""
+    _origin_check(request)
+    session,row=_report_access(request)
+    with _db() as conn:
+        result=v31_reporting.set_missing_key(
+            conn,row['id'],payload.key,payload.missing,session['a'])
+    return result
+
+
+@app.post('/api/reporting/draft')
+def reporting_draft(payload:ReportingDraft,request:Request):
     _origin_check(request)
     session,row=_report_access(request)
     content=payload.model_dump()
@@ -1265,7 +1281,6 @@ class MissingKeyUpdate(BaseModel):
         if changed:
             _invalidate_passdown(conn,row['id'])
     return {'saved':True,'changed':changed,'shift_id':row['id']}
-
 
 class AIApproval(BaseModel):
     text: str = Field(min_length=1,max_length=5000)
