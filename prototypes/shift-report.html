@@ -319,11 +319,11 @@ function progressChecklist(){
   // or specific keys found missing (the key checklist). The UI makes these
   // mutually exclusive (flipping the toggle clears missing keys and vice
   // versa) -- either one is a completed check, never an incomplete one.
-  const lotoDone=!!state.loto||state.missingKeys.length>0;
+  const lotoDone=!!state.loto;
   return [
     {label:'Cetaris import confirmed (if a file was chosen)',done:!state.cetarisFile||state.stageImported},
     {label:'Work orders or PMs recorded for this shift',done:(state.rows.length+state.pmCount)>0},
-    {label:'LOTO key verification completed (verified, or missing keys documented)',done:lotoDone},
+    {label:'LOTO verification completed for this shift',done:lotoDone},
   ];
 }
 function importAuditMarkup(){
@@ -543,8 +543,8 @@ function techModal(){
 function createReport(){const inc=state.rows.filter(r=>!r.excluded);
   const manualOpen=window.__v31ManualOOS?.open||[];
   const manualRts=window.__v31ManualOOS?.rts_this_shift||[];
-  const rtsLines=[...inc.filter(r=>r.status==='RTS').map(r=>`${r.asset} — Returned to Service`),
-    ...manualRts.map(m=>`${m.asset} — Returned to Service (manually reported)`)];
+  const rtsLines=[...new Set([...inc.filter(r=>r.status==='RTS'&&r.category==='Breakdown').map(r=>r.asset),
+    ...manualRts.map(m=>m.asset)].filter(Boolean))];
   const oosLines=[...inc.filter(r=>r.status==='OOS').map(r=>r.asset),
     ...manualOpen.map(m=>`${m.asset}${m.cause?' — '+m.cause:''} (manually reported)`)];
   return `IND3 — MST Reliability Operations
@@ -567,7 +567,7 @@ ${state.vendors.join('\n')||'None'}
 RO
 ${state.ro.join('\n')||'None'}
 
-OUT OF SERVICE — RETURNED TO SERVICE (RTS)
+RETURNED TO SERVICE
 ${rtsLines.join('\n')||'None'}
 
 CURRENT OUT OF SERVICE
@@ -599,7 +599,8 @@ function buildEmailHtml(){
     const remark=r.remarks?esc(r.remarks):'No technician remarks';
     happenings.push(`<div style="margin:8px 0 10px;"><strong style="font-size:14px;">${heading}</strong>${r.workAt?'<small style="display:block">Work evidence: '+esc(r.workAt)+'</small>':''}<ul style="margin:2px 0 0;padding-left:22px;"><li style="font-size:13px;white-space:pre-wrap;">${remark}</li></ul></div>`);
   });
-  const rts=inc.filter(r=>r.status==='RTS').map(r=>`<strong>${esc(r.asset)}</strong> &mdash; Returned to Service`);
+  const rtsAssets=[...new Set(inc.filter(r=>r.status==='RTS'&&r.category==='Breakdown').map(r=>r.asset).filter(Boolean))];
+  const rts=rtsAssets.map(asset=>`<strong>${esc(asset)}</strong>`);
   const oos=inc.filter(r=>r.status==='OOS').map(r=>`<strong>${esc(r.asset)}</strong>`);
   // Manually-reported Breakdown/OOS -- no Cetaris WO behind these at all.
   // "Current" OOS shows every globally-open record so a handoff always has
@@ -608,10 +609,12 @@ function buildEmailHtml(){
     oos.push(`<strong>${esc(m.asset)}</strong>${m.cause?' &mdash; '+esc(m.cause):''} (manually reported)`);
   });
   (window.__v31ManualOOS?.rts_this_shift||[]).forEach(m=>{
-    rts.push(`<strong>${esc(m.asset)}</strong> &mdash; Returned to Service (manually reported)`);
+    if(!rtsAssets.some(asset=>asset.toLowerCase()===m.asset.toLowerCase())){
+      rtsAssets.push(m.asset);rts.push(`<strong>${esc(m.asset)}</strong>`);
+    }
   });
   const loto=state.loto
-    ?`<p style="font-size:14px;font-family:Calibri,Arial,sans-serif;margin-top:18px;"><strong style="color:#2a8703;">&#10003; All LOTO Keys Verified</strong></p>`
+    ?`<p style="font-size:14px;font-family:Calibri,Arial,sans-serif;margin-top:18px;"><strong style="color:#2a8703;">&#10003; LOTO Verified</strong></p>`
     :`<p style="font-size:14px;font-family:Calibri,Arial,sans-serif;margin-top:18px;"><strong style="color:#b45309;">&#9888; LOTO Verification Pending</strong></p>`;
   const missingKeyHtml=state.missingKeys?.length
     ?`<p style="color:#c00;margin:2px 0;font-size:14px;font-family:Calibri,Arial,sans-serif;"><strong>Missing key${state.missingKeys.length>1?'s':''}:</strong> ${esc(state.missingKeys.join(', '))}</p>`:'';
@@ -626,7 +629,7 @@ function buildEmailHtml(){
     sec('Shift Happenings',happenings.length?happenings.join(''):'<p>None</p>')+
     sec('Reliable Operations',bulletList(state.ro.map(v=>esc(v))))+
     pmHtml+
-    sec('Out of Service &mdash; Returned to Service (RTS)',bulletList(rts))+
+    sec('Returned to Service',bulletList(rts))+
     sec('Current Out of Service',bulletList(oos))+
     loto+missingKeyHtml+'</body></html>';
 }
@@ -707,17 +710,53 @@ $('#replace-file').addEventListener('click',()=>$('#cetaris-picker').click());$(
 $('#upload-pending').addEventListener('click',()=>$('#pending-picker').click());/* Upload handling lives in /web/pm-needing-completion.js, not a preview-only handler. */
 $('#change-techs').addEventListener('click',()=>window.V31Reporting?.chooseTechs());
 $$('[data-open]').forEach(b=>b.addEventListener('click',()=>b.dataset.open==='notes'?editNotes():editList(b.dataset.open)));
-const keyGrid=$('#missing-keys');for(let i=1;i<=20;i++){const label=document.createElement('label');label.className='loto-key-item';const cb=document.createElement('input');cb.type='checkbox';cb.className='loto-key';cb.value=`Key ${i}`;const span=document.createElement('span');span.textContent=`Key ${i}`;label.append(cb,span);keyGrid.append(label);}const toggle=$('#loto-toggle');function checkedKeys(){return $$('.loto-key',keyGrid).filter(c=>c.checked).map(c=>c.value);}function lotoSync(){state.loto=toggle.checked;state.missingKeys=checkedKeys();$('#loto-state').textContent=toggle.checked?'Verified':'Not verified';$('#loto-state').classList.toggle('missing',!toggle.checked);updateMetrics();
-  // LOTO is a discrete safety-critical toggle, not continuous typing -- save
-  // immediately (never the debounced autosave) so a quick refresh can never
-  // silently discard an un-verify action.
-  window.V31Reporting?.flushDraft().then(()=>{
-    // The previous "last-saved" label was removed during UI cleanup. A
-    // successful API save must not be treated as a failure just because
-    // its optional visual status element is absent.
-    const savedLabel=$('#last-saved');
-    if(savedLabel){const now=new Date();savedLabel.textContent=`Changed ${now.toLocaleTimeString([], {hour:'numeric',minute:'2-digit'})}`;}
-  }).catch(e=>toast('LOTO save failed: '+e.message));}toggle.addEventListener('change',()=>{if(toggle.checked){$$('.loto-key',keyGrid).forEach(c=>c.checked=false);}lotoSync();});keyGrid.addEventListener('change',e=>{if(!e.target.classList.contains('loto-key'))return;if(e.target.checked)toggle.checked=false;lotoSync();const keys=checkedKeys();toast(keys.length?`${keys.length} key${keys.length>1?'s':''} marked missing`:'Missing-key selection cleared');});
+const keyGrid=$('#missing-keys');
+for(let i=1;i<=20;i++){
+  const label=document.createElement('label');label.className='loto-key-item';
+  const cb=document.createElement('input');cb.type='checkbox';cb.className='loto-key';cb.value=`Key ${i}`;
+  const span=document.createElement('span');span.textContent=`Key ${i}`;label.append(cb,span);keyGrid.append(label);
+}
+const toggle=$('#loto-toggle');
+function checkedKeys(){return $('.loto-key',keyGrid).filter(c=>c.checked).map(c=>c.value);}
+function lotoVisual(){
+  state.loto=toggle.checked;
+  $('#loto-state').textContent=state.loto?'Verified':'Not verified';
+  $('#loto-state').classList.toggle('missing',!state.loto);
+  updateMetrics();
+}
+async function persistLoto(){
+  lotoVisual();
+  // Save each verification immediately, without silently clearing facility keys.
+  await window.V31Reporting?.flushDraft();
+  const savedLabel=$('#last-saved');
+  if(savedLabel){const now=new Date();savedLabel.textContent=`Changed ${now.toLocaleTimeString([], {hour:'numeric',minute:'2-digit'})}`;}
+}
+toggle.addEventListener('change',()=>{persistLoto().catch(e=>toast('LOTO save failed: '+e.message));});
+keyGrid.addEventListener('change',async e=>{
+  const box=e.target;
+  if(!box.classList.contains('loto-key'))return;
+  const previousKeys=[...state.missingKeys], previousVerified=toggle.checked;
+  // Marking a missing key records a completed inspection, not an unverified one.
+  if(box.checked)toggle.checked=true;
+  lotoVisual();
+  $('.loto-key',keyGrid).forEach(c=>c.disabled=true);
+  try{
+    const result=await window.V31Reporting.setMissingKey(box.value,box.checked);
+    state.missingKeys=result.missingKeys;
+    $('.loto-key',keyGrid).forEach(c=>c.checked=state.missingKeys.includes(c.value));
+    await persistLoto();
+    toast(box.checked?box.value+' marked missing across all shifts':
+                      box.value+' cleared from the missing-key list');
+  }catch(error){
+    state.missingKeys=previousKeys;
+    toggle.checked=previousVerified;
+    $('.loto-key',keyGrid).forEach(c=>c.checked=previousKeys.includes(c.value));
+    lotoVisual();
+    toast('Missing key save failed: '+error.message);
+    // Refresh authoritative server state if one of the two writes succeeded.
+    window.V31Reporting?.refresh()?.catch(()=>{});
+  }finally{$('.loto-key',keyGrid).forEach(c=>c.disabled=false);}
+});
 $('#loto-keys-toggle').addEventListener('click',()=>{const area=$('#loto-select-area');const open=area.hidden;area.hidden=!open;$('#loto-keys-toggle').setAttribute('aria-expanded',String(open));});
 $('#generate-eml').addEventListener('click',()=>emlDownload());
 const auditMetric=$('#v31-import-audit-metric');
