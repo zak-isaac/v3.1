@@ -565,6 +565,13 @@ def test_cross_shift_breakdown_can_transition_from_oos_to_rts(client,monkeypatch
         old=db.execute("SELECT status FROM report_wo WHERE shift_id=?",(s1,)).fetchone()
         new=db.execute("SELECT status FROM report_wo WHERE shift_id=?",(s2,)).fetchone()
     assert old["status"]=="OOS" and new["status"]=="RTS"
+    # Old shift audit remains immutable but live persistent OOS must clear
+    # after the same breakdown's Closed/RTS event in the following shift.
+    assets=client.get('/api/assets/status')
+    assert assets.status_code==200,assets.text
+    assert not assets.json()['oos']
+    assert {x['asset'] for x in assets.json()['rts']}=={'ASSETBREAK1'}
+    assert len(assets.json()['breakdowns'])==1
 
 
 def test_next_day_wo_visible_in_audit_without_stealing_next_shift(client,monkeypatch):
