@@ -315,10 +315,16 @@ $$('[data-close-modal]').forEach(el=>el.addEventListener('click',closeModal));do
 // legitimate scenario -- only penalize a file that was picked but never
 // confirmed/imported, never the absence of a file in the first place.
 function progressChecklist(){
+  // LOTO verification is "done" if the MST actually performed the check --
+  // that includes BOTH possible outcomes: everything verified (the toggle)
+  // or specific keys found missing (the key checklist). The UI makes these
+  // mutually exclusive (flipping the toggle clears missing keys and vice
+  // versa) -- either one is a completed check, never an incomplete one.
+  const lotoDone=!!state.loto||state.missingKeys.length>0;
   return [
     {label:'Cetaris import confirmed (if a file was chosen)',done:!state.cetarisFile||state.stageImported},
     {label:'Work orders or PMs recorded for this shift',done:(state.rows.length+state.pmCount)>0},
-    {label:'LOTO key verification completed',done:!!state.loto},
+    {label:'LOTO key verification completed (verified, or missing keys documented)',done:lotoDone},
     {label:'No outstanding WO Review Items',done:(state.audit?.pending?.length||0)===0},
   ];
 }

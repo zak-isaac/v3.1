@@ -310,3 +310,28 @@ def test_loto_toggle_updates_progress_live_and_survives_a_quick_refresh(page_ctx
     assert not page.locator('#loto-toggle').is_checked(), \
         "LOTO un-verify was lost after a quick refresh -- debounced autosave raced the reload"
     assert page.locator('#progress-number').inner_text() != "100%"
+
+
+def test_loto_missing_key_selection_also_satisfies_shift_progress(page_ctx):
+    """Documenting a missing key IS a completed LOTO check, not an
+    incomplete one -- the MST did the verification, the outcome just wasn't
+    "all clear". The UI makes the toggle and missing-key checkboxes mutually
+    exclusive (selecting a key forces the toggle off), so Shift Progress
+    must accept either outcome as "done", not just the toggle.
+    """
+    page, base_url, _ = page_ctx
+    _stage_and_import(page, base_url, "9903", "Routine check", "Inspection", complete_loto=False)
+    assert page.locator('#progress-number').inner_text() != "100%"
+
+    # Reveal the missing-key checklist and select one key -- never touch the
+    # main "Verified" switch.
+    page.locator('#loto-keys-toggle').click()
+    page.locator('.loto-key').first.check()
+
+    assert not page.locator('#loto-toggle').is_checked(), \
+        "Selecting a missing key correctly leaves the main toggle off"
+    assert page.locator('#progress-number').inner_text() == "100%", \
+        "A documented missing key is a completed LOTO check and must count toward Shift Progress"
+
+    with page.expect_download():
+        page.locator('#generate-eml').click()
