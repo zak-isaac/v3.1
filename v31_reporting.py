@@ -713,15 +713,91 @@ def get_state(conn,shift_id,shift_code=None,shift_day=None):
                      "next_day":json.loads(audit["next_day_json"]) if audit else []}}
 
 
+def _ensure_missing_keys(conn):
+    """One persistent key inventory shared by S1-S5, not tied to report drafts.
+
+    On first upgrade, preserve missing keys already recorded in old shift
+    drafts rather than silently dropping a safety-related warning.
+    """
+    exists=conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='facility_missing_keys'"
+    ).fetchone()
+    if exists:
+        return
+    conn.execute("""CREATE TABLE IF NOT EXISTS facility_missing_keys(
+        key_name TEXT PRIMARY KEY,
+        updated_at TEXT NOT NULL,
+        updated_by TEXT NOT NULL
+    )""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS facility_missing_key_events(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        key_name TEXT NOT NULL,
+        missing INTEGER NOT NULL,
+        shift_id INTEGER NOT NULL,
+        updated_by TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    )""")
+    drafts=conn.execute(
+        "SELECT body_json FROM report_drafts"
+    ).fetchall() if conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='report_drafts'"
+    ).fetchone() else []
+    found=set()
+    for row in drafts:
+        try:
+            body=json.loads(row["body_json"])
+        except (ValueError,TypeError):
+            continue
+        found.update(k for k in (body.get("missingKeys") or [])
+                     if isinstance(k,str) and k in {f"Key {i}" for i in range(1,21)})
+    for key in sorted(found,key=lambda k:int(k.split()[1])):
+        conn.execute("""INSERT OR IGNORE INTO facility_missing_keys
+            (key_name,updated_at,updated_by) VALUES (?,?,?)""",
+            (key,_now(),"previous-shift-migration"))
+
+
+def get_missing_keys(conn):
+    _ensure_missing_keys(conn)
+    rows=conn.execute("SELECT key_name FROM facility_missing_keys").fetchall()
+    return sorted((r["key_name"] for r in rows), key=lambda x:int(x.split()[1]))
+
+
+def set_missing_key(conn,shift_id,key,missing,actor):
+    """Update exactly one facility key; other shifts cannot erase it by autosave."""
+    if key not in {f"Key {n}" for n in range(1,21)}:
+        raise ValueError("Select one of the 20 LOTO keys")
+    _ensure_missing_keys(conn)
+    old=conn.execute(
+        "SELECT 1 FROM facility_missing_keys WHERE key_name=?",(key,)
+    ).fetchone() is not None
+    changed=old != missing
+    if changed:
+        if missing:
+            conn.execute("""INSERT INTO facility_missing_keys
+                (key_name,updated_at,updated_by) VALUES (?,?,?)""",
+                (key,_now(),actor))
+        else:
+            conn.execute("DELETE FROM facility_missing_keys WHERE key_name=?",(key,))
+        conn.execute("""INSERT INTO facility_missing_key_events
+            (key_name,missing,shift_id,updated_by,updated_at) VALUES (?,?,?,?,?)""",
+            (key,int(missing),shift_id,actor,_now()))
+        # A changed safety-critical facility inventory invalidates stale
+        # EML snapshots in every *open* shift; archived reports stay frozen.
+        conn.execute("""UPDATE shifts SET report_saved_at='',report_content='',
+            report_html='',report_hash='',report_eml=X'' WHERE open=1""")
+    return {"missingKeys":get_missing_keys(conn),"changed":changed}
+
+
 def save_draft(conn,shift_id,data):
     _table(conn)
     conn.execute("""CREATE TABLE IF NOT EXISTS report_drafts(
        shift_id INTEGER PRIMARY KEY, body_json TEXT NOT NULL,updated_at TEXT NOT NULL)""")
-    payload={k:data.get(k) for k in ("vendors","ro","notes","loto","missingKeys")}
+    payload={k:data.get(k) for k in ("vendors","ro","notes","loto")}
+    # The deprecated client missingKeys array is intentionally ignored:
+    # stale drafts must never clear facility-wide missing keys.
+    payload["missingKeys"]=get_missing_keys(conn)
     existing=conn.execute("SELECT body_json FROM report_drafts WHERE shift_id=?",
                           (shift_id,)).fetchone()
-    # Repeated autosave/Preview/EML generation must not invalidate an
-    # unchanged authoritative snapshot or increase meaningless revisions.
     if existing and json.loads(existing["body_json"])==payload:
         return False
     conn.execute("""INSERT INTO report_drafts(shift_id,body_json,updated_at)
@@ -734,9 +810,15 @@ def save_draft(conn,shift_id,data):
 def get_draft(conn,shift_id):
     conn.execute("""CREATE TABLE IF NOT EXISTS report_drafts(
        shift_id INTEGER PRIMARY KEY,body_json TEXT NOT NULL,updated_at TEXT NOT NULL)""")
-    row=conn.execute("SELECT body_json FROM report_drafts WHERE shift_id=?",(shift_id,)).fetchone()
-    return json.loads(row["body_json"]) if row else {}
-
+    row=conn.execute("SELECT body_json FROM report_drafts WHERE shift_id=?",
+                     (shift_id,)).fetchone()
+    data=json.loads(row["body_json"]) if row else {}
+    # Open shifts always use the live facility inventory. Closed reports use
+    # the saved per-shift snapshot to avoid rewriting historical key status.
+    shift=conn.execute("SELECT open FROM shifts WHERE id=?",(shift_id,)).fetchone()
+    if shift and shift["open"]:
+        data["missingKeys"]=get_missing_keys(conn)
+    return data
 
 def happenings_counts(conn, shift_ids):
     """Non-excluded Shift Happenings (work order) count per shift_id, for
@@ -800,7 +882,19 @@ def build_passdown_html(conn, shift_id, shift_code, lead_name=''):
             f'<ul style="margin:2px 0 0;padding-left:22px;">'
             f'<li style="font-size:13px;white-space:pre-wrap;">{remark}</li></ul></div>')
 
-    rts = [f'<strong>{esc(r["asset"])}</strong> &mdash; Returned to Service' for r in inc if r["status"] == "RTS"]
+    rts=[]
+    seen_rts=set()
+    def add_breakdown_rts(asset):
+        asset=(asset or "").strip()
+        if asset and asset.casefold() not in seen_rts:
+            seen_rts.add(asset.casefold())
+            rts.append(f'<strong>{esc(asset)}</strong>')
+
+    # Only completed breakdown returns belong in this section. A routine
+    # repair that is RTS is still a Shift Happening, not a breakdown RTS.
+    for r in inc:
+        if r["status"]=="RTS" and r["category"].casefold()=="breakdown":
+            add_breakdown_rts(r["asset"])
     oos = [f'<strong>{esc(r["asset"])}</strong>' for r in inc if r["status"] == "OOS"]
     # Current globally-open manually reported equipment is included in the
     # current shift's canonical report snapshot. Snapshot bytes will never
@@ -819,8 +913,7 @@ def build_passdown_html(conn, shift_id, shift_code, lead_name=''):
     # live/current globally-open list, which would drift for an archived
     # shift's report every time something new goes down or comes back up.
     for record in v31_oos.resolved_this_shift(conn, shift_id):
-        rts.append(f'<strong>{esc(record["asset"])}</strong> &mdash; '
-                   f'Returned to Service (manually reported)')
+        add_breakdown_rts(record["asset"])
 
     # V3-style global breakdown lifecycle. Previously flagged OOS assets
     # remain visible on later shifts until a verified Closed WO or an
@@ -840,11 +933,11 @@ def build_passdown_html(conn, shift_id, shift_code, lead_name=''):
                        + (f': {esc(reason)}' if reason else ''))
             global_open.add(asset.casefold())
     for event in v31_breakdown.overview(conn,shift_id)["resolved_this_shift"]:
-        rts.append(f'<strong>{esc(event["asset"])}</strong> — Breakdown WO# {esc(event["wo_number"])} RTS')
+        add_breakdown_rts(event["asset"])
 
     loto_html = (
         '<p style="font-size:14px;font-family:Calibri,Arial,sans-serif;margin-top:18px;">'
-        '<strong style="color:#2a8703;">&#10003; All LOTO Keys Verified</strong></p>'
+        '<strong style="color:#2a8703;">&#10003; LOTO Verified</strong></p>'
         if draft.get("loto") else
         '<p style="font-size:14px;font-family:Calibri,Arial,sans-serif;margin-top:18px;">'
         '<strong style="color:#b45309;">&#9888; LOTO Verification Pending</strong></p>')
@@ -883,7 +976,7 @@ def build_passdown_html(conn, shift_id, shift_code, lead_name=''):
         + sec("Open Follow-ups / Shift Carry-overs", bullet_list(followups))
         + sec("Reliable Operations", bullet_list(ro))
         + pm_html
-        + sec("Out of Service &mdash; Returned to Service (RTS)", bullet_list(rts))
+        + sec("Returned to Service", bullet_list(rts))
         + sec("Current Out of Service", bullet_list(oos))
         + loto_html + missing_html + '</body></html>')
     return v31_signature.append_signature(html_body, lead_name)
