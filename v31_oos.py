@@ -36,6 +36,9 @@ def _table(conn: sqlite3.Connection) -> None:
         rts_at TEXT NOT NULL DEFAULT '',
         rts_notes TEXT NOT NULL DEFAULT ''
     )""")
+    columns={r["name"] for r in conn.execute("PRAGMA table_info(manual_oos)")}
+    if "direct_rts" not in columns:
+        conn.execute("ALTER TABLE manual_oos ADD COLUMN direct_rts INTEGER NOT NULL DEFAULT 0")
 
 
 def get(conn: sqlite3.Connection, oos_id: int) -> dict | None:
@@ -53,6 +56,26 @@ def create(conn: sqlite3.Connection, *, asset: str, cause: str, notes: str,
         VALUES(?,?,?,?,?,?,?,?)""",
         (asset, cause, notes, logged_by, logged_by_name, shift_id, shift_code, now_iso))
     return get(conn, cur.lastrowid)
+
+
+def record_direct_rts(conn: sqlite3.Connection, *, asset: str,
+                      actor: str, actor_name: str, shift_id: int,
+                      shift_code: str, now_iso: str) -> dict:
+    """Explicit RTS without an earlier manually logged OOS incident.
+
+    Keep an auditable distinct event; do not fabricate a repaired WO or add
+    this direct-only confirmation to the breakdown-only Outlook RTS section.
+    """
+    _table(conn)
+    cur=conn.execute("""INSERT INTO manual_oos(
+        asset,cause,notes,logged_by,logged_by_name,logged_shift_id,
+        logged_shift_code,logged_at,open,rts_by,rts_by_name,rts_shift_id,
+        rts_shift_code,rts_at,direct_rts)
+        VALUES(?,?,?,?,?,?,?,?,0,?,?,?,?,?,1)""",
+        (asset,"Direct RTS confirmation (no prior OOS entry)","",
+         actor,actor_name,shift_id,shift_code,now_iso,
+         actor,actor_name,shift_id,shift_code,now_iso))
+    return get(conn,cur.lastrowid)
 
 
 def list_records(conn: sqlite3.Connection, open_only: bool = True) -> list[dict]:
