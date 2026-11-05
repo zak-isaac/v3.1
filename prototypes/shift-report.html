@@ -91,7 +91,7 @@
               <div class="metric metric-amber"><div class="metric-icon"><svg class="icon"><use href="#i-alert"/></svg></div><div><span>OOS In Process</span><strong id="metric-oos">0</strong></div></div>
               <div class="metric metric-red"><div class="metric-icon"><svg class="icon"><use href="#i-wrench"/></svg></div><div><span>Breakdowns</span><strong id="metric-breakdown">0</strong></div></div>
               <div class="metric metric-purple"><div class="metric-icon"><svg class="icon"><use href="#i-clipboard"/></svg></div><div><span>PMs Completed</span><strong id="metric-pms-completed">0</strong></div></div>
-              <div class="metric metric-softblue"><div class="metric-icon"><svg class="icon"><use href="#i-calendar"/></svg></div><div><span id="metric-daynight-label">Evening / Morning WOs</span><strong id="metric-daynight">—</strong></div></div>
+              <div class="metric metric-softblue" id="v31-import-audit-metric" role="button" tabindex="0" aria-label="Open Cetaris Import Audit"><div class="metric-icon"><svg class="icon"><use href="#i-clipboard"/></svg></div><div><span id="metric-daynight-label">Import Audit</span><strong id="metric-daynight">—</strong></div></div>
             </section>
         </section>
         <div class="workspace-grid">
@@ -325,8 +325,34 @@ function progressChecklist(){
     {label:'Cetaris import confirmed (if a file was chosen)',done:!state.cetarisFile||state.stageImported},
     {label:'Work orders or PMs recorded for this shift',done:(state.rows.length+state.pmCount)>0},
     {label:'LOTO key verification completed (verified, or missing keys documented)',done:lotoDone},
-    {label:'No outstanding WO Review Items',done:(state.audit?.pending?.length||0)===0},
   ];
+}
+function importAuditMarkup(){
+  const audit=state.audit||{};
+  const summary=audit.summary||{};
+  const number=v=>Number.isFinite(Number(v))?String(v):String(v??'');
+  const lines=Object.entries(summary).filter(([key,value])=>typeof value==='number'||typeof value==='string')
+    .map(([key,value])=>'<div style="display:flex;justify-content:space-between;gap:16px;border-bottom:1px solid #e2e8f0;padding:5px 0"><span>'+esc(key.replace(/_/g,' '))+'</span><strong>'+esc(number(value))+'</strong></div>').join('');
+  const section=(title,items,emptyMessage)=>{
+    if(!items?.length)return '<section style="margin-top:15px"><h3>'+esc(title)+'</h3><p>'+esc(emptyMessage)+'</p></section>';
+    const entries=items.map((item,i)=>{
+      const wo=String(item.wo_number||item.wo||'Not supplied');
+      const matched=state.rows.find(row=>String(row.wo)===wo);
+      const fields=[['WO',wo],['Asset',item.asset||matched?.asset],['Technician',item.technician||item.tech_name||matched?.tech],['Detail',item.reason||item.status||'Listed by Cetaris import']];
+      return '<div style="padding:10px;margin:7px 0;border:1px solid #d7e4f6;border-radius:9px">'+fields.filter(x=>x[1]).map(([label,val])=>'<p style="margin:3px 0"><strong>'+esc(label)+':</strong> '+esc(val)+'</p>').join('')+'</div>';
+    }).join('');
+    return '<section style="margin-top:15px"><h3>'+esc(title)+' ('+items.length+')</h3>'+entries+'</section>';
+  };
+  const em=audit.evening_morning;
+  const timing=em?.applicable?'<p><strong>Evening WOs:</strong> '+esc(em.evening)+' &nbsp; <strong>Morning WOs:</strong> '+esc(em.morning)+'</p>':'';
+  const file=state.cetarisFile?'<p><strong>File:</strong> '+esc(state.cetarisFile)+'</p>':'<p>No Cetaris file imported yet.</p>';
+  return file+timing+'<h3>Import Summary</h3>'+(lines||'<p>No import summary available.</p>')+
+    section('Records needing attribution or closure context',audit.pending||[],'None listed.')+
+    section('Excluded or duplicate records',audit.ignored||[],'None listed.')+
+    section('Next-day work orders',audit.next_day||[],'None listed.');
+}
+function showImportAudit(){
+  showModal('Cetaris Import Audit','Import diagnostics only. Technician selection already credits work that meets the selected shift rules.',importAuditMarkup(),[{text:'Close',onClick:closeModal}],{wide:true});
 }
 function computeProgress(){
   const items=progressChecklist();
@@ -334,9 +360,9 @@ function computeProgress(){
   return {percent,items};
 }
 function updateMetrics(){const inc=state.rows.filter(r=>!r.excluded);const set=(id,n)=>{$(id).textContent=n;};set('#metric-work',inc.length);set('#metric-rts',inc.filter(r=>r.status==='RTS').length);set('#metric-oos',inc.filter(r=>r.status==='OOS').length);set('#metric-breakdown',inc.filter(r=>r.category==='Breakdown').length);set('#tab-wo-count',`(${inc.length})`);$('#tech-count').textContent=state.techs.length;$('#vendor-tab-count').textContent=`(${state.vendors.length})`;$('#ro-tab-count').textContent=`(${state.ro.length})`;
-  const em=state.audit.evening_morning;
-  if(em&&em.applicable){$('#metric-daynight-label').textContent='Evening / Morning WOs';$('#metric-daynight').textContent=`${em.evening} / ${em.morning}`;}
-  else{$('#metric-daynight-label').textContent='WO Review Items';$('#metric-daynight').textContent=String(state.audit.pending.length);}
+  $('#metric-daynight-label').textContent='Import Audit';
+  $('#metric-daynight').textContent=state.stageImported?'View':'—';
+  const metric=$('#v31-import-audit-metric');if(metric){metric.title='Open Cetaris import results and diagnostics';metric.style.cursor='pointer';}
   $('#metric-pms-completed').textContent=state.pmCount;$('#pm-tab-count').textContent=`(${state.pmCount} / ${state.pmNeeds?.count||0})`;
   const progress=computeProgress();state.progress=progress.percent;
   $('#progress-number').textContent=`${progress.percent}%`;$('#progress-fill').style.width=`${progress.percent}%`;$('#progress-fill').setAttribute('aria-valuenow',String(progress.percent));
@@ -542,7 +568,7 @@ ${inc.map(r=>`${r.asset || 'Unspecified asset'} : ${r.cause || 'No service descr
    ${r.remarks ? '- '+r.remarks : '- No technician remarks'}`).join('\n\n')||'No qualifying work orders imported.'}
 
 PMs Completed: ${state.pmCount}
-Pending Import Review: ${state.audit.pending.length}
+
 
 VENDORS
 ${state.vendors.join('\n')||'None'}
@@ -696,7 +722,11 @@ const keyGrid=$('#missing-keys');for(let i=1;i<=20;i++){const label=document.cre
   // silently discard an un-verify action.
   window.V31Reporting?.flushDraft().then(()=>{const now=new Date();$('#last-saved').textContent=`Changed ${now.toLocaleTimeString([], {hour:'numeric',minute:'2-digit'})}`;}).catch(e=>toast('LOTO save failed: '+e.message));}toggle.addEventListener('change',()=>{if(toggle.checked){$$('.loto-key',keyGrid).forEach(c=>c.checked=false);}lotoSync();});keyGrid.addEventListener('change',e=>{if(!e.target.classList.contains('loto-key'))return;if(e.target.checked)toggle.checked=false;lotoSync();const keys=checkedKeys();toast(keys.length?`${keys.length} key${keys.length>1?'s':''} marked missing`:'Missing-key selection cleared');});
 $('#loto-keys-toggle').addEventListener('click',()=>{const area=$('#loto-select-area');const open=area.hidden;area.hidden=!open;$('#loto-keys-toggle').setAttribute('aria-expanded',String(open));});
-$('#generate-eml').addEventListener('click',emlDownload);$('#end-shift').addEventListener('click',confirmEnd);
+$('#generate-eml').addEventListener('click',()=>emlDownload());
+const auditMetric=$('#v31-import-audit-metric');
+auditMetric?.addEventListener('click',showImportAudit);
+auditMetric?.addEventListener('keydown',event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();showImportAudit();}});
+$('#end-shift').addEventListener('click',confirmEnd);
 function navTo(page){
   $$('.nav-link').forEach(b=>b.classList.toggle('selected',b.dataset.nav===page));
   $('#report-screen').hidden=page!=='report';
@@ -740,7 +770,7 @@ window.v31ReportView={
     updateMetrics();renderTab();
   },
   draft(){return {vendors:state.vendors,ro:state.ro,notes:state.notes,loto:state.loto,missingKeys:state.missingKeys};},
-  toast,showModal,closeModal
+  toast,showModal,closeModal,showImportAudit
 };
 updateMetrics();renderTab();
 })();

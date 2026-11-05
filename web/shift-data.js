@@ -32,25 +32,26 @@ async function refresh(){
  const audit=document.querySelector('#audit > div');
  if(audit){
   audit.replaceChildren();
-  // Added/Updated/PM/Pending review/Ignored/Next-day counts are already
-  // shown via the WO Review Items metric card; do not duplicate them here.
+  // Import Audit owns all import diagnostics; they are not shift-progress blockers.
   const em=snapshot.audit.evening_morning;
   if(em&&em.applicable){
     const emLine=document.createElement('p');
     emLine.textContent='Evening (before midnight): '+em.evening+' WO · Morning (after midnight): '+em.morning+' WO';
     audit.append(emLine);
   }
-  // Pending/ignored reason lines used to render here as a scrollable
-  // strip of 'WO# ... - reason' text. Removed per request -- the WO
-  // Review Items metric card already surfaces the count, and the
-  // 'Review completed work orders' action below covers the actionable
-  // case; a raw reason dump wasn't adding value.
-  const pendingClosed=snapshot.audit.pending.filter(x=>
+  if(snapshot.stage?.imported){
+    const button=document.createElement('button');
+    button.type='button';button.className='btn btn-primary btn-small';
+    button.textContent='Open Import Audit';
+    button.onclick=()=>view.showImportAudit();
+    audit.append(button);
+  }
+  const pendingClosed=(snapshot.audit.pending||[]).filter(x=>
     String(x.reason||'').startsWith('Completed but not Closed'));
   if(pendingClosed.length){
     const button=document.createElement('button');
-    button.type='button';button.className='btn btn-primary btn-small';
-    button.textContent='Review completed work orders';
+    button.type='button';button.className='btn btn-light btn-small';
+    button.textContent='Optional closure reminders';
     button.onclick=()=>reviewCompleted(pendingClosed);
     audit.append(button);
   }
@@ -225,7 +226,7 @@ function chooseTechs(){
       revealAudit();
     }else{
       feedback('Imported '+snapshot.rows.length+' work orders and '+snapshot.pm_count+
-        ' PMs. '+(sum.pending_review||0)+' items need review.');
+        ' PMs. Open Import Audit for any excluded or unattributed records.');
       if(sum.pending_review||sum.ignored)revealAudit();
     }
     view.toast(n+' qualifying work orders/PMs saved to '+selectedShift+'.');
