@@ -710,25 +710,25 @@ $('#replace-file').addEventListener('click',()=>$('#cetaris-picker').click());$(
 $('#upload-pending').addEventListener('click',()=>$('#pending-picker').click());/* Upload handling lives in /web/pm-needing-completion.js, not a preview-only handler. */
 $('#change-techs').addEventListener('click',()=>window.V31Reporting?.chooseTechs());
 $$('[data-open]').forEach(b=>b.addEventListener('click',()=>b.dataset.open==='notes'?editNotes():editList(b.dataset.open)));
-const keyGrid=$$('#missing-keys');
+const keyGrid=$('#missing-keys');
 for(let i=1;i<=20;i++){
   const label=document.createElement('label');label.className='loto-key-item';
   const cb=document.createElement('input');cb.type='checkbox';cb.className='loto-key';cb.value=`Key ${i}`;
   const span=document.createElement('span');span.textContent=`Key ${i}`;label.append(cb,span);keyGrid.append(label);
 }
-const toggle=$$('#loto-toggle');
+const toggle=$('#loto-toggle');
 function checkedKeys(){return $$('.loto-key',keyGrid).filter(c=>c.checked).map(c=>c.value);}
 function lotoVisual(){
   state.loto=toggle.checked;
-  $$('#loto-state').textContent=state.loto?'Verified':'Not verified';
-  $$('#loto-state').classList.toggle('missing',!state.loto);
+  $('#loto-state').textContent=state.loto?'Verified':'Not verified';
+  $('#loto-state').classList.toggle('missing',!state.loto);
   updateMetrics();
 }
 async function persistLoto(){
   lotoVisual();
   // Save each verification immediately, without silently clearing facility keys.
   await window.V31Reporting?.flushDraft();
-  const savedLabel=$$('#last-saved');
+  const savedLabel=$('#last-saved');
   if(savedLabel){const now=new Date();savedLabel.textContent=`Changed ${now.toLocaleTimeString([], {hour:'numeric',minute:'2-digit'})}`;}
 }
 toggle.addEventListener('change',()=>{persistLoto().catch(e=>toast('LOTO save failed: '+e.message));});
