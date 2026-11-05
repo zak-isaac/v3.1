@@ -123,7 +123,7 @@ def test_outlook_eml_uses_passdown_recipients_from_facility_settings(client, mon
         "sender_name": "IND3 Shift Passdown",
     })
     assert configured.status_code == 200, configured.text
-    assert configured.json()["recipients"] == "first@example.com, second@example.com"
+    assert configured.json()["recipients"] == "first@example.com,second@example.com"
 
     _import_one_wo(client)
     msg = email.message_from_bytes(_save_and_download(client), policy=email.policy.SMTP)
@@ -142,5 +142,5 @@ def test_outlook_eml_uses_passdown_recipients_from_facility_settings(client, mon
     })
     assert invalid.status_code == 422
     assert client.get("/api/admin/settings").json()["recipients"] == (
-        "first@example.com, second@example.com"
+        "first@example.com,second@example.com"
     )
