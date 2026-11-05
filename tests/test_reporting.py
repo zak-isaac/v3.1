@@ -844,9 +844,12 @@ def test_command_center_layout_uses_full_width_metrics_and_real_empty_state(clie
     assert 'Changes remain in this frontend preview' not in markup
     assert 'web/command-center.css' in markup
     script=markup[markup.rfind("<script>")+len("<script>"):markup.rfind("</script>")]
-    assert 'WO Review Items' in markup
+    assert 'id="v31-import-audit-metric"' in markup
+    assert '<span id="metric-daynight-label">Import Audit</span>' in markup
+    assert 'WO Review Items' not in markup
     assert 'PMs Needed</span>' not in markup
-    assert "state.audit.pending.length" in script
+    assert 'function showImportAudit()' in script
+    assert 'state.audit.pending.length' not in script
     assert 'v31-work-empty' in script
     assert 'Start with a Cetaris work-order export' in script
     assert 'Your file is ready for technician selection' in script
