@@ -710,25 +710,25 @@ $('#replace-file').addEventListener('click',()=>$('#cetaris-picker').click());$(
 $('#upload-pending').addEventListener('click',()=>$('#pending-picker').click());/* Upload handling lives in /web/pm-needing-completion.js, not a preview-only handler. */
 $('#change-techs').addEventListener('click',()=>window.V31Reporting?.chooseTechs());
 $$('[data-open]').forEach(b=>b.addEventListener('click',()=>b.dataset.open==='notes'?editNotes():editList(b.dataset.open)));
-const keyGrid=$('#missing-keys');
+const keyGrid=$$('#missing-keys');
 for(let i=1;i<=20;i++){
   const label=document.createElement('label');label.className='loto-key-item';
   const cb=document.createElement('input');cb.type='checkbox';cb.className='loto-key';cb.value=`Key ${i}`;
   const span=document.createElement('span');span.textContent=`Key ${i}`;label.append(cb,span);keyGrid.append(label);
 }
-const toggle=$('#loto-toggle');
-function checkedKeys(){return $('.loto-key',keyGrid).filter(c=>c.checked).map(c=>c.value);}
+const toggle=$$('#loto-toggle');
+function checkedKeys(){return $$('.loto-key',keyGrid).filter(c=>c.checked).map(c=>c.value);}
 function lotoVisual(){
   state.loto=toggle.checked;
-  $('#loto-state').textContent=state.loto?'Verified':'Not verified';
-  $('#loto-state').classList.toggle('missing',!state.loto);
+  $$('#loto-state').textContent=state.loto?'Verified':'Not verified';
+  $$('#loto-state').classList.toggle('missing',!state.loto);
   updateMetrics();
 }
 async function persistLoto(){
   lotoVisual();
   // Save each verification immediately, without silently clearing facility keys.
   await window.V31Reporting?.flushDraft();
-  const savedLabel=$('#last-saved');
+  const savedLabel=$$('#last-saved');
   if(savedLabel){const now=new Date();savedLabel.textContent=`Changed ${now.toLocaleTimeString([], {hour:'numeric',minute:'2-digit'})}`;}
 }
 toggle.addEventListener('change',()=>{persistLoto().catch(e=>toast('LOTO save failed: '+e.message));});
@@ -739,23 +739,23 @@ keyGrid.addEventListener('change',async e=>{
   // Marking a missing key records a completed inspection, not an unverified one.
   if(box.checked)toggle.checked=true;
   lotoVisual();
-  $('.loto-key',keyGrid).forEach(c=>c.disabled=true);
+  $$('.loto-key',keyGrid).forEach(c=>c.disabled=true);
   try{
     const result=await window.V31Reporting.setMissingKey(box.value,box.checked);
     state.missingKeys=result.missingKeys;
-    $('.loto-key',keyGrid).forEach(c=>c.checked=state.missingKeys.includes(c.value));
+    $$('.loto-key',keyGrid).forEach(c=>c.checked=state.missingKeys.includes(c.value));
     await persistLoto();
     toast(box.checked?box.value+' marked missing across all shifts':
                       box.value+' cleared from the missing-key list');
   }catch(error){
     state.missingKeys=previousKeys;
     toggle.checked=previousVerified;
-    $('.loto-key',keyGrid).forEach(c=>c.checked=previousKeys.includes(c.value));
+    $$('.loto-key',keyGrid).forEach(c=>c.checked=previousKeys.includes(c.value));
     lotoVisual();
     toast('Missing key save failed: '+error.message);
     // Refresh authoritative server state if one of the two writes succeeded.
     window.V31Reporting?.refresh()?.catch(()=>{});
-  }finally{$('.loto-key',keyGrid).forEach(c=>c.disabled=false);}
+  }finally{$$('.loto-key',keyGrid).forEach(c=>c.disabled=false);}
 });
 $('#loto-keys-toggle').addEventListener('click',()=>{const area=$('#loto-select-area');const open=area.hidden;area.hidden=!open;$('#loto-keys-toggle').setAttribute('aria-expanded',String(open));});
 $('#generate-eml').addEventListener('click',()=>emlDownload());
