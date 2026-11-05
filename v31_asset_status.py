@@ -51,8 +51,16 @@ def summary(conn, shift_id):
     for key,row in latest.items():
         if row['status']!='OOS' or (key in last_manual and not last_manual[key]['open']):
             continue
-        oos[key]={'asset':row['asset'],'source':'Cetaris WO',
-                  'wo_number':row['wo_number'],'reason':'Open work order'}
+        # Current breakdown state is authoritative when a WO has progressed
+        # from OOS to Closed/confirmed RTS on a later shift. Never keep a
+        # previous OOS snapshot in the live facility KPI after it was fixed.
+        tracked=conn.execute(
+            'SELECT 1 FROM breakdown_state WHERE wo_number=?',(row['wo_number'],)
+        ).fetchone()
+        if tracked:
+            continue  # Added below only if unresolved, with actual WO evidence.
+        oos[key]={'asset':row['asset'],'source':'Historical breakdown WO',
+                  'wo_number':row['wo_number'],'reason':'Unresolved previous OOS'}
     for row in manual_open:
         key=_key(row['asset'])
         oos[key]={'asset':row['asset'],'source':'Manually reported',
