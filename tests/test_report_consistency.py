@@ -313,11 +313,10 @@ def test_loto_toggle_updates_progress_live_and_survives_a_quick_refresh(page_ctx
 
 
 def test_loto_missing_key_selection_also_satisfies_shift_progress(page_ctx):
-    """Documenting a missing key IS a completed LOTO check, not an
-    incomplete one -- the MST did the verification, the outcome just wasn't
-    "all clear". The UI makes the toggle and missing-key checkboxes mutually
-    exclusive (selecting a key forces the toggle off), so Shift Progress
-    must accept either outcome as "done", not just the toggle.
+    """Documenting a missing key completes this shift's LOTO check.
+
+    The verified toggle stays on even with a facility-wide missing-key
+    warning. Missing keys are never silently cleared by verification.
     """
     page, base_url, _ = page_ctx
     _stage_and_import(page, base_url, "9903", "Routine check", "Inspection", complete_loto=False)
@@ -328,8 +327,8 @@ def test_loto_missing_key_selection_also_satisfies_shift_progress(page_ctx):
     page.locator('#loto-keys-toggle').click()
     page.locator('.loto-key').first.check()
 
-    assert not page.locator('#loto-toggle').is_checked(), \
-        "Selecting a missing key correctly leaves the main toggle off"
+    assert page.locator('#loto-toggle').is_checked(), \
+        "Documenting a missing key also marks LOTO checked for this shift"
     assert page.locator('#progress-number').inner_text() == "100%", \
         "A documented missing key is a completed LOTO check and must count toward Shift Progress"
 
