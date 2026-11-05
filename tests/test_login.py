@@ -574,3 +574,69 @@ def test_management_chooser_admin_shortcut_and_shift_chooser_not_in_sidebar(clie
     # and not anywhere else on the page either.
     assert 'v31-menu-choose' not in page
     assert 'Manage Drax Roster' not in page
+
+
+def test_backdated_thursday_s1_is_not_blocked_by_future_open_reports(client,monkeypatch):
+    """Rewinding the Mac clock must not exhaust the two-live-shift capacity."""
+    freeze(monkeypatch,at(2026,10,27,13))
+    assert sign_in(client,'2759').status_code==200
+    assert client.post('/api/shifts/start',json={'code':'S1'}).status_code==200
+    assert client.post('/api/shifts/start',json={'code':'S2'}).status_code==200
+    client.post('/api/logout')
+    freeze(monkeypatch,at(2026,10,15,8,35))
+    assert sign_in(client,'2759').status_code==200
+    current=client.get('/api/me').json()
+    s1=next(x for x in current['catalog'] if x['code']=='S1')
+    assert s1['action']=='start' and s1['date']=='2026-10-15'
+    assert next(x for x in current['catalog'] if x['code']=='S2')['action']=='unavailable'
+    result=client.post('/api/shifts/start',json={'code':'S1'})
+    assert result.status_code==200,result.text
+    assert result.json()['date']=='2026-10-15'
+    with m._db() as conn:
+        assert conn.execute(
+            "SELECT count(*) FROM shifts WHERE open=1").fetchone()[0]==3
+
+
+def test_backdated_manager_explicitly_reopens_closed_shift_without_data_loss(client,monkeypatch):
+    freeze(monkeypatch,at(2026,10,15,8,35))
+    assert sign_in(client,'2759').status_code==200
+    first=client.post('/api/shifts/start',json={'code':'S1'})
+    assert first.status_code==200,first.text
+    shift_id=first.json()['id']
+    with m._db() as conn:
+        conn.execute("UPDATE shifts SET report_content='Existing report kept',"
+                     "closed_reason='window_expired',open=0,closed_at=? WHERE id=?",
+                     ('2026-10-16T12:00:00-04:00',shift_id))
+    client.post('/api/logout')
+    assert sign_in(client,'2759').status_code==200
+    current=client.get('/api/me').json()
+    s1=next(x for x in current['catalog'] if x['code']=='S1')
+    assert s1['action']=='reopen' and s1['id']==shift_id
+    assert client.post('/api/shifts/start',json={'code':'S1'}).status_code==409
+    renewed=client.post('/api/shifts/reopen',json={'code':'S1'})
+    assert renewed.status_code==200,renewed.text
+    assert renewed.json()['id']==shift_id
+    with m._db() as conn:
+        row=conn.execute('SELECT report_content,open FROM shifts WHERE id=?',
+                         (shift_id,)).fetchone()
+        assert row['report_content']=='Existing report kept'
+        assert row['open']==1
+        assert conn.execute("SELECT 1 FROM login_events WHERE event=? AND shift_id=?",
+                            ('explicit_historical_reopen',shift_id)).fetchone() is not None
+
+
+def test_historical_reopen_does_not_grant_general_management_approval(client,monkeypatch):
+    freeze(monkeypatch,at(2026,10,15,8,35))
+    assert sign_in(client,'8972').status_code==200
+    assert client.post('/api/shifts/reopen',json={'code':'S1'}).status_code==403
+    client.post('/api/logout')
+    assert sign_in(client,'111111',intent='select').status_code==200
+    assert client.post('/api/shifts/reopen',json={'code':'S1'}).status_code==403
+
+
+def test_unavailable_manager_catalog_has_specific_reason(client,monkeypatch):
+    freeze(monkeypatch,at(2026,10,15,8,35))
+    assert sign_in(client,'2759').status_code==200
+    current=client.get('/api/me').json()
+    assert next(x for x in current['catalog'] if x['code']=='S1')['action']=='start'
+    assert next(x for x in current['catalog'] if x['code']=='S2')['reason']=='Outside reporting window'
