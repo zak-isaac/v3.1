@@ -265,3 +265,57 @@ def test_rts_direct_cannot_override_an_unresolved_cetaris_breakdown(client,monke
     assert res.status_code==409
     assert 'breakdown' in res.json()['detail'].lower()
     assert any(x['asset']=='BLDG' for x in client.get('/api/assets/status').json()['oos'])
+
+
+def test_email_current_oos_matches_live_dashboard_across_shifts(client, monkeypatch):
+    """Manual OOS plus unresolved historical breakdown must both appear in EML.
+
+    The Current Out of Service section must use the facility-wide inventory,
+    not only the current shift's work-order rows.
+    """
+    clock(monkeypatch, day=26, hour=10)
+    enter(client, "S1")
+    manual = client.post("/api/oos", json={
+        "asset": "BAG0001", "cause": "Paper jam awaiting repair",
+    })
+    assert manual.status_code == 200, manual.text
+
+    # Simulate an unresolved earlier-shift Breakdown WO from the retained
+    # historical worksheet, before it was added to breakdown_state tracking.
+    with m._db() as conn:
+        import v31_reporting
+        v31_reporting._table(conn)
+        prior_id = conn.execute(
+            """INSERT INTO shifts(code, shift_day, owner, open, created_at)
+               VALUES(?, ?, ?, ?, ?)""",
+            ("S1", "2026-10-19", "8972", 0,
+             "2026-10-19T10:00:00-04:00"),
+        ).lastrowid
+        conn.execute(
+            """INSERT INTO report_wo(
+                shift_id, wo_number, asset, category, status, imported_at)
+               VALUES(?, ?, ?, ?, ?, ?)""",
+            (prior_id, "BD-700", "CONV-12", "Breakdown", "OOS",
+             "2026-10-19T10:30:00-04:00"),
+        )
+
+    status = client.get("/api/assets/status")
+    assert status.status_code == 200, status.text
+    expected = {row["asset"] for row in status.json()["oos"]}
+    assert expected == {"BAG0001", "CONV-12"}
+
+    preview = client.get("/api/shifts/report/preview")
+    assert preview.status_code == 200, preview.text
+    html = preview.json()["html"]
+    section = html.split(">Current Out of Service</strong>", 1)[1].split("</ul>", 1)[0]
+    assert section.count("<li ") == len(expected)
+    for asset in expected:
+        assert f"<strong>{asset}</strong>" in section
+    assert "(manually reported)" not in section
+
+    saved = client.post("/api/shifts/report", json={"content": "Current OOS verified"})
+    assert saved.status_code == 200, saved.text
+    eml = client.get("/api/shifts/report/download")
+    assert eml.status_code == 200, eml.text
+    for asset in expected:
+        assert f"<strong>{asset}</strong>".encode() in eml.content
