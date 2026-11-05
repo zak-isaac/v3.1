@@ -76,3 +76,17 @@ def test_manual_oos_js_renders_a_resolved_this_shift_list(client, monkeypatch):
     js = client.get("/web/manual-oos.js").text
     assert "v31-oos-rts-list" in js
     assert "rts_this_shift" in js
+
+
+
+def test_successful_cetaris_import_does_not_leave_feedback_under_buttons(client, monkeypatch):
+    clock(monkeypatch, day=26, hour=10)
+    enter(client,"S1")
+    html=client.get("/shift-report.html").text
+    assert 'id="v31-import-feedback" role="status" aria-live="polite" hidden' in html
+    js=client.get("/web/shift-data.js").text
+    assert "feedback('Imported '+" not in js
+    assert "node.hidden=!message" in js
+    assert "feedback('');" in js
+    # Real import errors still appear prominently.
+    assert "No qualifying work orders for this shift" in js
