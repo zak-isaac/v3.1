@@ -871,13 +871,6 @@ def build_passdown_html(conn, shift_id, shift_code, lead_name=''):
         followups.append(f'<strong>{esc(record["asset"] or "Asset unspecified")}</strong> '
                          f'(WO# {esc(ref)}) — {esc(record["cause"] or "Follow-up required")}: '
                          f'{esc("; ".join(context))}')
-    review_items=state["audit"]["pending"]
-    if review_items:
-        followups.append(f'<strong>{len(review_items)} Cetaris import review item(s) remain unresolved:</strong>')
-        for item in review_items:
-            wo = esc(str(item.get('wo_number') or item.get('wo') or 'Not supplied'))
-            reason = esc(str(item.get('reason') or 'Review required'))
-            followups.append(f'WO# {wo} — {reason} (review required; no automatic status change)')
     pm_html = v31_pm.report_section(conn,shift_id)
     vendors = [esc(v) for v in (draft.get("vendors") or [])]
     ro = [esc(v) for v in (draft.get("ro") or [])]
