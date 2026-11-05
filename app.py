@@ -702,14 +702,6 @@ def _end_shift_readiness(conn,row):
         AND excluded=0 AND selection_hidden=0 AND status='PENDING'""",(row['id'],)).fetchone()[0]
     if outstanding:
         warnings.append(f'{outstanding} pending work order(s) require follow-up.')
-    audit=conn.execute("SELECT pending_json FROM report_audit WHERE shift_id=?",
-                       (row['id'],)).fetchone()
-    if audit:
-        try:
-            review_count=len(json.loads(audit['pending_json']))
-        except (TypeError,ValueError):
-            review_count=0
-        if review_count:warnings.append(f'{review_count} Cetaris import review item(s) remain unresolved.')
     # Global OOS and explicit maintenance holds can span multiple shifts.
     # They are never automatically cleared by End Shift.
     breakdowns=v31_breakdown.overview(conn,row['id'])
