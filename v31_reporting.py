@@ -907,17 +907,9 @@ def build_passdown_html(conn, shift_id, shift_code, lead_name=''):
                        f'{(" — "+esc(record["cause"])) if record["cause"] else ""} '
                        '(manually reported)')
             seen_oos.add(asset.casefold())
-    # Manually-reported Breakdown/OOS (no Cetaris WO behind it at all).
-    # Historical regeneration only shows what was resolved *during this
-    # specific shift* (a stable fact tied to rts_shift_id) -- never the
-    # live/current globally-open list, which would drift for an archived
-    # shift's report every time something new goes down or comes back up.
-    for record in v31_oos.resolved_this_shift(conn, shift_id):
-        # Direct 'Mark RTS' is an operational status update, not evidence
-        # that a Breakdown WO was completed. Keep it in the shift RTS KPI,
-        # but never invent a repaired breakdown for the Outlook RTS section.
-        if not record.get("direct_rts"):
-            add_breakdown_rts(record["asset"])
+    # Manual OOS -> RTS is a valid shift operational status, but it alone
+    # does not document a completed breakdown work order. Show it in the
+    # shift's RTS list/KPI, not the breakdown-only Outlook RTS section.
 
     # V3-style global breakdown lifecycle. Previously flagged OOS assets
     # remain visible on later shifts until a verified Closed WO or an
