@@ -849,7 +849,7 @@ def test_command_center_layout_uses_full_width_metrics_and_real_empty_state(clie
     assert 'WO Review Items' not in markup
     assert 'PMs Needed</span>' not in markup
     assert 'function showImportAudit()' in script
-    assert 'state.audit.pending.length' not in script
+    assert 'No outstanding WO Review Items' not in script
     assert 'v31-work-empty' in script
     assert 'Start with a Cetaris work-order export' in script
     assert 'Your file is ready for technician selection' in script
