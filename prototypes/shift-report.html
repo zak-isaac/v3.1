@@ -568,7 +568,7 @@ ${inc.map(r=>`${r.asset || 'Unspecified asset'} : ${r.cause || 'No service descr
    ${r.remarks ? '- '+r.remarks : '- No technician remarks'}`).join('\n\n')||'No qualifying work orders imported.'}
 
 PMs Completed: ${state.pmCount}
-Pending Import Review: ${state.audit.pending.length}
+
 
 VENDORS
 ${state.vendors.join('\n')||'None'}
