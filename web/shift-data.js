@@ -28,6 +28,9 @@ function feedback(message,kind='info'){
 async function refresh(){
  snapshot=await api('/api/reporting/state');
  view.applySnapshot(snapshot);
+ // Cetaris import or WO edits may change OOS, RTS and confirmed breakdown
+ // evidence. Reload all three KPI sources from the same canonical snapshot.
+ await window.v31AssetManager?.refresh?.();
  const label=document.querySelector('#v31-import-btn-label');
  if(label)label.textContent=snapshot.stage.staged?'Replace Cetaris File':'Import Cetaris';
  if(snapshot.stage.staged){

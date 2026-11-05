@@ -31,6 +31,7 @@ import v31_drax_bridge
 import v31_reporting
 import v31_facility
 import v31_oos
+import v31_asset_status
 import v31_pm_needing_completion as v31_pm
 import v31_report_export
 import v31_analytics
@@ -510,7 +511,6 @@ def landing(request: Request):
         '<script defer src="/web/facility-admin.js"></script>'+
         '<script defer src="/web/shift-history.js"></script>'+
         '<script defer src="/web/manual-oos.js"></script>'+
-        '<script defer src="/web/breakdown-lifecycle.js"></script>'+
         '<script defer src="/web/shift-data.js"></script>'+
         '<script defer src="/web/pm-needing-completion.js"></script>'+
         '<script defer src="/web/analytics.js"></script>'))
@@ -1558,6 +1558,79 @@ class ManualOOSResolve(BaseModel):
     notes: str = Field(default='', max_length=500)
 
 
+class DirectAssetRTS(BaseModel):
+    asset: str = Field(min_length=1, max_length=120)
+
+
+@app.post('/api/oos/rts')
+def asset_rts_direct(payload: DirectAssetRTS, request: Request):
+    """MST confirms physical RTS; never silently close a Cetaris breakdown.
+
+    If a manual OOS exists it is closed with its history. Otherwise this is
+    a direct RTS observation, not a completed breakdown work order, and must
+    not be added to the breakdown-only RTS email section.
+    """
+    _origin_check(request)
+    session,shift=_report_access(request)
+    profile=roster()[session['a']]
+    asset=payload.asset.strip()
+    if not asset:
+        raise HTTPException(422, 'Asset ID is required')
+    with _db() as conn:
+        v31_breakdown.ensure(conn)
+        if v31_breakdown.unresolved(conn,asset):
+            raise HTTPException(409, 'A Cetaris breakdown is still open; resolve its WO decision first')
+        if conn.execute("""SELECT 1 FROM breakdown_manual_holds
+                WHERE lower(trim(asset))=lower(trim(?))""",(asset,)).fetchone():
+            raise HTTPException(409, 'This asset has an active OOS hold; release it before RTS')
+        active=next((item for item in v31_oos.list_records(conn,open_only=True)
+                     if item['asset'].strip().casefold()==asset.casefold()),None)
+        now_iso=datetime.now(TZ).isoformat()
+        if active:
+            result,error=v31_oos.mark_rts(conn,active['id'],rts_by=session['a'],
+                 rts_by_name=profile.get('name','Associate'),shift_id=shift['id'],
+                 shift_code=shift['code'],now_iso=now_iso)
+            if error:
+                raise HTTPException(409, 'This asset was already returned to service')
+        else:
+            result=v31_oos.record_direct_rts(conn,asset=asset,
+                actor=session['a'],actor_name=profile.get('name','Associate'),
+                shift_id=shift['id'],shift_code=shift['code'],now_iso=now_iso)
+        _invalidate_passdown(conn,shift['id'])
+    return result
+
+
+@app.get('/api/assets/catalog')
+def assets_catalog(request: Request):
+    """Searchable facility asset identifiers restored from V2's assets.json."""
+    _session, _shift = _report_access(request)
+    file = ROOT / 'assets.json'
+    try:
+        identifiers = json.loads(file.read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        raise HTTPException(503, 'The facility asset catalog is unavailable')
+    with _db() as conn:
+        reported=[r['asset'] for r in conn.execute(
+            "SELECT DISTINCT asset FROM report_wo WHERE trim(asset)<>''")]
+        v31_oos._table(conn)
+        reported += [r['asset'] for r in conn.execute(
+            "SELECT DISTINCT asset FROM manual_oos WHERE trim(asset)<>''")]
+    lookup={str(value).strip().casefold():str(value).strip() for value in identifiers
+            if isinstance(value,str) and value.strip()}
+    for value in reported:
+        value=str(value or '').strip()
+        if value and value.casefold() not in lookup: lookup[value.casefold()]=value
+    return {'assets':sorted(lookup.values(),key=str.casefold)}
+
+
+@app.get('/api/assets/status')
+def assets_status(request: Request):
+    """Two unified asset lists plus the confirmed-repair Breakdown KPI."""
+    session,row=_report_access(request)
+    with _db() as conn:
+        return v31_asset_status.summary(conn,row['id'])
+
+
 @app.post('/api/oos')
 def oos_create(payload: ManualOOSCreate, request: Request):
     """Log an asset as Down/Degraded with no Cetaris WO behind it at all.
@@ -1568,6 +1641,9 @@ def oos_create(payload: ManualOOSCreate, request: Request):
     session, shift = _report_access(request)
     profile = roster()[session['a']]
     with _db() as conn:
+        if any(item['asset'].strip().casefold()==payload.asset.strip().casefold()
+               for item in v31_oos.list_records(conn,open_only=True)):
+            raise HTTPException(409, 'This asset is already marked OOS')
         record = v31_oos.create(conn, asset=payload.asset.strip(), cause=payload.cause.strip(),
             notes=payload.notes.strip(), logged_by=session['a'],
             logged_by_name=profile.get('name', 'Associate'), shift_id=session['s'],

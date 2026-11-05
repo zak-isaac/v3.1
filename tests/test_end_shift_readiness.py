@@ -83,13 +83,18 @@ def test_history_count_excludes_selection_hidden_wo(client,monkeypatch):
     assert not by['HIST101']['selection_hidden']
 
 
-def test_breakdown_lifecycle_ui_is_served_to_logged_shift_owner(client,monkeypatch):
+def test_unified_asset_status_ui_is_served_to_logged_shift_owner(client,monkeypatch):
     clock(monkeypatch)
     enter(client)
     html=client.get('/shift-report.html').text
-    assert '<script defer src="/web/breakdown-lifecycle.js"></script>' in html
-    assert 'id="v31-breakdown-lifecycle"' in html
-    lifecycle=client.get('/web/breakdown-lifecycle.js')
-    assert lifecycle.status_code==200
-    assert '/api/breakdowns' in lifecycle.text
-    assert 'Confirm RTS' in lifecycle.text
+    assert '<script defer src="/web/manual-oos.js"></script>' in html
+    assert '<script defer src="/web/breakdown-lifecycle.js"></script>' not in html
+    assert 'id="v31-manual-oos-root"' in html
+    assert 'id="v31-rts-metric"' in html
+    assert 'id="v31-oos-metric"' in html
+    assert 'id="v31-breakdown-metric"' in html
+    asset_view=client.get('/web/manual-oos.js')
+    assert asset_view.status_code==200
+    assert '/api/assets/status' in asset_view.text
+    assert '/api/assets/catalog' in asset_view.text
+    assert 'Mark OOS' in asset_view.text and 'Mark RTS' in asset_view.text

@@ -50,7 +50,7 @@ jobs:
 
   browser:
     runs-on: ubuntu-latest
-    timeout-minutes: 7
+    timeout-minutes: 12
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -59,7 +59,11 @@ jobs:
       - name: Install Python and Playwright dependencies
         run: |
           python -m pip install -r requirements.txt pytest httpx playwright
-          python -m playwright install --with-deps chromium
+          # GitHub-hosted Ubuntu already includes Chromium's essential
+          # system libraries. --with-deps also downloads large optional
+          # font packs through a slow apt mirror, routinely exhausting
+          # the browser job's timeout before any app tests run.
+          python -m playwright install chromium
       - name: Require an actual working Chromium browser
         run: python -c "from playwright.sync_api import sync_playwright; p=sync_playwright().start(); b=p.chromium.launch(); b.close(); p.stop()"
       - name: Run UI from login to report and End Shift in Chromium

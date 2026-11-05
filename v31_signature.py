@@ -47,7 +47,7 @@ def get_signature_html(lead_name: str, *, spark_src: str = f"cid:{SPARK_CID}") -
       <tr><td style="{line_style}font-weight:700;padding:0 0 2px;">{safe_name}{id_html}</td></tr>
       <tr><td style="{line_style}padding:0 0 2px;">{html.escape(FACILITY)}</td></tr>
       <tr><td style="{line_style}padding:0 0 6px;">{html.escape(ADDRESS)}</td></tr>
-      <tr><td style="{line_style}font-weight:700;padding:0 0 2px;white-space:nowrap;"><span style="white-space:nowrap;">Walmart&nbsp;<img src="{safe_src}" width="11" height="11" alt="Walmart Spark" style="display:inline;width:11px;height:11px;border:0;vertical-align:middle;"/></span></td></tr>
+      <tr><td style="{line_style}font-weight:700;padding:0 0 2px;white-space:nowrap;"><span style="white-space:nowrap;color:#0071CE;">Walmart&nbsp;<img src="{safe_src}" width="20" height="20" alt="Walmart Spark" style="display:inline-block;width:20px;height:20px;border:0;vertical-align:middle;margin-left:3px;" /></span></td></tr>
       <tr><td style="{line_style}font-style:italic;">Save money. Live better.</td></tr>
     </table>"""
 

@@ -155,7 +155,7 @@ def test_manual_oos_changes_invalidate_previous_passdown_before_end_shift(client
     assert client.post('/api/shifts/end',json={'acknowledge_warnings':True}).status_code == 200
 
 
-def test_resolved_manual_oos_appears_in_regenerated_historical_eml(client, monkeypatch):
+def test_resolved_manual_oos_is_in_shift_rts_kpi_but_not_breakdown_eml(client, monkeypatch):
     clock(monkeypatch, day=26, hour=10)
     shift_id = enter(client, "S1")
     oos_id = client.post("/api/oos", json={"asset": "CONV-12", "cause": "Jammed belt"}).json()["id"]
@@ -168,8 +168,97 @@ def test_resolved_manual_oos_appears_in_regenerated_historical_eml(client, monke
 
     eml = client.get(f"/api/history/shifts/{shift_id}/eml")
     assert eml.status_code == 200
-    assert "CONV-12" in eml.text
     section=eml.text.split('>Returned to Service</strong>',1)[1].split(
         '>Current Out of Service</strong>',1)[0]
-    assert '<strong>CONV-12</strong>' in section
-    assert 'manually reported' not in section
+    assert '<strong>CONV-12</strong>' not in section
+    # Manual OOS resolved on this shift is still counted in its RTS KPI.
+    # The EML only lists actual completed breakdown repairs.
+    with m._db() as conn:
+        import v31_asset_status
+        summary=v31_asset_status.summary(conn,shift_id)
+    assert any(r['asset']=='CONV-12' for r in summary['rts'])
+    assert summary['breakdowns']==[]
+
+
+
+def test_v2_asset_catalog_and_unified_oos_rts_lifecycle(client,monkeypatch):
+    clock(monkeypatch,day=26,hour=10)
+    enter(client,'S1')
+    catalog=client.get('/api/assets/catalog')
+    assert catalog.status_code==200,catalog.text
+    assert len(catalog.json()['assets'])>=1700
+    assert 'PERCART0010' in catalog.json()['assets']
+    assert 'BLDG' in catalog.json()['assets']
+
+    created=client.post('/api/oos',json={'asset':'PERCART0010'})
+    assert created.status_code==200,created.text
+    assert client.post('/api/oos',json={'asset':'percart0010'}).status_code==409
+    overview=client.get('/api/assets/status').json()
+    assert [r['asset'] for r in overview['oos']]==['PERCART0010']
+    assert overview['rts']==[] and overview['breakdowns']==[]
+
+    # Current OOS remains visible on S2. Then a manually verified return
+    # records RTS for S2 without fabricating a repaired breakdown WO.
+    clock(monkeypatch,day=26,hour=14)
+    s2=client.post('/api/shifts/start',json={'code':'S2'})
+    assert s2.status_code==200,s2.text
+    assert 'PERCART0010' in [r['asset'] for r in client.get('/api/assets/status').json()['oos']]
+    returned=client.post('/api/oos/rts',json={'asset':'PERCART0010'})
+    assert returned.status_code==200,returned.text
+    assert returned.json()['direct_rts']==0 # An actual prior OOS record was resolved
+    result=client.get('/api/assets/status').json()
+    assert not result['oos']
+    assert [r['asset'] for r in result['rts']]==['PERCART0010']
+    assert result['breakdowns']==[]
+    preview=client.get('/api/shifts/report/preview')
+    assert preview.status_code==200,preview.text
+    html=preview.json()['html']
+    breakdown_section=html.split('>Returned to Service</strong>',1)[1].split(
+        '>Current Out of Service</strong>',1)[0]
+    assert 'PERCART0010' not in breakdown_section
+
+
+def test_status_kpis_include_all_shift_rts_but_only_repaired_breakdowns_in_email(client,monkeypatch):
+    clock(monkeypatch,day=26,hour=10)
+    enter(client,'S1')
+    for asset,category in [('PERCART0010','Breakdown'),('VOIDFILL','Proactive Repair')]:
+        saved=client.post('/api/reporting/manual',json={
+            'asset':asset,'cause':'Equipment corrected and verified',
+            'remarks':'Tested safe for operation','category':category,'status':'RTS'})
+        assert saved.status_code==200,saved.text
+    # A third direct RTS observation without a backed breakdown is valid
+    # as an operational update, but not a breakdown completion.
+    direct=client.post('/api/oos/rts',json={'asset':'BALER0001'})
+    assert direct.status_code==200,direct.text
+    assert direct.json()['direct_rts']==1
+
+    stats=client.get('/api/assets/status')
+    assert stats.status_code==200,stats.text
+    body=stats.json()
+    assert {x['asset'] for x in body['rts']}=={
+        'PERCART0010','VOIDFILL','BALER0001'}
+    assert {x['asset'] for x in body['breakdowns']}=={'PERCART0010'}
+    assert body['oos']==[]
+    preview=client.get('/api/shifts/report/preview')
+    assert preview.status_code==200,preview.text
+    section=preview.json()['html'].split('>Returned to Service</strong>',1)[1].split(
+        '>Current Out of Service</strong>',1)[0]
+    assert '<strong>PERCART0010</strong>' in section
+    assert 'VOIDFILL' not in section
+    assert 'BALER0001' not in section
+
+
+def test_rts_direct_cannot_override_an_unresolved_cetaris_breakdown(client,monkeypatch):
+    clock(monkeypatch,day=26,hour=10)
+    enter(client,'S1')
+    import v31_breakdown
+    with m._db() as conn:
+        v31_breakdown.ensure(conn)
+        conn.execute("""INSERT INTO breakdown_state(
+            wo_number,asset,status,updated_shift_id,decision,rts_logged,updated_at)
+            VALUES(?,?,?,?,?,?,?)""",
+            ('BD100','BLDG','in process',1,'',0,'2026-10-26T10:00:00-04:00'))
+    res=client.post('/api/oos/rts',json={'asset':'BLDG'})
+    assert res.status_code==409
+    assert 'breakdown' in res.json()['detail'].lower()
+    assert any(x['asset']=='BLDG' for x in client.get('/api/assets/status').json()['oos'])
