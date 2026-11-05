@@ -955,16 +955,15 @@ def test_facility_missing_keys_persist_between_shifts_until_explicitly_cleared(c
 def test_eml_rts_only_breakdown_equipment_deduplicated_and_signature_uniform(client,monkeypatch):
     clock(monkeypatch,day=26,hour=10)
     enter(client,'S1')
-    assert upload(client,[
-        row('NORMAL1',category='Proactive Repair',status='Closed',issue='Routine repair'),
-        row('BREAK1',category='Breakdown',status='Closed',issue='Equipment breakdown'),
-        row('BREAK2',category='Breakdown',status='Closed',issue='Second breakdown')
-    ]).status_code==200
+    normal=row('NORMAL1',category='Proactive Repair',status='Closed',issue='Routine repair')
+    b1=row('BREAK1',category='Breakdown',status='Closed',issue='Equipment breakdown')
+    b2=row('BREAK2',category='Breakdown',status='Closed',issue='Second breakdown')
+    b1['Asset #']='PERCART003'
+    b2['Asset #']='BLDG'
+    assert upload(client,[normal,b1,b2]).status_code==200
     assert import_techs(client,['Synthetic A']).status_code==200
-    # Use a concrete asset name to verify the exact report list formatting.
-    for wo,asset in [('BREAK1','PERCART003'),('BREAK2','BLDG')]:
-        changed=client.post('/api/reporting/work-orders/'+wo,json={'asset':asset})
-        assert changed.status_code==200,changed.text
+    # The event stores the asset identifier as imported from the WO. Editing
+    # a display field afterwards must never fabricate a different RTS event.
     preview=client.get('/api/shifts/report/preview')
     assert preview.status_code==200,preview.text
     html=preview.json()['html']
@@ -979,6 +978,6 @@ def test_eml_rts_only_breakdown_equipment_deduplicated_and_signature_uniform(cli
     from v31_signature import SIGNATURE_MARKER
     signature=html.split(SIGNATURE_MARKER,1)[1]
     assert "font-family:Calibri,Arial,sans-serif" in signature
-    assert "font-size:14px" in signature
+    assert "font-size:16px;line-height:22px" in signature
     assert "font-size:18px" not in signature
     assert "Georgia" not in signature
