@@ -13,6 +13,7 @@ with nothing behind it is worse than no integration at all.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 SETTINGS_FILE = "facility_settings.json"
@@ -22,6 +23,29 @@ DEFAULTS: dict = {
     "recipients": "",
     "sender_name": "IND3 Shift Passdown",
 }
+
+
+def parse_recipients(value: str) -> list[str]:
+    """Normalize comma/semicolon/newline-separated Outlook To recipients.
+
+    Keep the first occurrence, reject malformed or unsafe addresses, and do
+    not add any default or guessed recipients when none are configured.
+    """
+    if not value:
+        return []
+    recipients: list[str] = []
+    seen: set[str] = set()
+    for token in re.split(r"[,;\r\n]+", value):
+        address = token.strip()
+        if not address:
+            continue
+        if not re.fullmatch(r"[^@\s,;<>]+@[^@\s,;<>]+", address):
+            raise ValueError(f"Invalid recipient email: {address}")
+        folded = address.casefold()
+        if folded not in seen:
+            seen.add(folded)
+            recipients.append(address)
+    return recipients
 
 
 def _path(private_dir: Path) -> Path:
