@@ -191,38 +191,48 @@ def test_loto_missing_key_saves_without_false_missing_element_error(live_server)
             assert page.locator('#last-saved').count()==0
             page.locator('#loto-keys-toggle').click()
             with page.expect_response(
-                lambda r:r.url.endswith('/api/reporting/draft') and r.request.method=='POST',
-                timeout=12000
+                lambda r:r.url.endswith('/api/reporting/loto/missing-key')
+                    and r.request.method=='POST',timeout=12000
             ) as changed:
                 page.locator('#missing-keys .loto-key').nth(2).check()
             assert changed.value.status==200
-            assert not page.locator('#loto-toggle').is_checked()
             page.wait_for_function("""async () => {
                 const r=await fetch('/api/reporting/state',{credentials:'same-origin'});
                 if(!r.ok)return false;
                 const d=await r.json();
-                return d.draft?.loto===false && d.draft?.missingKeys?.includes('Key 3');
+                return d.draft?.loto===true && d.draft?.missingKeys?.includes('Key 3');
             }""",timeout=12000)
+            assert page.locator('#loto-toggle').is_checked()
             assert 'LOTO save failed' not in page.locator('#toast').inner_text()
             page.reload()
             page.wait_for_function("""() => !!window.V31Reporting
                 && document.querySelectorAll('#missing-keys .loto-key').length===20
-                && document.querySelector('#missing-keys .loto-key:nth-child(3) input')?.checked""")
+                && document.querySelectorAll('#missing-keys .loto-key')[2]?.checked""")
             assert page.locator('#missing-keys .loto-key').nth(2).is_checked()
-            assert page.locator('#loto-state').inner_text()=='Not verified'
-
-            # A positive verification clears conflicting missing-key markings
-            # and also saves immediately without the old null-element error.
-            with page.expect_response(
-                lambda r:r.url.endswith('/api/reporting/draft') and r.request.method=='POST',
-                timeout=12000
-            ) as verified:
-                page.locator('#loto-toggle + .switch-track').click()
-            assert verified.value.status==200
+            assert page.locator('#loto-state').inner_text()=='Verified'
+            # Toggling verification off and back on must never erase missing keys.
+            page.locator('#loto-toggle + .switch-track').click()
             page.wait_for_function("""async () => {
-                const r=await fetch('/api/reporting/state',{credentials:'same-origin'});
-                if(!r.ok)return false;
-                const d=await r.json();
+                const d=await (await fetch('/api/reporting/state')).json();
+                return d.draft?.loto===false && d.draft?.missingKeys?.includes('Key 3');
+            }""",timeout=12000)
+            page.locator('#loto-toggle + .switch-track').click()
+            page.wait_for_function("""async () => {
+                const d=await (await fetch('/api/reporting/state')).json();
+                return d.draft?.loto===true && d.draft?.missingKeys?.includes('Key 3');
+            }""",timeout=12000)
+            # Reload correctly collapses the missing-key panel; open it
+            # again before attempting a real user click on the checkbox.
+            page.locator('#loto-keys-toggle').click()
+            # Clearing the found key preserves this shift's verification.
+            with page.expect_response(
+                lambda r:r.url.endswith('/api/reporting/loto/missing-key')
+                    and r.request.method=='POST',timeout=12000
+            ) as cleared:
+                page.locator('#missing-keys .loto-key').nth(2).uncheck()
+            assert cleared.value.status==200
+            page.wait_for_function("""async () => {
+                const d=await (await fetch('/api/reporting/state')).json();
                 return d.draft?.loto===true && d.draft?.missingKeys?.length===0;
             }""",timeout=12000)
             assert page.locator('#loto-state').inner_text()=='Verified'

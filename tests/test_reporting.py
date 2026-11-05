@@ -900,3 +900,85 @@ def test_command_center_css_responsive_and_protects_original_ui_actions(client, 
     # "Auto-save: On (local)", so a manual save button was dead weight.
     assert 'id="save-draft"' not in markup
     assert '/web/walmart-2025.svg' in markup
+
+
+def test_facility_missing_keys_persist_between_shifts_until_explicitly_cleared(client,monkeypatch):
+    clock(monkeypatch,day=26,hour=10)
+    s1=enter(client,'S1')
+    missing=client.post('/api/reporting/loto/missing-key',
+                        json={'key':'Key 2','missing':True})
+    assert missing.status_code==200,missing.text
+    assert missing.json()['missingKeys']==['Key 2']
+    verified=client.post('/api/reporting/draft',json={
+        'vendors':[],'ro':[],'notes':'','loto':True,'missingKeys':[]
+    })
+    assert verified.status_code==200,verified.text
+    state1=client.get('/api/reporting/state').json()
+    assert state1['draft']['loto'] is True
+    assert state1['draft']['missingKeys']==['Key 2']
+    preview=client.get('/api/shifts/report/preview')
+    assert preview.status_code==200,preview.text
+    html=preview.json()['html']
+    assert 'LOTO Verified' in html and 'LOTO Verification Pending' not in html
+    assert 'Missing key:</strong> Key 2' in html
+    # Move to another overlapping shift. Verification remains per shift,
+    # but the missing key continues in the shared facility inventory.
+    clock(monkeypatch,day=26,hour=14)
+    s2=client.post('/api/shifts/start',json={'code':'S2'})
+    assert s2.status_code==200,s2.text
+    state2=client.get('/api/reporting/state').json()
+    assert state2['draft']['missingKeys']==['Key 2']
+    assert not state2['draft'].get('loto',False)
+    # Saving a stale/empty old client missingKeys field CANNOT clear the key.
+    saved=client.post('/api/reporting/draft',json={
+        'vendors':[],'ro':[],'notes':'','loto':True,'missingKeys':[]
+    })
+    assert saved.status_code==200,saved.text
+    assert client.get('/api/reporting/state').json()['draft']['missingKeys']==['Key 2']
+    assert client.post('/api/reporting/loto/missing-key',
+                       json={'key':'Key 21','missing':True}).status_code==422
+    clear=client.post('/api/reporting/loto/missing-key',
+                      json={'key':'Key 2','missing':False})
+    assert clear.status_code==200,clear.text
+    assert clear.json()['missingKeys']==[]
+    # Return to S1 and verify the shared inventory was updated there too.
+    resumed=client.post('/api/shifts/resume',json={'shift_id':s1})
+    assert resumed.status_code==200,resumed.text
+    assert client.get('/api/reporting/state').json()['draft']['missingKeys']==[]
+    assert client.get('/api/reporting/state').json()['draft']['loto'] is True
+    with m._db() as conn:
+        actions=[tuple(r) for r in conn.execute(
+            "SELECT key_name,missing FROM facility_missing_key_events ORDER BY id")]
+    assert actions==[('Key 2',1),('Key 2',0)]
+
+
+def test_eml_rts_only_breakdown_equipment_deduplicated_and_signature_uniform(client,monkeypatch):
+    clock(monkeypatch,day=26,hour=10)
+    enter(client,'S1')
+    assert upload(client,[
+        row('NORMAL1',category='Proactive Repair',status='Closed',issue='Routine repair'),
+        row('BREAK1',category='Breakdown',status='Closed',issue='Equipment breakdown'),
+        row('BREAK2',category='Breakdown',status='Closed',issue='Second breakdown')
+    ]).status_code==200
+    assert import_techs(client,['Synthetic A']).status_code==200
+    # Use a concrete asset name to verify the exact report list formatting.
+    for wo,asset in [('BREAK1','PERCART003'),('BREAK2','BLDG')]:
+        changed=client.post('/api/reporting/work-orders/'+wo,json={'asset':asset})
+        assert changed.status_code==200,changed.text
+    preview=client.get('/api/shifts/report/preview')
+    assert preview.status_code==200,preview.text
+    html=preview.json()['html']
+    section=html.split('>Returned to Service</strong>',1)[1].split(
+        '>Current Out of Service</strong>',1)[0]
+    assert '<strong>PERCART003</strong>' in section
+    assert '<strong>BLDG</strong>' in section
+    assert 'ASSETNORMAL1' not in section
+    assert 'Breakdown WO#' not in section
+    assert '&mdash; Returned to Service' not in section
+    assert 'Out of Service &mdash; Returned to Service (RTS)' not in html
+    from v31_signature import SIGNATURE_MARKER
+    signature=html.split(SIGNATURE_MARKER,1)[1]
+    assert "font-family:Calibri,Arial,sans-serif" in signature
+    assert "font-size:14px" in signature
+    assert "font-size:18px" not in signature
+    assert "Georgia" not in signature

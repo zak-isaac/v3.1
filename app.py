@@ -1253,13 +1253,27 @@ def reporting_work_order(wo_number:str,payload:ReportingWOEdit,request:Request):
     return {'updated':True,'wo_number':wo_number}
 
 
+class MissingKeyUpdate(BaseModel):
+    key: str = Field(pattern=r'^Key (?:[1-9]|1[0-9]|20)$',max_length=6)
+    missing: bool
+
+
+@app.post('/api/reporting/loto/missing-key')
+def update_missing_loto_key(payload:MissingKeyUpdate,request:Request):
+    """Update one shared key; require an authorized open shift for audit."""
+    _origin_check(request)
+    session,row=_report_access(request)
+    with _db() as conn:
+        result=v31_reporting.set_missing_key(
+            conn,row['id'],payload.key,payload.missing,session['a'])
+    return result
+
+
 @app.post('/api/reporting/draft')
 def reporting_draft(payload:ReportingDraft,request:Request):
     _origin_check(request)
     session,row=_report_access(request)
     content=payload.model_dump()
-    if content['loto'] and content['missingKeys']:
-        raise HTTPException(422,'LOTO cannot be verified while keys are marked missing')
     if sum(len(x) for x in content['vendors']+content['ro'])>15000:
         raise HTTPException(422,'Too much draft content')
     with _db() as conn:

@@ -167,7 +167,8 @@ def test_eml_download_uses_v3_html_template_with_corrected_spelling(live_server)
     assert "Shift Happenings" in content
     assert "Reliable Operations" in content
     assert "PMs Needing Completion" in content
-    assert "Returned to Service (RTS)" in content
+    assert "Returned to Service" in content
+    assert "Out of Service &mdash; Returned to Service" not in content
     assert "Current Out of Service" in content
 
     # Spelling correction must already be applied by the time it reaches the

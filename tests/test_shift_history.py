@@ -85,7 +85,7 @@ def test_closed_shift_appears_with_real_counts_and_eml_regenerates_faithfully(cl
     assert "Checked robot arm calibration" in body
     assert "Quiet shift overall" in body
     assert "WO# 9001" in body
-    assert "All LOTO Keys Verified" in body
+    assert "LOTO Verified" in body
 
 
 def test_resaving_report_increments_reports_count(client, tmp_path, monkeypatch):
@@ -103,16 +103,24 @@ def test_missing_loto_keys_show_in_regenerated_eml(client, tmp_path, monkeypatch
     write_roster(tmp_path, [["Third Tech", "555003", "S1", "MST"]])
     v31_roster.sync(tmp_path, tmp_path / "v31.sqlite3", force=True)
     client.post("/api/login", json={"associate": "555003", "intent": "direct"})
-    client.post("/api/reporting/draft", json={
-        "vendors": [], "ro": [], "notes": "", "loto": False, "missingKeys": ["Panel A2", "LOTO Box 4"],
+    # Facility key inventory is now independent of shift LOTO verification.
+    # A completed check with missing keys must display VERIFIED and a warning.
+    for key in ("Key 2", "Key 4"):
+        marked=client.post("/api/reporting/loto/missing-key",
+                           json={"key":key,"missing":True})
+        assert marked.status_code==200,marked.text
+    draft=client.post("/api/reporting/draft", json={
+        "vendors": [], "ro": [], "notes": "", "loto": True, "missingKeys": [],
     })
+    assert draft.status_code==200,draft.text
     saved = client.post("/api/shifts/report", json={"content": "IND3 S1 SHIFT HAPPENINGS: None."})
     assert saved.status_code == 200, saved.text
     shift_id = saved.json()["shift_id"]
     eml = client.get(f"/api/history/shifts/{shift_id}/eml")
-    assert "LOTO Verification Pending" in eml.text
+    assert "LOTO Verified" in eml.text
+    assert "LOTO Verification Pending" not in eml.text
     assert "Missing keys:" in eml.text
-    assert "Panel A2" in eml.text and "LOTO Box 4" in eml.text
+    assert "Key 2" in eml.text and "Key 4" in eml.text
 
 
 def test_ordinary_mst_sees_only_own_shifts_and_cannot_download_others(client, tmp_path, monkeypatch):

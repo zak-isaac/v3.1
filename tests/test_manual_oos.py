@@ -169,4 +169,7 @@ def test_resolved_manual_oos_appears_in_regenerated_historical_eml(client, monke
     eml = client.get(f"/api/history/shifts/{shift_id}/eml")
     assert eml.status_code == 200
     assert "CONV-12" in eml.text
-    assert "manually reported" in eml.text
+    section=eml.text.split('>Returned to Service</strong>',1)[1].split(
+        '>Current Out of Service</strong>',1)[0]
+    assert '<strong>CONV-12</strong>' in section
+    assert 'manually reported' not in section
