@@ -29,7 +29,10 @@ def build(conn,shift_id,shift_code,shift_day,private,lead_name=''):
     # instead of as a read-only received message.
     msg['X-Unsent']='1'
     msg['Subject']=subject
-    recipients=[a.strip() for a in (settings.get('recipients') or '').split(',') if a.strip()]
+    # The unsent Outlook draft is addressed to the recipients saved under
+    # Administration > Facility & Email Settings. Outlook supplies the From
+    # account on send; V3.1 never sends mail automatically.
+    recipients=v31_facility.parse_recipients(settings.get('recipients') or '')
     if recipients:
         msg['To']=', '.join(recipients)
     msg.set_content(f'{dc} {shift_code} End of Shift Passdown. Open the HTML part of this message.')
