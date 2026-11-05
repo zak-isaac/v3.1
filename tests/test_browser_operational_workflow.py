@@ -109,7 +109,11 @@ def test_real_browser_manual_pm_breakdown_passdown_and_end_shift(live_server):
             page.locator('#v31-oos-add-btn').click()
         assert loaded.value.status==200
         page.locator('#v31-oos-asset').fill('PERCART0010')
-        page.locator('#v31-oos-asset-suggestions option[value="PERCART0010"]').wait_for()
+        # A <datalist> option is present but intentionally hidden in the
+        # DOM until the native browser picker is invoked. Assert existence,
+        # not Playwright's visible state.
+        page.wait_for_function("""() => !!document.querySelector(
+            '#v31-oos-asset-suggestions option[value="PERCART0010"]')""")
         with page.expect_response(
             lambda r:r.url.endswith('/api/oos/rts') and r.request.method=='POST'
         ) as marked:
