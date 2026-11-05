@@ -68,6 +68,17 @@ def test_real_browser_manual_pm_breakdown_passdown_and_end_shift(live_server):
                 f'JavaScript exceptions: {script_errors}'
             ) from exc
         assert changed.value.status==200
+        # Playwright expect_response fires when response headers arrive; wait
+        # for the subsequent reporting read to see the committed entry.
+        # This is NOT a blind sleep or a retry of Save.
+        page.wait_for_function("""async () => {
+            const response=await fetch('/api/reporting/state',
+                {credentials:'same-origin'});
+            if(!response.ok)return false;
+            const state=await response.json();
+            return (state.rows||[]).some(
+                row=>row.asset==='VOIDFILL-UI' && row.is_manual);
+        }""",timeout=12000)
         state=page.evaluate("""async () => (await (await fetch(
             '/api/reporting/state',{credentials:'same-origin'})).json())""")
         assert any(row['asset']=='VOIDFILL-UI' and row['is_manual'] for row in state['rows'])

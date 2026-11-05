@@ -23,6 +23,7 @@ from zoneinfo import ZoneInfo
 from fastapi import FastAPI, HTTPException, Request, Response, UploadFile, File
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
 import v31_roster
 import v31_legacy_history
@@ -1106,6 +1107,12 @@ def reporting_state(request: Request):
     return {'shift':entry(row),**data}
 
 
+def _stage_cetaris_sync(shift_id: int, content: bytes, filename: str, actor: str):
+    """Run expensive Excel parsing and SQLite transaction off the event loop."""
+    with _db() as conn:
+        return v31_reporting.stage(conn,shift_id,content,filename,actor)
+
+
 @app.post('/api/reporting/stage')
 async def reporting_stage(request: Request,file: UploadFile=File(...)):
     _origin_check(request)
@@ -1119,9 +1126,9 @@ async def reporting_stage(request: Request,file: UploadFile=File(...)):
     if len(content)>v31_reporting.MAX_SIZE:
         raise HTTPException(413, 'Cetaris export exceeds 12 MB')
     try:
-        with _db() as conn:
-            result=v31_reporting.stage(conn,row['id'],content,
-                file.filename or 'cetaris.xlsx',session['a'])
+        result=await run_in_threadpool(
+            _stage_cetaris_sync,row['id'],content,
+            file.filename or 'cetaris.xlsx',session['a'])
     except ValueError as exc:
         raise HTTPException(422,str(exc))
     # Staging parses a file; it deliberately does not credit any WOs until

@@ -16,6 +16,7 @@ integration decision -- see integration report).
 from __future__ import annotations
 
 from collections import Counter
+from functools import lru_cache
 from datetime import datetime
 from io import BytesIO, StringIO
 from typing import Any
@@ -40,15 +41,23 @@ def _text(value: Any) -> str:
     return "" if value is None else str(value).strip()
 
 
+@lru_cache(maxsize=16384)
+def _parse_date_text(value: str) -> datetime | None:
+    """Reuse date conversions for repeated Cetaris timestamps within exports."""
+    if not value:
+        return None
+    for fmt in DATE_FORMATS:
+        try:
+            return datetime.strptime(value, fmt)
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
 def _parse_dt(value: Any) -> datetime | None:
     if isinstance(value, datetime):
         return value.replace(tzinfo=None)
-    for fmt in DATE_FORMATS:
-        try:
-            return datetime.strptime(_text(value), fmt)
-        except (TypeError, ValueError):
-            pass
-    return None
+    return _parse_date_text(_text(value))
 
 
 def _open_xlsx_grid(data: bytes):
@@ -131,6 +140,11 @@ def parse_excel(data: bytes, stats: dict | None = None) -> list[dict]:
                 skipped_no_tech += 1
                 continue
             started = _parse_dt(get(row, "Start Date"))
+            updated = _parse_dt(get(row, "Update Date / Time"))
+            opened = _parse_dt(get(row, "WO Date / Time"))
+            completed = _parse_dt(get(row, "WO Last Complete Date / Time"))
+            closed = _parse_dt(get(row, "WO Closed Date/Time"))
+            in_service = _parse_dt(get(row, "In Service Date / Time"))
             # Real exports leave 'Asset ID' blank for most rows -- 'Asset #'
             # is the common case, not the fallback -- but prefer Asset ID
             # when a given export does populate it.
@@ -155,13 +169,13 @@ def parse_excel(data: bytes, stats: dict | None = None) -> list[dict]:
                 # last touched -- more reliable than WO Closed Date/Time per
                 # 2026-10-23 facility feedback. Optional; absent on older
                 # exports.
-                "updated_at": _parse_dt(get(row, "Update Date / Time")).isoformat(timespec="seconds") if _parse_dt(get(row, "Update Date / Time")) else "",
-                "opened_at": _parse_dt(get(row, "WO Date / Time")).isoformat(timespec="seconds") if _parse_dt(get(row, "WO Date / Time")) else "",
-                "last_complete_at": _parse_dt(get(row, "WO Last Complete Date / Time")).isoformat(timespec="seconds") if _parse_dt(get(row, "WO Last Complete Date / Time")) else "",
+                "updated_at": updated.isoformat(timespec="seconds") if updated else "",
+                "opened_at": opened.isoformat(timespec="seconds") if opened else "",
+                "last_complete_at": completed.isoformat(timespec="seconds") if completed else "",
                 "last_shift": _text(get(row, "Last Shift")),
-                "closed_at": _parse_dt(get(row, "WO Closed Date/Time")).isoformat(timespec="seconds") if _parse_dt(get(row, "WO Closed Date/Time")) else "",
+                "closed_at": closed.isoformat(timespec="seconds") if closed else "",
                 # In Service is a fallback for shift attribution, not a WO close time.
-                "in_service_at": _parse_dt(get(row, "In Service Date / Time")).isoformat(timespec="seconds") if _parse_dt(get(row, "In Service Date / Time")) else "",
+                "in_service_at": in_service.isoformat(timespec="seconds") if in_service else "",
                 "cause": _text(get(row,"Cause")),
                 "work_accomplished": _text(get(row,"Work Accomplished")),
             })
