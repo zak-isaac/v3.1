@@ -40,11 +40,15 @@ async function refresh(){
     emLine.textContent='Evening (before midnight): '+em.evening+' WO · Morning (after midnight): '+em.morning+' WO';
     audit.append(emLine);
   }
-  // Pending/ignored reason lines used to render here as a scrollable
-  // strip of 'WO# ... - reason' text. Removed per request -- the WO
-  // Review Items metric card already surfaces the count, and the
-  // 'Review completed work orders' action below covers the actionable
-  // case; a raw reason dump wasn't adding value.
+  // All pending audit entries must be discoverable, even when the KPI
+  // displays evening/morning counts instead of review-item counts.
+  if(snapshot.audit.pending.length){
+    const button=document.createElement('button');
+    button.type='button';button.className='btn btn-light btn-small';
+    button.textContent='View all '+snapshot.audit.pending.length+' WO Review Items';
+    button.onclick=()=>view.showReviewItems();
+    audit.append(button);
+  }
   const pendingClosed=snapshot.audit.pending.filter(x=>
     String(x.reason||'').startsWith('Completed but not Closed'));
   if(pendingClosed.length){
