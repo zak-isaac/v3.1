@@ -69,6 +69,10 @@ def test_eml_includes_ind3_next_gen_signature_with_embedded_spark_image(client, 
     assert "5259 W. 500 North McCordsville, Indiana, 46055" in html
     assert "Save money." in html and "Live better" in html
     assert "cid:ind3-walmart-spark" in html
+    # The yellow Walmart spark is small and in-line with the wordmark.
+    assert 'Walmart&nbsp;<img' in html
+    assert 'width="11" height="11"' in html
+    assert "white-space:nowrap" in html
 
     inline_images = [p for p in msg.walk() if p.get_content_type() == "image/png"]
     assert inline_images, "Spark PNG must be embedded as an inline related image"
@@ -106,3 +110,37 @@ def test_pm_needing_completion_renders_as_bordered_zebra_table_in_eml(client, mo
     assert "PMPARITY1" in html
     assert "BALER-PARITY" in html
     assert "1a56db" in html  # V3's exact navy header color
+
+
+
+def test_outlook_eml_uses_passdown_recipients_from_facility_settings(client, monkeypatch):
+    """Unsent Outlook draft must prefill To using the saved admin settings."""
+    clock(monkeypatch)
+    enter(client, "S1")
+    configured = client.post("/api/admin/settings", json={
+        "distribution_center": "IND3",
+        "recipients": "first@example.com; second@example.com, FIRST@example.com",
+        "sender_name": "IND3 Shift Passdown",
+    })
+    assert configured.status_code == 200, configured.text
+    assert configured.json()["recipients"] == "first@example.com, second@example.com"
+
+    _import_one_wo(client)
+    msg = email.message_from_bytes(_save_and_download(client), policy=email.policy.SMTP)
+    assert msg["X-Unsent"] == "1"
+    assert msg["To"] is not None
+    assert [recipient.addr_spec for recipient in msg["To"].addresses] == [
+        "first@example.com", "second@example.com"
+    ]
+    assert msg["Subject"] == "IND3 - S1 Shift Passdown - 2026-10-26"
+
+    # Invalid addresses must fail when saved, not break the EML later.
+    invalid = client.post("/api/admin/settings", json={
+        "distribution_center": "IND3",
+        "recipients": "valid@example.com, invalid@@example.com",
+        "sender_name": "IND3 Shift Passdown",
+    })
+    assert invalid.status_code == 422
+    assert client.get("/api/admin/settings").json()["recipients"] == (
+        "first@example.com, second@example.com"
+    )
