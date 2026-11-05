@@ -436,12 +436,21 @@ function listPane(kind){let list=kind==='vendors'?state.vendors:state.ro;let tit
 function pmTab(){
   const needed=state.pmNeeds||{present:false,count:0,rows:[]};
   const completed=state.pms.length?state.pms.map(r=>`<div class="item-card"><div><strong>${esc(r.asset||'Asset not specified')} · WO# ${esc(r.wo_number)}</strong><small>${esc(r.tech||'')}</small></div><span class="status-pill rts">Completed</span></div>`).join(''):'<p class="field-help">No completed PMs imported yet.</p>';
-  const toDo=(needed.rows||[]).map(r=>`<div class="item-card"><div><strong>${esc(r.asset_num||'Asset not specified')} · WO# ${esc(r.wo_number)}</strong><small>Due: ${esc(r.pm_due_date||'not provided')}, Promise: ${esc(r.promise_date||'not provided')}</small></div><span class="status-pill pending">Needs completion</span></div>`).join('');
+  // Match the V2/V3 Outlook PM table instead of mixing outstanding PMs
+  // into generic asset cards. Show exactly the columns parsed from the file.
+  const cell=(value,bold=false)=>`<td style="padding:8px 10px;border:1px solid #d1d5db;${bold?'font-weight:700;':''}">${esc(value||'—')}</td>`;
+  const toDo=needed.rows?.length?`<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13px;min-width:660px">
+    <thead><tr style="background:#144a86;color:#fff"><th style="padding:10px;text-align:left">WO #</th>
+    <th style="padding:10px;text-align:left">Asset</th><th style="padding:10px;text-align:left">PM Due Date</th>
+    <th style="padding:10px;text-align:left">Promise Date / Time</th><th style="padding:10px;text-align:left">WO Date / Time</th></tr></thead>
+    <tbody>${needed.rows.map((r,i)=>`<tr style="background:${i%2?'#f3f7fc':'#fff'}">
+      ${cell(r.wo_number,true)}${cell(r.asset_num,true)}${cell(r.pm_due_date,true)}
+      ${cell(r.promise_date)}${cell(r.wo_date)}</tr>`).join('')}</tbody></table></div>`:'';
   const missing=needed.present?(needed.parsed?'No PM rows in the uploaded file.':'Reference file saved; details not machine-parsed.'):'No PMs Needing Completion file uploaded yet.';
   return `<div class="secondary-pane">
     <div class="pane-header"><div><h3>Completed PMs · ${state.pmCount}</h3><p>From the completed-work-order Cetaris import.</p></div></div>
     <div class="item-list">${completed}</div>
-    <div class="pane-header"><div><h3>PMs Needing Completion · ${needed.count||0}</h3><p>Separate V2-style file; not inferred from In Process WOs.</p></div></div>
+    <div class="pane-header"><div><h3>PMs Needing Completion · ${needed.count||0}</h3><p>Outstanding PM work orders extracted from the separate V2/V3 report. Counted once per WO.</p></div></div>
     ${needed.present?'<p>Uploaded: '+esc(needed.filename)+'</p>':''}
     <div class="item-list">${toDo||'<p class="field-help">'+missing+'</p>'}</div>
   </div>`;
@@ -566,11 +575,8 @@ function techModal(){
 }
 function createReport(){const inc=state.rows.filter(r=>!r.excluded);
   const manualOpen=window.__v31ManualOOS?.open||[];
-  const manualRts=[]; // Manual status-only RTS belongs to the KPI, not the breakdown email.
-  const rtsLines=[...new Set([...inc.filter(r=>r.status==='RTS'&&r.category==='Breakdown').map(r=>r.asset),
-    ...manualRts.map(m=>m.asset)].filter(Boolean))];
-  const oosLines=[...inc.filter(r=>r.status==='OOS').map(r=>r.asset),
-    ...manualOpen.map(m=>`${m.asset}${m.cause?' — '+m.cause:''} (manually reported)`)];
+  const rtsLines=(assetStatus?.rts||[]).map(r=>r.asset);
+  const oosLines=(assetStatus?.oos||[]).map(r=>r.asset);
   return `IND3 — MST Reliability Operations
 ${window.__v31ShiftContext?.code || 'Unassigned'} — Shift Report
 Date: ${window.__v31ShiftContext?.date || 'Not selected'}
@@ -617,23 +623,15 @@ function buildEmailHtml(){
   // format_email_passdown_html().
   const happenings=[];
   if(state.notes&&state.notes.trim())happenings.push(`<p style="margin:6px 0;font-size:14px;">${esc(state.notes.trim())}</p>`);
-  if(state.pmCount)happenings.push(`<p style="margin:6px 0;font-size:14px;">${state.pmCount} PM${state.pmCount!==1?'s':''} completed this shift</p>`);
+  if(state.pmCount)happenings.push(`<p style="margin:6px 0;font-size:14px;"><strong>${state.pmCount} PM${state.pmCount!==1?'s':''} completed this shift</strong></p>`);
   inc.forEach(r=>{
     const heading=`${esc(r.asset||'Unspecified asset')} : ${esc(r.cause||'No service description')} (WO# ${esc(r.wo)})`;
     const remark=r.remarks?esc(r.remarks):'No technician remarks';
     happenings.push(`<div style="margin:8px 0 10px;"><strong style="font-size:14px;">${heading}</strong>${r.workAt?'<small style="display:block">Work evidence: '+esc(r.workAt)+'</small>':''}<ul style="margin:2px 0 0;padding-left:22px;"><li style="font-size:13px;white-space:pre-wrap;">${remark}</li></ul></div>`);
   });
-  const rtsAssets=[...new Set(inc.filter(r=>r.status==='RTS'&&r.category==='Breakdown').map(r=>r.asset).filter(Boolean))];
-  const rts=rtsAssets.map(asset=>`<strong>${esc(asset)}</strong>`);
-  const oos=inc.filter(r=>r.status==='OOS').map(r=>`<strong>${esc(r.asset)}</strong>`);
-  // Manually-reported Breakdown/OOS -- no Cetaris WO behind these at all.
-  // "Current" OOS shows every globally-open record so a handoff always has
-  // full visibility, regardless of which shift originally logged it down.
-  (window.__v31ManualOOS?.open||[]).forEach(m=>{
-    oos.push(`<strong>${esc(m.asset)}</strong>${m.cause?' &mdash; '+esc(m.cause):''} (manually reported)`);
-  });
-  // Manual status-only RTS stays in the Shift RTS KPI and does not appear
-  // in the breakdown-only email section.
+  // Use the same verified RTS and persistent OOS data as the KPI cards.
+  const rts=(assetStatus?.rts||[]).map(r=>`<strong>${esc(r.asset)}</strong>`);
+  const oos=(assetStatus?.oos||[]).map(r=>`<strong>${esc(r.asset)}</strong>`);
   const loto=state.loto
     ?`<p style="font-size:14px;font-family:Calibri,Arial,sans-serif;margin-top:18px;"><strong style="color:#2a8703;">&#10003; LOTO Verified</strong></p>`
     :`<p style="font-size:14px;font-family:Calibri,Arial,sans-serif;margin-top:18px;"><strong style="color:#b45309;">&#9888; LOTO Verification Pending</strong></p>`;

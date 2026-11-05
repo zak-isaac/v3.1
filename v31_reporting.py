@@ -21,6 +21,7 @@ import v31_oos
 import v31_signature
 import v31_pm_needing_completion as v31_pm
 import v31_breakdown
+import v31_returned_to_service
 
 TZ=ZoneInfo("America/Indiana/Indianapolis")
 
@@ -871,8 +872,8 @@ def build_passdown_html(conn, shift_id, shift_code, lead_name=''):
     pm_count = state["pm_count"]
     if pm_count:
         happenings.append(
-            f'<p style="margin:6px 0;font-size:14px;">{pm_count} PM{"s" if pm_count!=1 else ""} '
-            f'completed this shift</p>')
+            f'<p style="margin:6px 0;font-size:14px;"><strong>{pm_count} PM{"s" if pm_count!=1 else ""} '
+            f'completed this shift</strong></p>')
     for r in inc:
         heading = (f'{esc(r["asset"] or "Unspecified asset")} : {esc(r["cause"] or "No service description")} '
                    f'(WO# {esc(r["wo_number"])})')
@@ -882,35 +883,23 @@ def build_passdown_html(conn, shift_id, shift_code, lead_name=''):
             f'<ul style="margin:2px 0 0;padding-left:22px;">'
             f'<li style="font-size:13px;white-space:pre-wrap;">{remark}</li></ul></div>')
 
-    rts=[]
-    seen_rts=set()
-    def add_breakdown_rts(asset):
-        asset=(asset or "").strip()
-        if asset and asset.casefold() not in seen_rts:
-            seen_rts.add(asset.casefold())
-            rts.append(f'<strong>{esc(asset)}</strong>')
-
-    # Only completed breakdown returns belong in this section. A routine
-    # repair that is RTS is still a Shift Happening, not a breakdown RTS.
-    for r in inc:
-        if r["status"]=="RTS" and r["category"].casefold()=="breakdown":
-            add_breakdown_rts(r["asset"])
-    oos = [f'<strong>{esc(r["asset"])}</strong>' for r in inc if r["status"] == "OOS"]
+    # Returned to Service means confirmed breakdown recovery OR explicit
+    # manual RTS. Routine completed/closed Shift Happenings never qualify.
+    rts=[f'<strong>{esc(item["asset"])}</strong>' for item in
+         v31_returned_to_service.confirmed_returns(conn,shift_id)]
+    oos = [f'<strong>{esc(r["asset"])}</strong>' for r in inc
+           if r["status"] == "OOS" and r["category"].casefold() == "breakdown"]
     # Current globally-open manually reported equipment is included in the
     # current shift's canonical report snapshot. Snapshot bytes will never
     # change retroactively after the equipment is returned to service.
-    seen_oos={r["asset"].strip().casefold() for r in inc if r["status"]=="OOS"}
+    seen_oos={r["asset"].strip().casefold() for r in inc
+              if r["status"]=="OOS" and r["category"].casefold()=="breakdown"}
     for record in v31_oos.list_records(conn,open_only=True):
         asset=record["asset"].strip()
         if asset.casefold() not in seen_oos:
             oos.append(f'<strong>{esc(asset)}</strong>'
-                       f'{(" — "+esc(record["cause"])) if record["cause"] else ""} '
-                       '(manually reported)')
+                       f'{(" — "+esc(record["cause"])) if record["cause"] else ""}')
             seen_oos.add(asset.casefold())
-    # Manual OOS -> RTS is a valid shift operational status, but it alone
-    # does not document a completed breakdown work order. Show it in the
-    # shift's RTS list/KPI, not the breakdown-only Outlook RTS section.
-
     # V3-style global breakdown lifecycle. Previously flagged OOS assets
     # remain visible on later shifts until a verified Closed WO or an
     # explicit reviewed RTS decision clears them.
@@ -928,9 +917,6 @@ def build_passdown_html(conn, shift_id, shift_code, lead_name=''):
             oos.append(f'<strong>{esc(asset)}</strong> — Manual OOS hold'
                        + (f': {esc(reason)}' if reason else ''))
             global_open.add(asset.casefold())
-    for event in v31_breakdown.overview(conn,shift_id)["resolved_this_shift"]:
-        add_breakdown_rts(event["asset"])
-
     loto_html = (
         '<p style="font-size:14px;font-family:Calibri,Arial,sans-serif;margin-top:18px;">'
         '<strong style="color:#2a8703;">&#10003; LOTO Verified</strong></p>'

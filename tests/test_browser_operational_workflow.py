@@ -172,7 +172,7 @@ def test_real_browser_manual_pm_breakdown_passdown_and_end_shift(live_server):
         # completed Breakdown in the Outlook RTS section.
         section=eml.split('>Returned to Service</strong>',1)[1].split(
             '>Current Out of Service</strong>',1)[0]
-        assert 'PERCART0010' not in section
+        assert 'PERCART0010' in section  # Explicitly marked manual RTS is included now
 
         # A repeat preview cannot invalidate an unchanged saved EML. The
         # Preview Report button was removed from the UI, but the underlying

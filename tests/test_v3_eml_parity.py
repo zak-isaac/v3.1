@@ -73,6 +73,8 @@ def test_eml_includes_ind3_next_gen_signature_with_embedded_spark_image(client, 
     assert 'Walmart&nbsp;<img' in html
     assert 'width="20" height="20"' in html
     assert "white-space:nowrap" in html
+    signature=html.split("<!-- IND3-NEXT-GEN-SIGNATURE -->",1)[1]
+    assert "font-size:16px;line-height:22px" in signature
 
     inline_images = [p for p in msg.walk() if p.get_content_type() == "image/png"]
     assert inline_images, "Spark PNG must be embedded as an inline related image"
@@ -144,3 +146,18 @@ def test_outlook_eml_uses_passdown_recipients_from_facility_settings(client, mon
     assert client.get("/api/admin/settings").json()["recipients"] == (
         "first@example.com,second@example.com"
     )
+
+
+def test_completed_pm_count_is_bold_in_email(client, monkeypatch):
+    clock(monkeypatch)
+    enter(client,"S1")
+    from test_reporting import upload, import_techs, row
+    completed=row("PMBOLD1",category="Preventive Maintenance",status="Closed",pm="PM.BOLDFORM")
+    assert upload(client,[completed]).status_code==200
+    assert import_techs(client,["Synthetic A"]).status_code==200
+    from v31_reporting import build_passdown_html
+    import app as m
+    with m._db() as conn:
+        shift_id=client.get("/api/me").json()["selected"]["id"]
+        html=build_passdown_html(conn,shift_id,"S1","Management")
+    assert "<strong>1 PM completed this shift</strong>" in html

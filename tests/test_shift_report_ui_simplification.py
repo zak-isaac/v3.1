@@ -90,3 +90,13 @@ def test_successful_cetaris_import_does_not_leave_feedback_under_buttons(client,
     assert "feedback('');" in js
     # Real import errors still appear prominently.
     assert "No qualifying work orders for this shift" in js
+
+
+def test_pm_needing_completion_workspace_renders_five_column_table(client, monkeypatch):
+    clock(monkeypatch, day=26, hour=10)
+    enter(client,"S1")
+    script=client.get("/shift-report.html").text
+    for heading in ("WO #","Asset","PM Due Date","Promise Date / Time","WO Date / Time"):
+        assert heading in script
+    assert "needed.rows.map((r,i)" in script
+    assert "needed.count||0" in script
