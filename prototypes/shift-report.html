@@ -315,11 +315,11 @@ $$('[data-close-modal]').forEach(el=>el.addEventListener('click',closeModal));do
 // legitimate scenario -- only penalize a file that was picked but never
 // confirmed/imported, never the absence of a file in the first place.
 function progressChecklist(){
-  // LOTO verification is "done" if the MST actually performed the check --
-  // that includes BOTH possible outcomes: everything verified (the toggle)
-  // or specific keys found missing (the key checklist). The UI makes these
-  // mutually exclusive (flipping the toggle clears missing keys and vice
-  // versa) -- either one is a completed check, never an incomplete one.
+  // LOTO verification counts as done once state.loto is true. Marking any
+  // key missing automatically sets the toggle true too (see the keyGrid
+  // change handler below) -- documenting a missing key is itself a
+  // completed inspection, not an incomplete one. Verified and missing-keys
+  // are independent facts now, not mutually exclusive.
   const lotoDone=!!state.loto;
   return [
     {label:'Cetaris import confirmed (if a file was chosen)',done:!state.cetarisFile||state.stageImported},
