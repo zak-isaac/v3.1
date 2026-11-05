@@ -221,6 +221,9 @@ def test_loto_missing_key_saves_without_false_missing_element_error(live_server)
                 const d=await (await fetch('/api/reporting/state')).json();
                 return d.draft?.loto===true && d.draft?.missingKeys?.includes('Key 3');
             }""",timeout=12000)
+            # Reload correctly collapses the missing-key panel; open it
+            # again before attempting a real user click on the checkbox.
+            page.locator('#loto-keys-toggle').click()
             # Clearing the found key preserves this shift's verification.
             with page.expect_response(
                 lambda r:r.url.endswith('/api/reporting/loto/missing-key')
