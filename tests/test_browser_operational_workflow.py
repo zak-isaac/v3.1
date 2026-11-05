@@ -125,6 +125,12 @@ def test_real_browser_manual_pm_breakdown_passdown_and_end_shift(live_server):
         with page.expect_download() as dl:
             page.locator('#generate-eml').click()
         eml=dl.value.path().read_text(encoding='utf-8')
+        # Download completion alone does not prove the UI handled success:
+        # a removed #last-saved element previously raised a null.textContent
+        # exception after the EML was already downloaded.
+        page.wait_for_function("""() => document.querySelector('#toast')?.textContent
+            ?.includes('Passdown saved and downloaded')""",timeout=10000)
+        assert 'Cannot set properties of null' not in page.locator('#toast').inner_text()
         assert 'VOIDFILL-UI' in eml
         assert 'PMUI001' in eml
         assert 'CONV-BROWSER' in eml
@@ -154,3 +160,72 @@ def test_real_browser_manual_pm_breakdown_passdown_and_end_shift(live_server):
         assert closed and closed[0]==0
         reviewed=db.execute("SELECT warnings_json FROM shift_end_review ORDER BY shift_id DESC LIMIT 1").fetchone()
         assert reviewed and 'out of service' in reviewed[0]
+
+
+def test_loto_missing_key_saves_without_false_missing_element_error(live_server):
+    """Selecting a missing key persists and must never report a false save failure.
+
+    The old #last-saved element was removed from the UI, but the LOTO
+    save-success callback still wrote to it, throwing a null.textContent
+    TypeError *after* the server had accepted the draft.
+    """
+    base_url,_=live_server
+    with sync_playwright() as playwright:
+        try:
+            browser=playwright.chromium.launch()
+        except Exception as exc:
+            pytest.skip(f"Chromium unavailable: {exc}")
+        page=browser.new_page()
+        try:
+            page.goto(base_url)
+            signed=page.evaluate("""async () => {
+                const r=await fetch('/api/login',{method:'POST',
+                    credentials:'same-origin',headers:{'Content-Type':'application/json'},
+                    body:JSON.stringify({associate:'555099',intent:'direct'})});
+                return {status:r.status,data:await r.json()};
+            }""")
+            assert signed['status']==200,signed
+            page.goto(base_url+'/shift-report.html')
+            page.wait_for_function("""() => !!window.V31Reporting
+                && document.querySelectorAll('#missing-keys .loto-key').length===20""")
+            assert page.locator('#last-saved').count()==0
+            page.locator('#loto-keys-toggle').click()
+            with page.expect_response(
+                lambda r:r.url.endswith('/api/reporting/draft') and r.request.method=='POST',
+                timeout=12000
+            ) as changed:
+                page.locator('#missing-keys .loto-key').nth(2).check()
+            assert changed.value.status==200
+            assert not page.locator('#loto-toggle').is_checked()
+            page.wait_for_function("""async () => {
+                const r=await fetch('/api/reporting/state',{credentials:'same-origin'});
+                if(!r.ok)return false;
+                const d=await r.json();
+                return d.draft?.loto===false && d.draft?.missingKeys?.includes('Key 3');
+            }""",timeout=12000)
+            assert 'LOTO save failed' not in page.locator('#toast').inner_text()
+            page.reload()
+            page.wait_for_function("""() => !!window.V31Reporting
+                && document.querySelectorAll('#missing-keys .loto-key').length===20
+                && document.querySelector('#missing-keys .loto-key:nth-child(3) input')?.checked""")
+            assert page.locator('#missing-keys .loto-key').nth(2).is_checked()
+            assert page.locator('#loto-state').inner_text()=='Not verified'
+
+            # A positive verification clears conflicting missing-key markings
+            # and also saves immediately without the old null-element error.
+            with page.expect_response(
+                lambda r:r.url.endswith('/api/reporting/draft') and r.request.method=='POST',
+                timeout=12000
+            ) as verified:
+                page.locator('#loto-toggle + .switch-track').click()
+            assert verified.value.status==200
+            page.wait_for_function("""async () => {
+                const r=await fetch('/api/reporting/state',{credentials:'same-origin'});
+                if(!r.ok)return false;
+                const d=await r.json();
+                return d.draft?.loto===true && d.draft?.missingKeys?.length===0;
+            }""",timeout=12000)
+            assert page.locator('#loto-state').inner_text()=='Verified'
+            assert 'LOTO save failed' not in page.locator('#toast').inner_text()
+        finally:
+            browser.close()

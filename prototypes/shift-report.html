@@ -301,7 +301,7 @@ const safeFile=(name)=>name.replace(/[^a-zA-Z0-9 ._()-]/g,'').slice(0,95);
 const modal = $('#modal-root');
 const btn = (label,handler,kind='btn-light') => {const el=document.createElement('button');el.type='button';el.className=`btn ${kind}`;el.textContent=label;el.addEventListener('click',handler);return el;};
 function toast(msg){const el=$('#toast');el.textContent=msg;el.classList.add('visible');clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.classList.remove('visible'),2600);}
-function touch(){const now=new Date();$('#last-saved').textContent=`Changed ${now.toLocaleTimeString([], {hour:'numeric',minute:'2-digit'})}`;window.V31Reporting?.queueDraft();}
+function touch(){const now=new Date();const savedLabel=$('#last-saved');if(savedLabel)savedLabel.textContent=`Changed ${now.toLocaleTimeString([], {hour:'numeric',minute:'2-digit'})}`;window.V31Reporting?.queueDraft();}
 function showModal(title,description,html,actions,opts){$('#modal-title').textContent=title;$('#modal-description').textContent=description||'';$('#modal-body').innerHTML=html;const bar=$('#modal-actions');bar.replaceChildren();for(const a of actions||[]){bar.append(btn(a.text, a.onClick,a.kind||'btn-light'));}$('.modal')?.classList.toggle('modal-wide',!!opts?.wide);modal.hidden=false;setTimeout(()=>$('#modal-body input, #modal-body textarea, #modal-body select, .modal-actions button')?.focus(),20);}
 function closeModal(){modal.hidden=true;$('#modal-body').innerHTML='';}
 $$('[data-close-modal]').forEach(el=>el.addEventListener('click',closeModal));document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!modal.hidden)closeModal();});
@@ -656,7 +656,7 @@ async function emlDownload(){
     link.href=url;link.download=receipt.filename||'IND3_Shift_Passdown.eml';
     document.body.append(link);link.click();link.remove();
     setTimeout(()=>URL.revokeObjectURL(url),2000);
-    $('#last-saved').textContent='Canonical passdown saved · Outlook EML downloaded';
+    const savedLabel=$('#last-saved');if(savedLabel)savedLabel.textContent='Canonical passdown saved · Outlook EML downloaded';
     toast('Passdown saved and downloaded. Email not sent.');
   }catch(error){toast(error.message);}
   finally{generate.disabled=false;}
@@ -711,7 +711,13 @@ const keyGrid=$('#missing-keys');for(let i=1;i<=20;i++){const label=document.cre
   // LOTO is a discrete safety-critical toggle, not continuous typing -- save
   // immediately (never the debounced autosave) so a quick refresh can never
   // silently discard an un-verify action.
-  window.V31Reporting?.flushDraft().then(()=>{const now=new Date();$('#last-saved').textContent=`Changed ${now.toLocaleTimeString([], {hour:'numeric',minute:'2-digit'})}`;}).catch(e=>toast('LOTO save failed: '+e.message));}toggle.addEventListener('change',()=>{if(toggle.checked){$$('.loto-key',keyGrid).forEach(c=>c.checked=false);}lotoSync();});keyGrid.addEventListener('change',e=>{if(!e.target.classList.contains('loto-key'))return;if(e.target.checked)toggle.checked=false;lotoSync();const keys=checkedKeys();toast(keys.length?`${keys.length} key${keys.length>1?'s':''} marked missing`:'Missing-key selection cleared');});
+  window.V31Reporting?.flushDraft().then(()=>{
+    // The previous "last-saved" label was removed during UI cleanup. A
+    // successful API save must not be treated as a failure just because
+    // its optional visual status element is absent.
+    const savedLabel=$('#last-saved');
+    if(savedLabel){const now=new Date();savedLabel.textContent=`Changed ${now.toLocaleTimeString([], {hour:'numeric',minute:'2-digit'})}`;}
+  }).catch(e=>toast('LOTO save failed: '+e.message));}toggle.addEventListener('change',()=>{if(toggle.checked){$$('.loto-key',keyGrid).forEach(c=>c.checked=false);}lotoSync();});keyGrid.addEventListener('change',e=>{if(!e.target.classList.contains('loto-key'))return;if(e.target.checked)toggle.checked=false;lotoSync();const keys=checkedKeys();toast(keys.length?`${keys.length} key${keys.length>1?'s':''} marked missing`:'Missing-key selection cleared');});
 $('#loto-keys-toggle').addEventListener('click',()=>{const area=$('#loto-select-area');const open=area.hidden;area.hidden=!open;$('#loto-keys-toggle').setAttribute('aria-expanded',String(open));});
 $('#generate-eml').addEventListener('click',()=>emlDownload());
 const auditMetric=$('#v31-import-audit-metric');
