@@ -99,7 +99,9 @@ exclusive ownership, and explicit MST relief.
 
 **One-hour opening/closing rule:** Starting a brand-new report is permitted from one hour before scheduled start until scheduled end. The one-hour period after scheduled end is for **resuming or finishing an existing report only**.
 
-At most **two shift sessions** may be active. Overnight work remains assigned to the date its shift started. Automatic closure after the end + one-hour grace is checked at startup, on activity, and approximately every 60 seconds. Expired records are closed but not erased.
+At most **two overlapping shift sessions** may be active at the current facility-clock time. Other dates' open rows do not consume capacity when a local developer moves the workstation clock backwards to test earlier shifts. Overnight work remains assigned to its start date. Automatic closure after the end + one-hour grace is checked at startup, on activity, and approximately every 60 seconds. Expired records are closed but not erased.
+
+**Historical date testing (existing local workflow, no test mode):** Keep using the workstation's time and date as before. With the **2759** management profile in the local-only app, eligible shifts show **Start**, **Resume**, or **Reopen** when a prior report for that date was already closed. Reopen requires explicit confirmation, preserves the previous WOs and saved report, and logs the reopening action. It does not silently reset a completed shift or bypass a genuine time window. Other users cannot reopen closed shifts. The chooser now explains why a shift is unavailable (outside reporting window, closed, already owned, or concurrent capacity). Git over SSH avoids HTTPS GitHub certificate-date errors; the app never disables SSL verification. To protect other apps and certificates, restore the correct workstation clock when finished testing.
 
 **End Shift** requires a saved passdown. Use **Generate Passdown (.eml)** first; this stores a copy in the selected V3.1 session, then downloads a local Outlook draft. End Shift only closes the selected session. Sign Out only ends the browser login session.
 

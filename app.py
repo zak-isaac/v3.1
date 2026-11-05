@@ -326,15 +326,39 @@ def allowed(profile: dict, code: str, day: date | None = None, assoc: str | None
             (assoc,code,day.isoformat())).fetchone() is not None
 
 
+def _current_open_count(conn: sqlite3.Connection, now: datetime) -> int:
+    """Count only overlapping sessions at the displayed facility time.
+
+    A developer may move the OS clock backwards while running this LOCAL
+    application. Open rows saved for other dates must not consume capacity
+    for an earlier date. Session rows remain preserved and unmodified.
+    """
+    count = 0
+    for row in conn.execute('SELECT code,shift_day FROM shifts WHERE open=1'):
+        try:
+            if eligible_date(row['code'], now) == date.fromisoformat(row['shift_day']):
+                count += 1
+        except (KeyError, ValueError):
+            continue
+    return count
+
+
 def shift_choices(profile: dict, now: datetime, associate: str | None = None) -> tuple[list[dict], list[dict]]:
-    """Live and ready reports are bounded by the shift's actual time window.
-    Do not delete historical records or automatically finalize a past report."""
+    """Live/ready sessions are bounded by the selected clock's shift window.
+
+    A closed historical report can be explicitly reopened by the authorized
+    local management developer without ever deleting it or disabling SSL.
+    """
     expire_shifts(now)
     with _db() as conn:
         records = conn.execute('SELECT * FROM shifts ORDER BY id DESC').fetchall()
     by_key = {(r['code'], r['shift_day']): r for r in records}
     open_items, ready_items = [], []
-    has_capacity = sum(bool(r['open']) for r in records) < 2
+    has_capacity = sum(
+        bool(r['open']) and
+        eligible_date(r['code'], now) == date.fromisoformat(r['shift_day'])
+        for r in records
+    ) < 2
     for code in SHIFT_RULES:
         day = eligible_date(code, now)
         if day is None or not allowed(profile, code, day, associate):
@@ -344,6 +368,13 @@ def shift_choices(profile: dict, now: datetime, associate: str | None = None) ->
         if record is not None:
             if record['open'] and (profile.get('all_shifts') or record['owner'] == associate):
                 open_items.append({**entry(record), 'action': 'resume'})
+            elif not record['open'] and has_capacity and now <= shift_times(code, day)[1] and (
+                associate == '2759' and profile.get('all_shifts')
+            ):
+                # An explicit management action is required to reopen a
+                # prior completed/auto-expired local shift for date testing.
+                ready_items.append({**entry(record), 'action': 'reopen',
+                                    'closed_reason': record['closed_reason']})
         else:
             # A new shift starts before its scheduled end. The extra hour
             # after closing belongs only to an already-open passdown.
@@ -376,10 +407,31 @@ def state(session: dict, profile: dict) -> dict:
     available = opened + ready
     selected = next((x for x in opened if x['id'] == session['s']), None)
     catalog = []
+    with _db() as conn:
+        existing = {(r['code'],r['shift_day']):r for r in conn.execute(
+            'SELECT code,shift_day,owner,open,closed_reason FROM shifts')}
+        active_count = _current_open_count(conn, now)
     for code in SHIFT_RULES:
         match = next((x for x in available if x['code'] == code), None)
-        catalog.append(match if match else {'code': code, 'label': SHIFT_RULES[code][0],
-                                              'action': 'unavailable', 'open': False})
+        if match:
+            catalog.append(match)
+            continue
+        day = eligible_date(code, now)
+        reason = 'Outside reporting window'
+        if day is not None:
+            record = existing.get((code,day.isoformat()))
+            if record is not None and not record['open']:
+                reason = 'Shift previously closed for ' + day.isoformat()
+            elif record is not None and not profile.get('all_shifts') and record['owner'] != session['a']:
+                reason = 'Another associate owns this shift'
+            elif active_count >= 2:
+                reason = 'Two overlapping shifts are already active'
+            elif now > shift_times(code,day)[1]:
+                reason = 'New shift start window has ended'
+            elif not allowed(profile,code,day,session['a']):
+                reason = 'Not assigned to this shift'
+        catalog.append({'code': code,'label': SHIFT_RULES[code][0],
+                        'action': 'unavailable','open': False,'reason':reason})
     return {'name': profile.get('name', 'Associate'), 'associate': session['a'],
             'role': 'manager' if profile.get('all_shifts') else
                     'mst' if profile.get('is_mst') else 'technician',
@@ -526,7 +578,7 @@ def login(payload: LoginRequest, request: Request, response: Response):
         # Start assigned shift only if nobody else owns the current instance.
         target = ready[0]
         with _db() as conn:
-            if conn.execute('SELECT COUNT(*) FROM shifts WHERE open=1').fetchone()[0] >= 2:
+            if _current_open_count(conn, now) >= 2:
                 raise HTTPException(409, 'Two overlapping shifts are already active')
             conn.execute('''INSERT OR IGNORE INTO shifts
                 (code,shift_day,owner,created_at,owner_role) VALUES (?,?,?,?,?)''',
@@ -585,7 +637,7 @@ def start_shift(payload: ShiftChoice, request: Request, response: Response):
                                 (payload.code, day.isoformat())).fetchone()
         if existing is None and now > shift_times(payload.code, day)[1]:
             raise HTTPException(409, 'New shift may not start after its scheduled end')
-        if existing is None and conn.execute('SELECT COUNT(*) FROM shifts WHERE open=1').fetchone()[0] >= 2:
+        if existing is None and _current_open_count(conn, now) >= 2:
             raise HTTPException(409, 'Two overlapping shifts are already active')
         conn.execute('''INSERT OR IGNORE INTO shifts
             (code,shift_day,owner,created_at,owner_role) VALUES (?,?,?,?,?)''',
@@ -602,6 +654,42 @@ def start_shift(payload: ShiftChoice, request: Request, response: Response):
     _set_cookie(response, session['a'], selected['id'])
     _record_login_event(session['a'], 'start_shift', selected['id'])
     return selected
+
+
+@app.post('/api/shifts/reopen')
+def reopen_shift(payload: ShiftChoice, request: Request, response: Response):
+    """Explicitly resume a prior local test date without changing Mac time.
+
+    Limited to the designated local developer management account. Preserves
+    all previous work, EML snapshots and audit history until deliberately
+    edited; never changes a report silently just because the clock moved.
+    """
+    _origin_check(request)
+    session, profile = who(request)
+    if session['a'] != '2759' or not profile.get('all_shifts'):
+        raise HTTPException(403, 'Only the authorized local developer can reopen a dated report')
+    now = datetime.now(TZ)
+    day = eligible_date(payload.code, now)
+    if day is None or now > shift_times(payload.code, day)[1]:
+        raise HTTPException(409, 'Shift must be inside its start window to reopen')
+    expire_shifts(now)
+    with _db() as conn:
+        row = conn.execute('SELECT * FROM shifts WHERE code=? AND shift_day=?',
+                           (payload.code,day.isoformat())).fetchone()
+        if row is None or row['open']:
+            raise HTTPException(409, 'No previously closed report exists for this shift date')
+        if _current_open_count(conn, now) >= 2:
+            raise HTTPException(409, 'Two overlapping shifts are already active')
+        result=conn.execute("""UPDATE shifts SET open=1,closed_at='',closed_reason=''
+                WHERE id=? AND open=0""",(row['id'],))
+        if result.rowcount != 1:
+            raise HTTPException(409, 'Shift state changed before reopening')
+        selected_id=row['id']
+    _set_cookie(response,session['a'],selected_id)
+    _record_login_event(session['a'],'explicit_historical_reopen',selected_id)
+    with _db() as conn:
+        current=conn.execute('SELECT * FROM shifts WHERE id=?',(selected_id,)).fetchone()
+    return entry(current)
 
 
 @app.post('/api/shifts/takeover')
