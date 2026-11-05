@@ -38,9 +38,9 @@ def get_signature_html(lead_name: str, *, spark_src: str = f"cid:{SPARK_CID}") -
     safe_name = html.escape(name)
     id_html = f" - {html.escape(known_id)}" if known_id else ""
     safe_src = html.escape(spark_src, quote=True)
-    # Keep the signature typography identical to the 14px Calibri/Arial
-    # Outlook body, using only subtle hierarchy and compact line spacing.
-    line_style = "font-family:Calibri,Arial,sans-serif;font-size:14px;line-height:20px;color:#253349;"
+    # Match the 16px Calibri/Arial section headings (Vendors, Shift
+    # Happenings, etc.), while keeping compact line spacing.
+    line_style = "font-family:Calibri,Arial,sans-serif;font-size:16px;line-height:22px;color:#253349;"
 
     return SIGNATURE_MARKER + f"""<table role="presentation" cellspacing="0" cellpadding="0" border="0"
       style="width:100%;max-width:560px;margin:16px 0 0;border-collapse:collapse;">
