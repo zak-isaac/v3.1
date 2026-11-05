@@ -91,14 +91,13 @@
               <div class="metric metric-amber"><div class="metric-icon"><svg class="icon"><use href="#i-alert"/></svg></div><div><span>OOS In Process</span><strong id="metric-oos">0</strong></div></div>
               <div class="metric metric-red"><div class="metric-icon"><svg class="icon"><use href="#i-wrench"/></svg></div><div><span>Breakdowns</span><strong id="metric-breakdown">0</strong></div></div>
               <div class="metric metric-purple"><div class="metric-icon"><svg class="icon"><use href="#i-clipboard"/></svg></div><div><span>PMs Completed</span><strong id="metric-pms-completed">0</strong></div></div>
-              <div class="metric metric-softblue" id="v31-import-audit-metric" role="button" tabindex="0" aria-label="Open Cetaris Import Audit"><div class="metric-icon"><svg class="icon"><use href="#i-clipboard"/></svg></div><div><span id="metric-daynight-label">Import Audit</span><strong id="metric-daynight">—</strong></div></div>
+              <div class="metric metric-softblue" id="v31-import-audit-metric" role="button" tabindex="0" aria-label="View evening and morning work-order counts"><div class="metric-icon"><svg class="icon"><use href="#i-calendar"/></svg></div><div><span id="metric-daynight-label">Import Audit</span><strong id="metric-daynight">—</strong><small style="font-size:10px;color:#5275a2">Evening / Morning</small></div></div>
             </section>
         </section>
         <div class="workspace-grid">
           <section class="left-area">
             
             
-            <section id="audit" class="audit-panel" hidden><div><strong>Imported WO Audit</strong><p>No Cetaris audit yet. Import a file and confirm the technicians to see diagnostics.</p></div></section>
             <section class="work-area" aria-label="Shift work details"><div class="tabstrip" role="tablist" aria-label="Report sections"><button data-tab="happenings" class="tab current" role="tab" aria-selected="true"><svg class="icon"><use href="#i-stack"/></svg>Shift Happenings <span id="tab-wo-count">(0)</span></button><button data-tab="pm" class="tab" role="tab" aria-selected="false"><svg class="icon"><use href="#i-clipboard"/></svg>PMs <span id="pm-tab-count">(0 / 0)</span></button><button data-tab="breakdown" class="tab" role="tab" aria-selected="false"><svg class="icon"><use href="#i-wrench"/></svg>Breakdown / OOS</button><button data-tab="vendors" class="tab" role="tab" aria-selected="false"><svg class="icon"><use href="#i-truck"/></svg>Vendors <span id="vendor-tab-count">(0)</span></button><button data-tab="ro" class="tab" role="tab" aria-selected="false"><svg class="icon"><use href="#i-file"/></svg>RO <span id="ro-tab-count">(0)</span></button></div><div id="tab-content" class="tab-content" role="tabpanel"></div></section>
           </section>
           <aside class="report-actions" aria-label="Report Actions"><div class="actions-heading"><div><h2>Report Actions</h2></div></div>
@@ -328,31 +327,20 @@ function progressChecklist(){
   ];
 }
 function importAuditMarkup(){
-  const audit=state.audit||{};
-  const summary=audit.summary||{};
-  const number=v=>Number.isFinite(Number(v))?String(v):String(v??'');
-  const lines=Object.entries(summary).filter(([key,value])=>typeof value==='number'||typeof value==='string')
-    .map(([key,value])=>'<div style="display:flex;justify-content:space-between;gap:16px;border-bottom:1px solid #e2e8f0;padding:5px 0"><span>'+esc(key.replace(/_/g,' '))+'</span><strong>'+esc(number(value))+'</strong></div>').join('');
-  const section=(title,items,emptyMessage)=>{
-    if(!items?.length)return '<section style="margin-top:15px"><h3>'+esc(title)+'</h3><p>'+esc(emptyMessage)+'</p></section>';
-    const entries=items.map((item,i)=>{
-      const wo=String(item.wo_number||item.wo||'Not supplied');
-      const matched=state.rows.find(row=>String(row.wo)===wo);
-      const fields=[['WO',wo],['Asset',item.asset||matched?.asset],['Technician',item.technician||item.tech_name||matched?.tech],['Detail',item.reason||item.status||'Listed by Cetaris import']];
-      return '<div style="padding:10px;margin:7px 0;border:1px solid #d7e4f6;border-radius:9px">'+fields.filter(x=>x[1]).map(([label,val])=>'<p style="margin:3px 0"><strong>'+esc(label)+':</strong> '+esc(val)+'</p>').join('')+'</div>';
-    }).join('');
-    return '<section style="margin-top:15px"><h3>'+esc(title)+' ('+items.length+')</h3>'+entries+'</section>';
-  };
-  const em=audit.evening_morning;
-  const timing=em?.applicable?'<p><strong>Evening WOs:</strong> '+esc(em.evening)+' &nbsp; <strong>Morning WOs:</strong> '+esc(em.morning)+'</p>':'';
-  const file=state.cetarisFile?'<p><strong>File:</strong> '+esc(state.cetarisFile)+'</p>':'<p>No Cetaris file imported yet.</p>';
-  return file+timing+'<h3>Import Summary</h3>'+(lines||'<p>No import summary available.</p>')+
-    section('Records needing attribution or closure context',audit.pending||[],'None listed.')+
-    section('Excluded or duplicate records',audit.ignored||[],'None listed.')+
-    section('Next-day work orders',audit.next_day||[],'None listed.');
+  // Counts are based on qualifying imported WOs for S3/S5, split at midnight.
+  // Other import diagnostics remain internal and do not appear in this UI.
+  const counts=state.audit?.evening_morning;
+  if(!state.stageImported)return '<p>Import Cetaris work orders and confirm technicians to see the counts.</p>';
+  if(!counts?.applicable)return '<p>Evening / morning counts apply only to overnight shifts S3 and S5.</p>';
+  const tile=(label,window,count)=>'<div style="flex:1;min-width:120px;border:1px solid #d7e4f6;border-radius:12px;padding:18px;background:#f7faff;text-align:center">'+
+    '<div style="font-weight:700;color:#123e79">'+label+'</div><div style="font-size:12px;color:#627c93;margin:6px 0">'+window+'</div>'+
+    '<strong style="font-size:34px;color:#102a56">'+esc(count)+'</strong><div style="font-size:12px;color:#627c93">WOs</div></div>';
+  return '<div style="display:flex;flex-wrap:wrap;gap:12px">'+
+    tile('Evening','Before midnight',counts.evening)+
+    tile('Morning','After midnight',counts.morning)+'</div>';
 }
 function showImportAudit(){
-  showModal('Cetaris Import Audit','Import diagnostics only. Technician selection already credits work that meets the selected shift rules.',importAuditMarkup(),[{text:'Close',onClick:closeModal}],{wide:true});
+  showModal('Import Audit','Evening and morning work-order counts only.',importAuditMarkup(),[{text:'Close',onClick:closeModal}],{wide:true});
 }
 function computeProgress(){
   const items=progressChecklist();
@@ -361,8 +349,11 @@ function computeProgress(){
 }
 function updateMetrics(){const inc=state.rows.filter(r=>!r.excluded);const set=(id,n)=>{$(id).textContent=n;};set('#metric-work',inc.length);set('#metric-rts',inc.filter(r=>r.status==='RTS').length);set('#metric-oos',inc.filter(r=>r.status==='OOS').length);set('#metric-breakdown',inc.filter(r=>r.category==='Breakdown').length);set('#tab-wo-count',`(${inc.length})`);$('#tech-count').textContent=state.techs.length;$('#vendor-tab-count').textContent=`(${state.vendors.length})`;$('#ro-tab-count').textContent=`(${state.ro.length})`;
   $('#metric-daynight-label').textContent='Import Audit';
-  $('#metric-daynight').textContent=state.stageImported?'View':'—';
-  const metric=$('#v31-import-audit-metric');if(metric){metric.title='Open Cetaris import results and diagnostics';metric.style.cursor='pointer';}
+  const counts=state.audit?.evening_morning;
+  $('#metric-daynight').textContent=!state.stageImported?'—':
+    counts?.applicable?String(counts.evening)+' / '+String(counts.morning):'N/A';
+  const metric=$('#v31-import-audit-metric');
+  if(metric){metric.title='Evening WOs / Morning WOs (overnight S3 and S5)';metric.style.cursor='pointer';}
   $('#metric-pms-completed').textContent=state.pmCount;$('#pm-tab-count').textContent=`(${state.pmCount} / ${state.pmNeeds?.count||0})`;
   const progress=computeProgress();state.progress=progress.percent;
   $('#progress-number').textContent=`${progress.percent}%`;$('#progress-fill').style.width=`${progress.percent}%`;$('#progress-fill').setAttribute('aria-valuenow',String(progress.percent));
@@ -381,7 +372,7 @@ function workTab(){
       ? 'Import a Cetaris export, then confirm the technicians assigned to this shift. Only verified records will appear here.'
       : !imported
       ? 'The file was parsed, but work orders are not added until you confirm the technicians who performed the work.'
-      : 'This import contained no qualifying Shift Happenings. Review the audit for dates, closures, and shift attribution.';
+      : 'No qualifying Shift Happenings were imported. Check the selected technicians and Cetaris work dates.';
     return `<section class="v31-work-empty" aria-label="No work orders">
       <div class="v31-empty-icon">${ico('clipboard')}</div>
       <span class="v31-empty-eyebrow">SHIFT HAPPENINGS</span>

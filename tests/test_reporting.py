@@ -483,11 +483,12 @@ def test_frontend_shift_data_controller_is_connected(client,monkeypatch):
     script=client.get("/web/shift-data.js")
     assert script.status_code==200
     assert "/api/reporting/stage" in script.text
-    # The Import Audit tile opens a detailed read-only diagnostic view;
-    # the audit panel retains a separate Open Import Audit button.
-    # No audit warning blocks passdown generation.
-    assert "Open Import Audit" in script.text
-    assert "view.showImportAudit()" in script.text
+    # Keep Import Audit focused on overnight counts; no diagnostics or
+    # optional WO-review controls are rendered by the import controller.
+    assert "Open Import Audit" not in script.text
+    assert "Optional closure reminders" not in script.text
+    assert 'revealAudit' not in script.text
+    assert "reviewCompleted" not in script.text
 
 
 def test_drax_assignments_resolve_s1_s2_overlap(client,monkeypatch,tmp_path):
@@ -856,6 +857,13 @@ def test_command_center_layout_uses_full_width_metrics_and_real_empty_state(clie
     assert 'WO Review Items' not in markup
     assert 'PMs Needed</span>' not in markup
     assert 'function showImportAudit()' in script
+    audit_view=script[script.index('function importAuditMarkup(){'):script.index('function computeProgress(){')]
+    assert 'counts.evening' in audit_view and 'counts.morning' in audit_view
+    assert 'Before midnight' in audit_view and 'After midnight' in audit_view
+    assert 'audit.summary' not in audit_view
+    assert 'audit.pending' not in audit_view
+    assert 'audit.ignored' not in audit_view
+    assert 'audit.next_day' not in audit_view
     assert 'No outstanding WO Review Items' not in script
     assert 'v31-work-empty' in script
     assert 'Start with a Cetaris work-order export' in script

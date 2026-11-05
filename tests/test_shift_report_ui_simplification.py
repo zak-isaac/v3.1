@@ -36,11 +36,11 @@ def test_import_audit_button_and_toggle_are_gone(client, monkeypatch):
     assert 'id="view-audit"' not in markup
     assert 'id="v31-empty-audit"' not in markup
     assert 'id="audit-close"' not in markup
-    # No manual toggle exists; JS (not a click handler) owns visibility by
-    # auto-collapsing the panel when there is nothing real to show yet --
-    # confirmed server-side by the static placeholder starting hidden.
-    panel = markup.split('id="audit"', 1)[1][:60]
-    assert "hidden" in panel
+    # The redundant Import Audit panel is no longer rendered. The single
+    # KPI shows evening/morning counts, and clicking it opens two counts only.
+    assert 'id="audit"' not in markup
+    assert 'id="v31-import-audit-metric"' in markup
+    assert "Evening / Morning" in markup
 
 
 def test_metric_card_replaces_wo_review_items_with_day_night_guide(client, monkeypatch):
