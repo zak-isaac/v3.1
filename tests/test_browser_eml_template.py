@@ -137,6 +137,18 @@ def test_eml_download_uses_v3_html_template_with_corrected_spelling(live_server)
         )
         assert imported["status"] == 200 and imported["body"]["summary"]["added"] == 1, imported
 
+        # Shift Progress must reach 100% (LOTO verified, no pending review
+        # items) before Generate Passdown will proceed.
+        loto = page.evaluate(
+            """async () => {
+                const r = await fetch('/api/reporting/draft', {method:'POST', credentials:'same-origin',
+                    headers:{'Content-Type':'application/json'},
+                    body: JSON.stringify({vendors:[], ro:[], notes:'', loto:true, missingKeys:[]})});
+                return {status: r.status};
+            }"""
+        )
+        assert loto["status"] == 200, loto
+
         refreshed = page.evaluate(
             """async () => {
                 try { await window.V31Reporting?.refresh?.(); return {ok: true}; }

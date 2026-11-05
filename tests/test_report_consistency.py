@@ -88,7 +88,7 @@ def live_server(tmp_path):
             server.kill()
 
 
-def _stage_and_import(page, base_url, wo, remark, cause, techs=("Browser Check Tech",)):
+def _stage_and_import(page, base_url, wo, remark, cause, techs=("Browser Check Tech",), complete_loto=True):
     b64 = base64.b64encode(_workbook_bytes(wo, remark, cause)).decode("ascii")
     staged = page.evaluate(
         """async (b64) => {
@@ -113,6 +113,21 @@ def _stage_and_import(page, base_url, wo, remark, cause, techs=("Browser Check T
         list(techs),
     )
     assert imported["status"] == 200, imported
+    if not complete_loto:
+        page.evaluate("async () => { await window.V31Reporting?.refresh?.(); }")
+        return imported
+    # Shift Progress must reach 100% (LOTO verified, no pending review items)
+    # before Generate Passdown will proceed -- complete the checklist here so
+    # these tests exercise the real, gated download flow.
+    loto = page.evaluate(
+        """async () => {
+            const r = await fetch('/api/reporting/draft', {method:'POST', credentials:'same-origin',
+                headers:{'Content-Type':'application/json'},
+                body: JSON.stringify({vendors:[], ro:[], notes:'', loto:true, missingKeys:[]})});
+            return {status: r.status};
+        }"""
+    )
+    assert loto["status"] == 200, loto
     page.evaluate("async () => { await window.V31Reporting?.refresh?.(); }")
     return imported
 
@@ -233,3 +248,37 @@ def test_pm_needing_completion_section_never_invents_unuploaded_rows(page_ctx):
     assert "PMs Needing Completion" in content
     assert "No PMs Needing Completion report uploaded" in content
     assert "No PMs pending this shift." not in content
+
+
+def test_generate_passdown_blocked_until_shift_progress_is_100_percent(page_ctx):
+    """Shift Progress must gate Generate Passdown, not the other way around.
+
+    The old formula hit 100% only once the passdown had already been saved
+    -- circular, and LOTO verification never factored in at all. Confirm the
+    real gate: without LOTO, the click is blocked with no download; after
+    completing the checklist, it proceeds.
+    """
+    page, base_url, _ = page_ctx
+    _stage_and_import(page, base_url, "9901", "Routine check", "Inspection", complete_loto=False)
+
+    label = page.locator('#progress-number').inner_text()
+    assert label != "100%", f"Progress should not be 100% before LOTO is verified, got {label}"
+
+    page.locator('#generate-eml').click()
+    page.wait_for_timeout(300)
+    toast_text = page.locator('#toast').text_content() or ""
+    assert "100%" in toast_text
+    assert "LOTO" in toast_text
+
+    # Complete the checklist, then the same button must succeed for real.
+    page.evaluate(
+        """async () => {
+            await fetch('/api/reporting/draft', {method:'POST', credentials:'same-origin',
+                headers:{'Content-Type':'application/json'},
+                body: JSON.stringify({vendors:[], ro:[], notes:'', loto:true, missingKeys:[]})});
+            await window.V31Reporting?.refresh?.();
+        }"""
+    )
+    assert page.locator('#progress-number').inner_text() == "100%"
+    with page.expect_download():
+        page.locator('#generate-eml').click()

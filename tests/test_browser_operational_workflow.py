@@ -102,6 +102,14 @@ def test_real_browser_manual_pm_breakdown_passdown_and_end_shift(live_server):
         assert held.value.status==200
         page.locator('#v31-breakdown-lifecycle').get_by_text('CONV-BROWSER').wait_for(timeout=10000)
 
+        # Shift Progress must reach 100% (LOTO verified, no pending review
+        # items) before Generate Passdown will proceed -- exercise the real
+        # LOTO toggle checkbox, not a backdoor API call.
+        page.locator('label.switch .switch-track').click()
+        assert page.locator('#loto-toggle').is_checked(), "LOTO toggle click did not check the box"
+        page.evaluate("async () => { await window.V31Reporting?.flushDraft?.(); "
+                       "await window.V31Reporting?.refresh?.(); }")
+
         # Server creates the exact saved Outlook message, including manual OOS.
         with page.expect_download() as dl:
             page.locator('#generate-eml').click()

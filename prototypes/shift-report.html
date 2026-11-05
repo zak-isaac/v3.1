@@ -306,11 +306,36 @@ function touch(){const now=new Date();$('#last-saved').textContent=`Changed ${no
 function showModal(title,description,html,actions,opts){$('#modal-title').textContent=title;$('#modal-description').textContent=description||'';$('#modal-body').innerHTML=html;const bar=$('#modal-actions');bar.replaceChildren();for(const a of actions||[]){bar.append(btn(a.text, a.onClick,a.kind||'btn-light'));}$('.modal')?.classList.toggle('modal-wide',!!opts?.wide);modal.hidden=false;setTimeout(()=>$('#modal-body input, #modal-body textarea, #modal-body select, .modal-actions button')?.focus(),20);}
 function closeModal(){modal.hidden=true;$('#modal-body').innerHTML='';}
 $$('[data-close-modal]').forEach(el=>el.addEventListener('click',closeModal));document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!modal.hidden)closeModal();});
+// Shift Progress reflects real, currently-true milestones -- recomputed
+// live on every render, never a one-time flag. It must never be driven by
+// the act of generating the passdown itself (that would be circular: you
+// can't require 100% before generating the EML if generating the EML is
+// what sets the flag that produces 100%).
+// A shift with no Cetaris file at all (fully manual happenings) is a
+// legitimate scenario -- only penalize a file that was picked but never
+// confirmed/imported, never the absence of a file in the first place.
+function progressChecklist(){
+  return [
+    {label:'Cetaris import confirmed (if a file was chosen)',done:!state.cetarisFile||state.stageImported},
+    {label:'Work orders or PMs recorded for this shift',done:(state.rows.length+state.pmCount)>0},
+    {label:'LOTO key verification completed',done:!!state.loto},
+    {label:'No outstanding WO Review Items',done:(state.audit?.pending?.length||0)===0},
+  ];
+}
+function computeProgress(){
+  const items=progressChecklist();
+  const percent=Math.round(items.filter(x=>x.done).length/items.length*100);
+  return {percent,items};
+}
 function updateMetrics(){const inc=state.rows.filter(r=>!r.excluded);const set=(id,n)=>{$(id).textContent=n;};set('#metric-work',inc.length);set('#metric-rts',inc.filter(r=>r.status==='RTS').length);set('#metric-oos',inc.filter(r=>r.status==='OOS').length);set('#metric-breakdown',inc.filter(r=>r.category==='Breakdown').length);set('#tab-wo-count',`(${inc.length})`);$('#tech-count').textContent=state.techs.length;$('#vendor-tab-count').textContent=`(${state.vendors.length})`;$('#ro-tab-count').textContent=`(${state.ro.length})`;
   const em=state.audit.evening_morning;
   if(em&&em.applicable){$('#metric-daynight-label').textContent='Evening / Morning WOs';$('#metric-daynight').textContent=`${em.evening} / ${em.morning}`;}
   else{$('#metric-daynight-label').textContent='WO Review Items';$('#metric-daynight').textContent=String(state.audit.pending.length);}
-  $('#metric-pms-completed').textContent=state.pmCount;$('#pm-tab-count').textContent=`(${state.pmCount} / ${state.pmNeeds?.count||0})`;const percent=Number.isFinite(state.progress)?Math.max(0,Math.min(100,state.progress)):0;$('#progress-number').textContent=`${percent}%`;$('#progress-fill').style.width=`${percent}%`;$('#progress-fill').setAttribute('aria-valuenow',String(percent));
+  $('#metric-pms-completed').textContent=state.pmCount;$('#pm-tab-count').textContent=`(${state.pmCount} / ${state.pmNeeds?.count||0})`;
+  const progress=computeProgress();state.progress=progress.percent;
+  $('#progress-number').textContent=`${progress.percent}%`;$('#progress-fill').style.width=`${progress.percent}%`;$('#progress-fill').setAttribute('aria-valuenow',String(progress.percent));
+  const breakdown=progress.items.map(x=>`${x.done?'\u2713':'\u2717'} ${x.label}`).join('\n');
+  $('.progress-area').title='Shift Progress is based on:\n'+breakdown;
 }
 function catClass(c){return {'Proactive Repair':'cat-blue','Breakdown':'cat-red','Process Interruption':'cat-amber','Work Request':'cat-purple'}[c]||'cat-blue';}
 function workTab(){
@@ -583,6 +608,12 @@ function buildEmailHtml(){
     loto+missingKeyHtml+'</body></html>';
 }
 async function emlDownload(){
+  const progress=computeProgress();
+  if(progress.percent<100){
+    const missing=progress.items.filter(x=>!x.done).map(x=>x.label).join('; ');
+    toast('Shift Progress must be 100% before generating the passdown. Still missing: '+missing);
+    return;
+  }
   const generate=$('#generate-eml');
   generate.disabled=true;
   try{
@@ -685,10 +716,6 @@ window.v31ReportView={
     state.audit=data.audit||{summary:{},pending:[],ignored:[]};
     state.cetarisFile=data.stage?.filename||'';
     state.stageImported=!!data.stage?.imported;
-    // Progress is based on actual reporting milestones, never time elapsed.
-    // A completely empty shift report must show 0%.
-    state.progress=!data.stage?.staged?0:!data.stage.imported?20:
-      data.report_saved?100:!(state.rows.length+state.pmCount)?30:75;
     if(data.draft){
       state.vendors=data.draft.vendors||[];state.ro=data.draft.ro||[];
       state.notes=data.draft.notes||'';state.loto=!!data.draft.loto;
