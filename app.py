@@ -1011,10 +1011,10 @@ def admin_settings(request: Request):
 def admin_settings_save(payload: FacilitySettingsPayload, request: Request):
     _origin_check(request)
     require_manager(request)
-    addresses = [a.strip() for a in payload.recipients.split(',') if a.strip()]
-    for address in addresses:
-        if '@' not in address or ' ' in address:
-            raise HTTPException(422, f'Invalid recipient email: {address}')
+    try:
+        addresses = v31_facility.parse_recipients(payload.recipients)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
     return v31_facility.save(PRIVATE, {
         'distribution_center': payload.distribution_center.strip() or 'IND3',
         'recipients': ','.join(addresses),
