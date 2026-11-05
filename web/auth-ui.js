@@ -198,7 +198,7 @@
     const verification = $('#screen-active .verified');
     if (verification) verification.textContent = signedIn ? 'Signed in' : 'Shift available';
     const owner = box.querySelector('.shift-card-metadata strong');
-    if (owner) owner.textContent = 'IND3 shift session';
+    if (owner) owner.textContent = 'Current report';
     $('#resume-active').onclick = () => resume(shift);
   }
   function updateHandoff(previous, next) {
