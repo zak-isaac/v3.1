@@ -101,17 +101,46 @@ def test_real_browser_manual_pm_breakdown_passdown_and_end_shift(live_server):
         page.locator('[data-tab="pm"]').click()
         page.get_by_text('PMUI001',exact=False).wait_for(timeout=10000)
 
-        # The V3 Breakdown lifecycle must actually load and create an OOS hold.
+        # One unified Asset Status area: the exact V2 inventory is offered
+        # as searchable suggestions, and new asset IDs may still be typed.
         page.locator('[data-tab="breakdown"]').click()
-        page.locator('#v31-breakdown-lifecycle').get_by_text(
-            'Cetaris Breakdown Lifecycle').wait_for(timeout=10000)
-        page.locator('#v31-breakdown-lifecycle input[placeholder="Asset ID to hold OOS"]').fill(
-            'CONV-BROWSER')
-        with page.expect_response(lambda r:'/api/breakdowns/hold' in r.url) as held:
-            page.locator('#v31-breakdown-lifecycle').get_by_role(
-                'button',name='Keep Asset OOS').click()
+        page.locator('#v31-oos-add-btn').wait_for(timeout=10000)
+        with page.expect_response(lambda r:r.url.endswith('/api/assets/catalog')) as loaded:
+            page.locator('#v31-oos-add-btn').click()
+        assert loaded.value.status==200
+        page.locator('#v31-oos-asset').fill('PERCART0010')
+        page.locator('#v31-oos-asset-suggestions option[value="PERCART0010"]').wait_for()
+        with page.expect_response(
+            lambda r:r.url.endswith('/api/oos/rts') and r.request.method=='POST'
+        ) as marked:
+            page.locator('#v31-oos-mark-rts').click()
+        assert marked.value.status==200
+        page.locator('#v31-oos-rts-list').get_by_text('PERCART0010').wait_for(timeout=10000)
+
+        # The RTS KPI includes direct confirmations even though they are not
+        # breakdown work orders and do not belong in the email's RTS list.
+        page.locator('#v31-rts-metric').click()
+        page.locator('#modal-body').get_by_text('PERCART0010').wait_for(timeout=10000)
+        page.locator('#modal-actions').get_by_role('button',name='Close').click()
+
+        # An asset not in V2 can be typed and held OOS across shifts.
+        page.locator('#v31-oos-add-btn').click()
+        page.locator('#v31-oos-asset').fill('CONV-BROWSER')
+        with page.expect_response(
+            lambda r:r.url.endswith('/api/oos') and r.request.method=='POST'
+        ) as held:
+            page.locator('#v31-oos-mark-oos').click()
         assert held.value.status==200
-        page.locator('#v31-breakdown-lifecycle').get_by_text('CONV-BROWSER').wait_for(timeout=10000)
+        page.locator('#v31-oos-list').get_by_text('CONV-BROWSER').wait_for(timeout=10000)
+
+        # All three KPI tiles open real record lists, not inert cards.
+        page.locator('#v31-oos-metric').click()
+        page.locator('#modal-body').get_by_text('CONV-BROWSER').wait_for(timeout=10000)
+        page.locator('#modal-actions').get_by_role('button',name='Close').click()
+        assert page.locator('#metric-breakdown').inner_text()=='0'
+        page.locator('#v31-breakdown-metric').click()
+        page.locator('#modal-body').get_by_text('No matching equipment recorded.').wait_for()
+        page.locator('#modal-actions').get_by_role('button',name='Close').click()
 
         # Shift Progress must reach 100% (LOTO verified, no pending review
         # items) before Generate Passdown will proceed -- exercise the real
@@ -134,7 +163,12 @@ def test_real_browser_manual_pm_breakdown_passdown_and_end_shift(live_server):
         assert 'VOIDFILL-UI' in eml
         assert 'PMUI001' in eml
         assert 'CONV-BROWSER' in eml
-        assert 'Manual OOS hold' in eml
+        assert 'Manual OOS hold' not in eml
+        # A direct RTS is visible in the KPI but not misrepresented as a
+        # completed Breakdown in the Outlook RTS section.
+        section=eml.split('>Returned to Service</strong>',1)[1].split(
+            '>Current Out of Service</strong>',1)[0]
+        assert 'PERCART0010' not in section
 
         # A repeat preview cannot invalidate an unchanged saved EML. The
         # Preview Report button was removed from the UI, but the underlying
