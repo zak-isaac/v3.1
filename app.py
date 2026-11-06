@@ -40,6 +40,15 @@ import ai_remark_rewriter
 
 ROOT = Path(__file__).resolve().parent
 PRIVATE = Path(os.environ.get('IND3_V31_PRIVATE_DIR', str(ROOT / '.local-data'))).resolve()
+# Loopback-only is the safe DEFAULT for anyone running this code (tests, a
+# dev laptop, a future contributor). IND3's facility floor explicitly chose
+# to keep continuity with the old V2/V3 app's network-wide access on the
+# same familiar port/link everyone already has -- set only on that specific
+# deployment's watchdog, never flipped on here by default. Associate-number
+# login is still NOT real identity verification either way; this does not
+# add authentication, it only matches the facility's existing accepted risk
+# from before. Revisit once SSO/TLS exist. (Isaac, 2026-11-05.)
+ALLOW_NETWORK = os.environ.get('IND3_V31_ALLOW_NETWORK') == '1'
 SESSION_SECRET_FILE = PRIVATE / 'session_secret'
 DB_FILE = PRIVATE / 'shifts.sqlite3'
 TZ = ZoneInfo('America/Indiana/Indianapolis')
@@ -447,8 +456,10 @@ def state(session: dict, profile: dict) -> dict:
 
 @app.middleware('http')
 async def headers(request: Request, call_next):
-    # Network publication is intentionally unsupported until SSO and TLS are in place.
-    if request.client and request.client.host not in ('127.0.0.1', '::1', 'testclient', 'localhost'):
+    # Network publication is unsupported by default until SSO and TLS are in
+    # place -- see ALLOW_NETWORK above for the one deployment that opted in.
+    if (not ALLOW_NETWORK and request.client
+            and request.client.host not in ('127.0.0.1', '::1', 'testclient', 'localhost')):
         return Response('Loopback-only prototype', status_code=403)
     response = await call_next(request)
     response.headers['X-Content-Type-Options'] = 'nosniff'

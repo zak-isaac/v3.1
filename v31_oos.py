@@ -97,6 +97,41 @@ def resolved_this_shift(conn: sqlite3.Connection, shift_id: int) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def import_legacy_oos(conn: sqlite3.Connection, legacy_archive) -> dict:
+    """One-time bridge: carry forward units that were still OOS (never RTS'd)
+    in the old V2/V3 app at V3.1 cutover, so they don't silently vanish from
+    the live OOS board just because the legacy import is otherwise read-only
+    history (see v31_legacy_history.import_snapshot).
+
+    The legacy `oos_units` table only ever recorded unit + added_at -- no
+    technician or shift attribution -- so these come in clearly marked as a
+    legacy import rather than invented into a real associate's name.
+
+    Idempotent by asset: skips anything that already has an OPEN manual_oos
+    row, from any source, so re-running this (or a tech independently
+    re-logging the same asset first) never creates a duplicate open entry.
+    """
+    _table(conn)
+    with sqlite3.connect(f"file:{legacy_archive}?mode=ro", uri=True) as src:
+        src.row_factory = sqlite3.Row
+        legacy_rows = src.execute("SELECT unit, added_at FROM oos_units").fetchall()
+    already_open = {r["asset"] for r in conn.execute("SELECT asset FROM manual_oos WHERE open=1")}
+    imported, skipped = [], []
+    for row in legacy_rows:
+        if row["unit"] in already_open:
+            skipped.append(row["unit"])
+            continue
+        conn.execute("""INSERT INTO manual_oos
+            (asset,cause,notes,logged_by,logged_by_name,logged_shift_id,
+             logged_shift_code,logged_at,open)
+            VALUES(?,?,?,?,?,?,?,?,1)""",
+            (row["unit"], "Carried over from legacy V2/V3 OOS list at V3.1 cutover", "",
+             "legacy-import", "Legacy V2/V3 import", 0, "LEGACY", row["added_at"]))
+        imported.append(row["unit"])
+    conn.commit()
+    return {"imported": imported, "skipped_already_open": skipped}
+
+
 def mark_rts(conn: sqlite3.Connection, oos_id: int, *, rts_by: str, rts_by_name: str,
              shift_id: int, shift_code: str, now_iso: str, notes: str = ""):
     """Returns (record, error). error is None on success, else one of
