@@ -522,6 +522,7 @@ def landing(request: Request):
         '<script defer src="/web/facility-admin.js"></script>'+
         '<script defer src="/web/shift-history.js"></script>'+
         '<script defer src="/web/manual-oos.js"></script>'+
+        '<script defer src="/web/in-process.js"></script>'+
         '<script defer src="/web/shift-data.js"></script>'+
         '<script defer src="/web/pm-needing-completion.js"></script>'+
         '<script defer src="/web/analytics.js"></script>'))
@@ -1262,6 +1263,43 @@ def reporting_work_order(wo_number:str,payload:ReportingWOEdit,request:Request):
     except (KeyError,ValueError) as exc:
         raise HTTPException(404 if isinstance(exc,KeyError) else 422,str(exc))
     return {'updated':True,'wo_number':wo_number}
+
+
+@app.post('/api/reporting/work-orders/{wo_number}/approve-oos')
+def reporting_approve_in_process_as_oos(wo_number:str,request:Request):
+    """Promote a non-Breakdown WO (most commonly Proactive Repair) that's
+    still 'in process' in Cetaris onto the live Out-of-Service board.
+
+    These arrive as IN_PROCESS -- distinct from the Breakdown OOS board --
+    because an open Proactive Repair does not always mean the asset is
+    actually unavailable. Management confirms that in person before the
+    asset counts as OOS; this is that confirmation, not an automatic rule.
+    """
+    _origin_check(request)
+    session,row=_report_access(request)
+    profile=roster()[session['a']]
+    if not profile.get('all_shifts'):
+        raise HTTPException(403,'Only management can approve an in-process item as Out of Service')
+    if not wo_number.strip() or len(wo_number)>100:
+        raise HTTPException(422,'Invalid work-order number')
+    with _db() as conn:
+        wo=conn.execute('SELECT * FROM report_wo WHERE shift_id=? AND wo_number=?',
+                        (row['id'],wo_number)).fetchone()
+        if not wo:
+            raise HTTPException(404,'Work order not found on this shift')
+        if wo['status']!='IN_PROCESS':
+            raise HTTPException(409,'Only an In Process item can be approved to Out of Service')
+        active=next((x for x in v31_oos.list_records(conn)
+                     if x['asset'].casefold()==wo['asset'].strip().casefold()),None)
+        if not active:
+            v31_oos.create(conn,asset=wo['asset'],
+                cause=wo['cause'] or 'Approved from In Process (Proactive Repair)',notes='',
+                logged_by=session['a'],logged_by_name=profile['name'],
+                shift_id=row['id'],shift_code=row['code'],
+                now_iso=datetime.now(TZ).isoformat())
+        v31_reporting.update_wo(conn,row['id'],wo_number,{'status':'OOS'})
+        _invalidate_passdown(conn,row['id'])
+    return {'approved':True,'wo_number':wo_number}
 
 
 class MissingKeyUpdate(BaseModel):

@@ -82,3 +82,50 @@ def public_fields(settings: dict) -> dict:
         "recipients": settings.get("recipients", DEFAULTS["recipients"]),
         "sender_name": settings.get("sender_name", DEFAULTS["sender_name"]),
     }
+
+
+LEGACY_SETTINGS_MAP = {
+    "email_to": "recipients",
+    "email_from_name": "sender_name",
+    "dc_number": "distribution_center",
+}
+
+
+def import_legacy_settings(private_dir: Path, legacy_db_path, *, force: bool = False) -> dict:
+    """Carry forward facility/email settings an admin already configured in
+    the old V2/V3 app's key-value `settings` table, so a cutover doesn't
+    quietly blank out the passdown recipient list.
+
+    Deliberately narrow: only recipients/sender_name/distribution_center
+    map onto V3.1's settings model. Everything else in the old table
+    (Teams webhook, Graph client id, lead PIN hash, Drax path, AI toggle)
+    belongs to systems V3.1 either replaced or dropped entirely on purpose,
+    and is left alone here.
+
+    Refuses to overwrite a `recipients` value an admin already entered in
+    V3.1 unless force=True -- this is a one-time cutover bridge, not a
+    standing sync, and a real admin's later choice must win over a replay.
+    """
+    import sqlite3
+
+    current = load(private_dir)
+    if current.get("recipients") and not force:
+        return {"applied": False,
+                "reason": "recipients already configured; pass force=True to overwrite",
+                "current": public_fields(current)}
+
+    with sqlite3.connect(f"file:{legacy_db_path}?mode=ro", uri=True) as src:
+        src.row_factory = sqlite3.Row
+        legacy = {row["key"]: row["value"] for row in src.execute("SELECT key,value FROM settings")}
+
+    update = {}
+    for legacy_key, settings_key in LEGACY_SETTINGS_MAP.items():
+        value = legacy.get(legacy_key)
+        if value:
+            update[settings_key] = value.strip('"')  # dc_number was stored as a JSON string literal
+
+    if "recipients" in update:
+        parse_recipients(update["recipients"])  # raises ValueError if malformed; never save bad addresses
+
+    saved = save(private_dir, update)
+    return {"applied": True, "imported_keys": sorted(update), "settings": public_fields(saved)}

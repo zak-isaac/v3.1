@@ -377,13 +377,16 @@ def import_selection(conn, shift_id: int, shift_code: str, shift_day: str,
         item=target.setdefault(wo,{"wo":wo,"asset":r.get("asset_id") or "",
             "category":r.get("rfr") or "Other",
             "cause":r.get("reported_issue") or "",
-            "techs":[],"remarks":[],"status":"OOS" if kind=="oos" else ("PENDING" if r.get("closure_reminder") else "RTS")})
+            "techs":[],"remarks":[],"status":"OOS" if kind=="oos" else (
+                "IN_PROCESS" if kind=="in_process" else
+                "PENDING" if r.get("closure_reminder") else "RTS")})
         if r.get("tech_name") and r["tech_name"] not in item["techs"]:
             item["techs"].append(r["tech_name"])
         for remark in r.get("remarks_list") or ([r["remarks"]] if r.get("remarks") else []):
             if remark and remark not in item["remarks"]:
                 item["remarks"].append(remark)
         if kind=="oos":item["status"]="OOS"
+        elif kind=="in_process" and item["status"]!="OOS":item["status"]="IN_PROCESS"
     # PM takes precedence over any duplicate labor row from the same WO.
     for wo in pm_by_wo:by_wo.pop(wo,None)
     ignored=[]

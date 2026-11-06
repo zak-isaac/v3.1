@@ -240,6 +240,18 @@ def select_records(rows: list[dict], selected: set[str], start: datetime, end: d
             summary["breakdown_in_process"] += 1
             eligible.append({**r, "kind": "oos"})
             continue
+        if status == "in process":
+            # Non-Breakdown categories (most commonly Proactive Repair) used
+            # to be silently dropped here until Closed -- an asset could sit
+            # in the shop for days with zero visibility in the shift report.
+            # Surface it as its own "in process" kind instead: distinct from
+            # the Breakdown OOS board, not auto-flagged as Out of Service,
+            # but no longer invisible. Management can explicitly approve it
+            # onto the OOS board via /api/reporting/work-orders/{wo}/approve-oos
+            # once they confirm the asset is actually unavailable.
+            summary["non_breakdown_in_process"] += 1
+            eligible.append({**r, "kind": "in_process"})
+            continue
         if status == "completed" and _is_pm_category(r):
             # Completing maintenance fulfills a PM. Cetaris administrative
             # closure may occur later and must not delay the completed count.
@@ -289,4 +301,5 @@ def select_records(rows: list[dict], selected: set[str], start: datetime, end: d
     summary["unique_pm_wos"] = len({r["wo_number"] for r in records if r["kind"] == "pm"})
     summary["unique_happening_wos"] = len({r["wo_number"] for r in records if r["kind"] == "happening"})
     summary["unique_oos_wos"] = len({r["wo_number"] for r in records if r["kind"] == "oos"})
+    summary["unique_in_process_wos"] = len({r["wo_number"] for r in records if r["kind"] == "in_process"})
     return records, dict(summary)

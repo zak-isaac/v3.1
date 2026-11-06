@@ -457,8 +457,11 @@ function pmTab(){
 }
 function breakdownTab(){
   // One unified panel owns both live OOS and this-shift RTS; Cetaris review
-  // decisions now appear as actions on the matching OOS entry.
-  return '<div class="secondary-pane"><div id="v31-manual-oos-root">Loading asset status…</div></div>';
+  // decisions now appear as actions on the matching OOS entry. The In
+  // Process panel is deliberately separate: an open Proactive Repair WO is
+  // not auto-OOS, only a management-approved candidate for it.
+  return '<div class="secondary-pane"><div id="v31-manual-oos-root">Loading asset status…</div>'+
+    '<div id="v31-in-process-root" style="margin-top:18px">Loading in-process work…</div></div>';
 }
 function renderTab(){ $$('.tab').forEach(t=>{const yes=t.dataset.tab===selectedTab;t.classList.toggle('current',yes);t.setAttribute('aria-selected',String(yes));});$('#tab-content').innerHTML= selectedTab==='happenings'?workTab():selectedTab==='pm'?pmTab():selectedTab==='breakdown'?breakdownTab():listPane(selectedTab);if(selectedTab==='happenings'){
   const searchBox=$('#wo-search');
