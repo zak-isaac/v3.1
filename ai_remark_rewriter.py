@@ -56,7 +56,7 @@ log = logging.getLogger(__name__)
 # already used for IND3_V31_PRIVATE_DIR / IND3_V31_ROSTER_PATH elsewhere in
 # this codebase.
 OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
-OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "")  # "" = auto-detect first installed model
+OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "gemma4:e2b").strip()  # preferred local model; env may override
 _TIMEOUT = float(os.environ.get("IND3_V31_AI_TIMEOUT", "90"))
 _TEMPERATURE = 0.1
 _MIN_WORDS_FOR_AI = 8  # below this, a small local model reliably pads with fabricated detail
@@ -521,39 +521,34 @@ def _get_client() -> httpx.Client:
     return _client
 
 
-def _detect_model() -> str | None:
-    if OLLAMA_MODEL:
-        return OLLAMA_MODEL
-    try:
-        resp = _get_client().get("/api/tags", timeout=5.0)
-        resp.raise_for_status()
-        models = resp.json().get("models", [])
-        return models[0]["name"] if models else None
-    except Exception as exc:
-        log.warning("[ai_remark_rewriter] Could not list Ollama models: %s", type(exc).__name__)
-        return None
-
-
 def check_ai_available() -> dict:
-    """Readiness probe for the UI: can we actually offer AI rewrite right
-    now? Never raises -- always returns a structured, explain-yourself
-    result so a missing engine degrades to "ordinary spelling correction
-    and manual editing continue", per the Phase 2 requirement."""
+    """Report readiness only when the selected model really exists locally.
+
+    No model downloading or external fallback is ever attempted.
+    """
     if _MOCK_MODE:
         return {"available": True, "model": "mock", "reason": None}
     try:
         resp = _get_client().get("/api/tags", timeout=5.0)
         resp.raise_for_status()
+        installed = [
+            item.get("name", "")
+            for item in resp.json().get("models", [])
+            if isinstance(item, dict) and item.get("name")
+        ]
     except Exception:
         return {"available": False, "model": None,
                 "reason": "Local AI is unavailable. Confirm that Ollama is running "
                           f"at {OLLAMA_BASE_URL}."}
-    model = _detect_model()
-    if not model:
+    if not installed:
         return {"available": False, "model": None,
                 "reason": "Ollama is running but no model is installed. "
-                          "Run: ollama pull <model-name>."}
-    return {"available": True, "model": model, "reason": None}
+                          "Install the approved local model first."}
+    if OLLAMA_MODEL and OLLAMA_MODEL not in installed:
+        return {"available": False, "model": None,
+                "reason": f"Configured local model {OLLAMA_MODEL!r} is not installed. "
+                          "Install it or set OLLAMA_MODEL to an installed model."}
+    return {"available": True, "model": OLLAMA_MODEL or installed[0], "reason": None}
 
 
 def _call_ollama(prompt: str, model: str) -> str | None:
