@@ -56,7 +56,7 @@ log = logging.getLogger(__name__)
 # already used for IND3_V31_PRIVATE_DIR / IND3_V31_ROSTER_PATH elsewhere in
 # this codebase.
 OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
-OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "")  # "" = auto-detect first installed model
+OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "gemma4:e2b").strip()  # preferred local model; env may override
 _TIMEOUT = float(os.environ.get("IND3_V31_AI_TIMEOUT", "90"))
 _TEMPERATURE = 0.1
 _MIN_WORDS_FOR_AI = 8  # below this, a small local model reliably pads with fabricated detail
@@ -101,13 +101,28 @@ if not _MOCK_MODE and not _is_local_url(OLLAMA_BASE_URL):
 # rule 9a (never guess equipment type) is kept as plain prompt text.
 _SYSTEM_PROMPT = """
 Purpose
-Lightly edit technician maintenance remarks into clear, natural shift notes.
-Prefer the technician's original wording and sentence structure. Correct only
-obvious spelling, grammar, punctuation, and confusing phrasing. Do not pad short
-notes or produce lengthy formal reports. Preserve every stated technical detail.
-Example input: "paper wrapped on black roller, cut paper off, rethreaded, error gone, RTS"
-Example output: "Found paper wrapped around the black roller. Cut away the paper and rethreaded it. The error cleared and the machine was RTS."
-Never add testing, a root cause, or an RTS outcome that wasn't stated.
+Rewrite technician remarks into concise, professional Shift Happenings notes
+written for maintenance passdown readers. Match the examples below: clear,
+natural, neutral maintenance language, not a lengthy engineering report.
+Correct grammar, spelling, punctuation, fragmented sentences, and awkward
+phrasing; improve the flow while preserving every fact and the work sequence.
+Keep short notes short. Never invent a repair, finding, test, root cause,
+escalation, or returned-to-service outcome.
+
+Input: "Sensor blocked by a card board hence stopping the line from moving within the baler. Cleared the sensor and cleaned up the line. Asset is fully operational"
+Output: "Identified cardboard obstructing a sensor, preventing the baler line from moving. Removed the obstruction and cleaned the line. Confirmed the asset was fully operational."
+
+Input: "notice boxes being folded and crushed leaving taper, boxes not low enough to pass through taper. notice bull nose blade bent, restraighten bull nose blade, and restarted VOIDFILL monitored functionality of VOIDFILL and taper area. machine return to normal operations"
+Output: "Observed smaller boxes folding and getting crushed beneath the taper due to insufficient clearance. Inspected the area and identified a bent bullnose blade. Straightened the blade and restarted VOIDFILL. Monitored the VOIDFILL and taper area and confirmed normal operation."
+
+Input: "Taper closer out of alignment."
+Output: "Identified a misaligned taper closer."
+
+Input: "change the wire"
+Output: "Replaced the wire."
+
+These are style examples, not permission to assume actions or outcomes. Never
+transfer facts from an example into another technician's note.
 
 Core Rules
 1. Preserve every technical fact, finding, troubleshooting step, corrective
@@ -117,11 +132,11 @@ Core Rules
    information.
 3. Improve grammar, spelling, punctuation, and readability only.
 4. Preserve the original chronological sequence of events.
-5. Fix grammar, spelling, word order, and punctuation only. Do NOT replace
-   the technician's own words with different vocabulary or more
-   "professional"-sounding phrasing. If they wrote "brush", output "brush".
-   The goal is the technician's own words, lightly cleaned up -- not a
-   rewritten version in different vocabulary.
+5. Use precise, familiar maintenance wording to make informal remarks
+   readable. Modest paraphrasing is allowed (e.g., "card board blocked sensor"
+   -> "cardboard obstructing a sensor"), but NEVER change the identity of
+   components, equipment, parts, faults, actions, or outcomes. Keep the
+   technician's specific part names: "brush" must remain "brush".
 
 Technician Language
 6. Remove all first-person language.
@@ -161,8 +176,9 @@ Troubleshooting
     Status.
 15. Preserve every observation separately from the corrective action
     whenever both exist.
-16. Preserve the technician's troubleshooting narrative exactly. Do not
-    rewrite it into an engineering report or shorten it.
+16. Preserve every meaningful step of the troubleshooting narrative in the
+    same order. Remove redundant wording but do not omit distinct actions or
+    findings; do not inflate a short note into an engineering report.
 17. Preserve root causes exactly. Never generalize or simplify technical
     findings.
 18. Preserve all testing and verification steps exactly.
@@ -186,7 +202,8 @@ Prohibited
     addressed", "Investigation continued", "Corrective action taken".
 27. Never remove maintenance history that could help future
     troubleshooting.
-28. Never replace technician terminology with polished report language.
+28. Prefer clear, concise maintenance English over robotic or corporate
+    language. Paraphrase only when meaning remains unchanged.
 
 Final Validation
 Before returning the final output, verify every technical detail,
@@ -198,8 +215,9 @@ Output only the rewritten note. Nothing else.
 """
 
 _SINGLE_TEMPLATE = (
-    "Lightly edit the following maintenance note for clarity and grammar. "
-    "Keep it concise and natural, without adding facts. Follow all rules "
+    "Rewrite the following technician note in professional Shift Happenings "
+    "passdown style. Keep every fact, action, and outcome; do not add facts. "
+    "Keep it concise and natural. Follow all rules "
     "exactly. Output only the rewritten note. Do not include the asset ID "
     "anywhere in the output -- the report already shows it separately.\n"
     "---\n"
@@ -503,39 +521,34 @@ def _get_client() -> httpx.Client:
     return _client
 
 
-def _detect_model() -> str | None:
-    if OLLAMA_MODEL:
-        return OLLAMA_MODEL
-    try:
-        resp = _get_client().get("/api/tags", timeout=5.0)
-        resp.raise_for_status()
-        models = resp.json().get("models", [])
-        return models[0]["name"] if models else None
-    except Exception as exc:
-        log.warning("[ai_remark_rewriter] Could not list Ollama models: %s", type(exc).__name__)
-        return None
-
-
 def check_ai_available() -> dict:
-    """Readiness probe for the UI: can we actually offer AI rewrite right
-    now? Never raises -- always returns a structured, explain-yourself
-    result so a missing engine degrades to "ordinary spelling correction
-    and manual editing continue", per the Phase 2 requirement."""
+    """Report readiness only when the selected model really exists locally.
+
+    No model downloading or external fallback is ever attempted.
+    """
     if _MOCK_MODE:
         return {"available": True, "model": "mock", "reason": None}
     try:
         resp = _get_client().get("/api/tags", timeout=5.0)
         resp.raise_for_status()
+        installed = [
+            item.get("name", "")
+            for item in resp.json().get("models", [])
+            if isinstance(item, dict) and item.get("name")
+        ]
     except Exception:
         return {"available": False, "model": None,
                 "reason": "Local AI is unavailable. Confirm that Ollama is running "
                           f"at {OLLAMA_BASE_URL}."}
-    model = _detect_model()
-    if not model:
+    if not installed:
         return {"available": False, "model": None,
                 "reason": "Ollama is running but no model is installed. "
-                          "Run: ollama pull <model-name>."}
-    return {"available": True, "model": model, "reason": None}
+                          "Install the approved local model first."}
+    if OLLAMA_MODEL and OLLAMA_MODEL not in installed:
+        return {"available": False, "model": None,
+                "reason": f"Configured local model {OLLAMA_MODEL!r} is not installed. "
+                          "Install it or set OLLAMA_MODEL to an installed model."}
+    return {"available": True, "model": OLLAMA_MODEL or installed[0], "reason": None}
 
 
 def _call_ollama(prompt: str, model: str) -> str | None:
