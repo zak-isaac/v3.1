@@ -195,6 +195,10 @@ function chooseTechs(){
       feedback('');
     }
     view.toast(n+' qualifying work orders/PMs saved to '+selectedShift+'.');
+    // Completed Breakdown WOs need a human RTS decision, regardless of
+    // whether Cetaris is waiting for a vendor invoice or final WO closure.
+    // The server only queues completion evidence owned by this shift.
+    await window.v31AssetManager?.promptCompletedBreakdowns?.();
    }catch(e){feedback(e.message,'error');view.toast(e.message);}
   }}
  ],{wide:true});
