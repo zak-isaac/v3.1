@@ -533,7 +533,9 @@ def test_completed_work_order_reminder_is_not_falsely_rts(client,monkeypatch):
     data=client.get("/api/reporting/state").json()
     assert len(data["rows"])==1
     assert data["rows"][0]["status"]=="PENDING"
-    assert "Please close this WO" in data["rows"][0]["remarks"]
+    # Keep the technician's real remarks; do not fabricate a same-shift
+    # closure demand when vendor invoicing may hold Cetaris at Completed.
+    assert data["rows"][0]["remarks"] == "Repaired wiring"
 
 
 def test_cross_shift_breakdown_can_transition_from_oos_to_rts(client,monkeypatch,tmp_path):
