@@ -18,7 +18,7 @@ def test_in_process_non_breakdown_is_reported_not_falsely_rts(client, monkeypatc
     state = client.get("/api/reporting/state").json()
     assert len(state["rows"]) == 1
     assert state["rows"][0]["wo_number"] == "ACTIVE-WORK"
-    assert state["rows"][0]["status"] == "PENDING"
+    assert state["rows"][0]["status"] == "IN_PROGRESS"
     assert "Investigated drive fault" in state["rows"][0]["remarks"]
     assert client.get("/api/assets/status").json()["rts"] == []
 
