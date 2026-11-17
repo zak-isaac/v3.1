@@ -118,9 +118,16 @@ def sync(conn,rows,selected,accepted,shift_id):
         previous=conn.execute("SELECT * FROM breakdown_state WHERE wo_number=?",(wo,)).fetchone()
         if previous and PRIORITY[status]<PRIORITY.get(previous['status'],0):
             continue
-        if previous and status==previous['status'] and asset==previous['asset']:
+        renewed=(previous and status=='completed' and
+                 previous['status']=='completed' and previous['decision']=='keep_oos'
+                 and previous['updated_shift_id']!=shift_id)
+        if previous and status==previous['status'] and asset==previous['asset'] and not renewed:
             continue
-        decision=previous['decision'] if previous and status==previous['status'] else ''
+        # A later shift with NEW, genuinely attributed completion evidence
+        # can review the same unfinished repair again. A reimport by the
+        # original shift cannot silently reopen a decision.
+        decision=("" if renewed else
+                  previous['decision'] if previous and status==previous['status'] else '')
         logged=previous['rts_logged'] if previous else 0
         conn.execute("""INSERT INTO breakdown_state(
           wo_number,asset,status,updated_shift_id,decision,rts_logged,updated_at)
