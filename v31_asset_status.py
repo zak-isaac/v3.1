@@ -63,15 +63,16 @@ def summary(conn, shift_id):
                   'wo_number':row['wo_number'],'reason':'Unresolved previous OOS'}
     for row in manual_open:
         key=_key(row['asset'])
-        oos[key]={'asset':row['asset'],'source':'Manually reported',
-                  'wo_number':'','reason':'Marked OOS',
+        oos[key]={'asset':row['asset'],'source':'OOS record',
+                  'wo_number':'','reason':row.get('cause') or 'Repair / verification outstanding',
                   'manual_oos_id':row['id']}
     for row in breakdown['open']:
         key=_key(row['asset'])
         oos[key]={'asset':row['asset'],'source':'Cetaris breakdown',
                   'wo_number':row['wo_number'],'reason':
-                    'Completed — awaiting confirmation' if row['status']=='completed'
-                    else 'In Process',
+                    ('Completed — still OOS' if row['decision']=='keep_oos'
+                     else 'Completed — RTS review required') if row['status']=='completed'
+                    else 'Repair in progress',
                   'pending_decision':row['status']=='completed' and not row['decision']
                                      and row['updated_shift_id']==shift_id,
                   'decision':row['decision']}
