@@ -390,10 +390,10 @@ def import_selection(conn, shift_id: int, shift_code: str, shift_day: str,
     now=_now()
     added=updated=preserved=pm_count=0
     for wo,row in by_wo.items():
-        owned=_existing_elsewhere(conn,shift_id,wo,row['status'])
-        if owned is not None:
-            ignored.append({"wo_number":wo,"reason":"Already recorded in V3.1 shift #"+str(owned)})
-            continue
+        # Different shifts may work on the SAME WO. assign() has already
+        # checked each row's actual technician/work-time evidence. Never
+        # discard the next shift's labor simply because S1 first reported it.
+        # Only the owning completion shift receives a completion / RTS event.
         existing=conn.execute("SELECT id,edited,status FROM report_wo WHERE shift_id=? AND wo_number=?",
                               (shift_id,wo)).fetchone()
         if existing and existing["edited"]:
