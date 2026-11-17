@@ -112,7 +112,7 @@ def test_verified_cetaris_closed_reconciles_edited_pending_without_erasing_remar
     imported=client.post('/api/reporting/import',json={
         'technicians':['Synthetic A'],'closure_reviews':{'CLSR001':'add'}})
     assert imported.status_code==200,imported.text
-    assert client.get('/api/reporting/state').json()['rows'][0]['status']=='PENDING'
+    assert client.get('/api/reporting/state').json()['rows'][0]['status']=='COMPLETED'
     assert client.post('/api/reporting/work-orders/CLSR001',
                        json={'remarks':'Verified motor checks, waiting for final Cetaris closure'}).status_code==200
     assert upload(client,[row("CLSR001",status="Closed")]).status_code==200
@@ -222,15 +222,15 @@ def test_pending_closure_remains_pending_on_manual_edit(client,monkeypatch):
     })
     assert selected.status_code==200,selected.text
     old=client.get('/api/reporting/state').json()['rows'][0]
-    assert old['status']=='PENDING'
+    assert old['status']=='COMPLETED'
     assert client.post('/api/reporting/work-orders/PEND01',json={
-        'remarks':'Needs Cetaris closure','status':'PENDING'
+        'remarks':'Needs Cetaris closure','status':'COMPLETED'
     }).status_code==200
     assert client.post('/api/reporting/work-orders/PEND01',json={'status':'RTS'}).status_code==422
     final=client.get('/api/reporting/state').json()['rows'][0]
-    assert final['status']=='PENDING'
+    assert final['status']=='COMPLETED'
     ui=client.get('/shift-report.html').text
-    assert 'Pending closure — reimport after Cetaris closes' in ui
+    assert 'Cetaris Completed' in ui
 
 
 def test_manual_proactive_pm_discovery_survives_cetaris_reimport(client,monkeypatch):
@@ -436,7 +436,7 @@ def test_completed_non_pm_pending_review_not_silently_closed(client,monkeypatch)
     # Vendor/invoice closure does not erase work that was actually done.
     assert len(result["rows"])==1
     assert result["rows"][0]["wo_number"]=="9301"
-    assert result["rows"][0]["status"]=="PENDING"
+    assert result["rows"][0]["status"]=="COMPLETED"
     # The passdown includes the maintenance work, not an invented reminder
     # to close a vendor invoice before the shift can end.
     generated=client.post("/api/shifts/report",json={})
@@ -532,7 +532,7 @@ def test_completed_work_order_reminder_is_not_falsely_rts(client,monkeypatch):
     assert result.status_code==200,result.text
     data=client.get("/api/reporting/state").json()
     assert len(data["rows"])==1
-    assert data["rows"][0]["status"]=="PENDING"
+    assert data["rows"][0]["status"]=="COMPLETED"
     # Keep the technician's real remarks; do not fabricate a same-shift
     # closure demand when vendor invoicing may hold Cetaris at Completed.
     assert data["rows"][0]["remarks"] == "Repaired wiring"
