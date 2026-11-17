@@ -433,16 +433,19 @@ def test_completed_non_pm_pending_review_not_silently_closed(client,monkeypatch)
     r=import_techs(client,["Synthetic A"])
     assert r.status_code==200,r.text
     result=client.get("/api/reporting/state").json()
-    assert result["rows"]==[]
-    assert any(x["wo_number"]=="9301" for x in result["audit"]["pending"])
-    # Import diagnostics are visible in the app but never injected into
-    # the Outlook passdown or made a report-generation requirement.
+    # Vendor/invoice closure does not erase work that was actually done.
+    assert len(result["rows"])==1
+    assert result["rows"][0]["wo_number"]=="9301"
+    assert result["rows"][0]["status"]=="PENDING"
+    # The passdown includes the maintenance work, not an invented reminder
+    # to close a vendor invoice before the shift can end.
     generated=client.post("/api/shifts/report",json={})
     assert generated.status_code==200,generated.text
     eml=client.get("/api/shifts/report/download")
     assert eml.status_code==200
-    assert b"9301" not in eml.content
+    assert b"9301" in eml.content
     assert b"Cetaris import review" not in eml.content
+    assert b"Reminder: Please close this WO" not in eml.content
 
 
 def test_invalid_workbook_does_not_replace_prior_stage(client,monkeypatch):
