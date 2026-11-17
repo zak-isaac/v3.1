@@ -365,7 +365,7 @@ def import_selection(conn, shift_id: int, shift_code: str, shift_day: str,
         moment=max((c for c in candidates if c), default=None)
         if moment and (wo not in wo_work_at or moment>wo_work_at[wo]):
             wo_work_at[wo]=moment
-    # Do not silently include Completed non-PMs; MST must choose reminder.
+    # Record real shift labor even when Cetaris administrative closure is pending.
     records,summary=select_records(accepted,selected,datetime.min,datetime.max,
                                     closure_reviews=closure_reviews or {})
     by_wo={}
@@ -377,13 +377,20 @@ def import_selection(conn, shift_id: int, shift_code: str, shift_day: str,
         item=target.setdefault(wo,{"wo":wo,"asset":r.get("asset_id") or "",
             "category":r.get("rfr") or "Other",
             "cause":r.get("reported_issue") or "",
-            "techs":[],"remarks":[],"status":"OOS" if kind=="oos" else ("PENDING" if r.get("closure_reminder") else "RTS")})
+            "techs":[],"remarks":[],"status":"OOS" if kind=="oos" else
+             (r.get("work_state") or ("PENDING" if r.get("closure_reminder") else "RTS"))})
         if r.get("tech_name") and r["tech_name"] not in item["techs"]:
             item["techs"].append(r["tech_name"])
         for remark in r.get("remarks_list") or ([r["remarks"]] if r.get("remarks") else []):
             if remark and remark not in item["remarks"]:
                 item["remarks"].append(remark)
         if kind=="oos":item["status"]="OOS"
+        elif r.get("work_state") and item["status"] not in ("OOS","RTS"):
+            levels={"WORKED":0,"IN_PROGRESS":1,"PENDING":1,"COMPLETED":2}
+            candidate=r["work_state"]
+            if levels.get(candidate,0)>levels.get(item["status"],0):
+                item["status"]=candidate
+        # PM work remains separately counted as PM completed, never here.
     # PM takes precedence over any duplicate labor row from the same WO.
     for wo in pm_by_wo:by_wo.pop(wo,None)
     ignored=[]
@@ -402,7 +409,7 @@ def import_selection(conn, shift_id: int, shift_code: str, shift_day: str,
             # A later verified Cetaris Closed event must release a prior
             # PENDING closure even if remarks were edited manually. Preserve
             # human wording, category, exclusion and deliberate OOS holds.
-            new_status=("RTS" if existing["status"]=="PENDING" and row["status"]=="RTS"
+            new_status=("RTS" if existing["status"] in ("PENDING","WORKED","IN_PROGRESS","COMPLETED") and row["status"]=="RTS"
                         else existing["status"])
             conn.execute("UPDATE report_wo SET source_techs_json=?,status=? WHERE id=?",
                          (_json(row["techs"]),new_status,existing["id"]))
@@ -508,13 +515,13 @@ def update_wo(conn,shift_id,wo_number,data:dict):
     permitted={"asset","category","cause","tech","remarks","status","excluded"}
     fields={k:v for k,v in data.items() if k in permitted}
     if not fields:raise ValueError("No supported work-order changes")
-    if row["status"]=="PENDING" and not row["is_manual"] and "status" in fields and fields["status"]!="PENDING":
-        raise ValueError("Pending Cetaris closure must be verified by a new Closed WO import; editing other fields is allowed")
+    if row["status"] in ("PENDING","WORKED","IN_PROGRESS","COMPLETED") and not row["is_manual"] and "status" in fields and fields["status"]!=row["status"]:
+        raise ValueError("Cetaris work status cannot be changed manually; edit the remarks or reimport updated evidence")
     for k,v in fields.items():
         if k=="excluded":
             if not isinstance(v,bool):raise ValueError("Excluded must be true or false")
             fields[k]=int(v)
-        elif not isinstance(v,str) or len(v)>5000 or (k=="status" and v not in ("RTS","OOS","PENDING")):
+        elif not isinstance(v,str) or len(v)>5000 or (k=="status" and v not in ("RTS","OOS","PENDING","WORKED","IN_PROGRESS","COMPLETED")):
             raise ValueError("Invalid value for "+k)
         else:fields[k]=v.strip()
     setters=", ".join(k+"=?" for k in fields)
