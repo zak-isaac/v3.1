@@ -237,7 +237,7 @@ def select_records(rows: list[dict], selected: set[str], start: datetime, end: d
             # Document labor from an earlier shift on a WO finished by
             # somebody else. Never award the earlier shift the completion.
             summary["happening_rows"] += 1
-            eligible.append({**r, "kind": "happening", "closure_reminder": True})
+            eligible.append({**r, "kind": "happening", "work_state": "WORKED"})
             continue
         if status == "completed" and r["wo_number"] in closed_wos:
             status = "closed"
@@ -260,14 +260,14 @@ def select_records(rows: list[dict], selected: set[str], start: datetime, end: d
             # or asserting that the equipment is physically RTS.
             summary["completed_unclosed"] += 1
             summary["happening_rows"] += 1
-            eligible.append({**r, "kind": "happening", "closure_reminder": True})
+            eligible.append({**r, "kind": "happening", "work_state": "COMPLETED"})
             continue
         if status == "in process":
             # Work performed this shift must appear even when nobody has
             # completed the WO. PMs here are NOT counted as completed PMs.
             summary["in_process"] += 1
             summary["happening_rows"] += 1
-            eligible.append({**r, "kind": "happening", "closure_reminder": True})
+            eligible.append({**r, "kind": "happening", "work_state": "IN_PROGRESS"})
             continue
         if status != "closed":
             summary["not_closed"] += 1
