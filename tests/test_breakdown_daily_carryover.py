@@ -20,7 +20,21 @@ def test_in_process_non_breakdown_is_reported_not_falsely_rts(client, monkeypatc
     assert state["rows"][0]["wo_number"] == "ACTIVE-WORK"
     assert state["rows"][0]["status"] == "IN_PROGRESS"
     assert "Investigated drive fault" in state["rows"][0]["remarks"]
-    assert client.get("/api/assets/status").json()["rts"] == []
+    assets=client.get("/api/assets/status").json()
+    assert assets["rts"] == [] and assets["oos"] == []
+    # Unfinished work is available to FLAG as a carryover, not invented
+    # as one simply because Cetaris still says In Process.
+    html=client.get("/api/shifts/report/preview").json()["html"]
+    follow=html.split('>Open Follow-ups / Shift Carry-overs</strong>',1)[1].split(
+        '>Reliable Operations</strong>',1)[0]
+    assert 'ACTIVE-WORK' not in follow
+    flagged=client.post("/api/reporting/carryovers/flag",
+                        json={"wo_number":"ACTIVE-WORK","enabled":True})
+    assert flagged.status_code == 200,flagged.text
+    html=client.get("/api/shifts/report/preview").json()["html"]
+    follow=html.split('>Open Follow-ups / Shift Carry-overs</strong>',1)[1].split(
+        '>Reliable Operations</strong>',1)[0]
+    assert 'ACTIVE-WORK' in follow
 
 
 def test_completed_breakdown_stays_with_completing_shift_and_reconciles_oos(
