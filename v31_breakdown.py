@@ -50,10 +50,26 @@ def unresolved(conn,asset,exclude_wo=""):
         AND (status='in process' OR (status='completed' AND decision<>'rts'))
         LIMIT 1""",(asset,exclude_wo)).fetchone() is not None
 
-def _resolve(conn,wo,asset,shift_id,actor):
+def _resolve(conn,wo,asset,shift_id,actor,*,confirm_manual=False,actor_name=""):
     row=conn.execute("SELECT * FROM breakdown_state WHERE wo_number=?",(wo,)).fetchone()
-    if not row or row["rts_logged"] or _has_hold(conn,asset) or unresolved(conn,asset,wo):
+    if not row or row["rts_logged"] or unresolved(conn,asset,wo):
         return False
+    # An explicit equipment hold cannot be bypassed by Cetaris closure or
+    # a completed-WO review; it must be separately released first.
+    if conn.execute("""SELECT 1 FROM breakdown_manual_holds
+        WHERE lower(trim(asset))=lower(trim(?))""",(asset,)).fetchone():
+        return False
+    manual=[r for r in v31_oos.list_records(conn,open_only=True)
+            if r["asset"].strip().casefold()==asset.strip().casefold()]
+    if manual and not confirm_manual:
+        return False
+    # The completing shift explicitly confirmed physical RTS. Close matching
+    # legacy/manual OOS incidents in the SAME transaction so they cannot
+    # remain as stale duplicates on the global OOS board.
+    for item in manual:
+        v31_oos.mark_rts(conn,item["id"],rts_by=actor,
+            rts_by_name=actor_name or actor,shift_id=shift_id,
+            shift_code="",now_iso=_now(),notes="Linked breakdown RTS")
     conn.execute("""INSERT OR IGNORE INTO breakdown_rts_events
        (wo_number,asset,shift_id,actor,recorded_at) VALUES(?,?,?,?,?)""",
        (wo,asset,shift_id,actor,_now()))
@@ -71,9 +87,14 @@ def sync(conn,rows,selected,accepted,shift_id):
     a different shift; accept new WOs only if selected/attributed here.
     """
     ensure(conn)
-    selected=set(selected)
-    accepted_wos={str(r.get('wo_number') or '').strip() for r in accepted}
-    tracked={r['wo_number'] for r in conn.execute('SELECT wo_number FROM breakdown_state')}
+    # A daily export can contain another shift's labor or newer WO status.
+    # Only current-shift completion evidence can change the global breakdown
+    # lifecycle. Activity-only rows remain visible in that shift's report,
+    # but are NOT proof that it completed or returned the asset.
+    accepted_keys={(str(r.get('wo_number') or '').strip(),
+                    str(r.get('tech_name') or '').strip(),
+                    str(r.get('status') or '').strip().casefold())
+                   for r in accepted if not r.get('_activity_only')}
     grouped={}
     for raw in rows:
         if str(raw.get('rfr') or '').strip().casefold()!='breakdown':
@@ -84,7 +105,8 @@ def sync(conn,rows,selected,accepted,shift_id):
                            str(raw.get('status') or '').strip().casefold())
         if not wo or not asset or status not in PRIORITY:
             continue
-        if wo not in tracked and (raw.get('tech_name') not in selected or wo not in accepted_wos):
+        if (wo,str(raw.get('tech_name') or '').strip(),
+            str(raw.get('status') or '').strip().casefold()) not in accepted_keys:
             continue
         old=grouped.get(wo)
         if not old or PRIORITY[status]>PRIORITY[old[0]]:
@@ -120,23 +142,40 @@ def sync(conn,rows,selected,accepted,shift_id):
                 _resolve(conn,wo,asset,shift_id,'prior_review')
     return changes
 
-def pending(conn):
+def pending(conn,shift_id=None):
     ensure(conn)
-    return [dict(r) for r in conn.execute("""SELECT wo_number,asset,updated_shift_id
-      FROM breakdown_state WHERE status='completed' AND decision=''
-      ORDER BY updated_at""")]
+    # A completed breakdown is reviewable only in its verified completion
+    # shift, never merely by the shift that imported a later daily file.
+    sql="""SELECT wo_number,asset,updated_shift_id
+      FROM breakdown_state WHERE status='completed' AND decision=''"""
+    params=()
+    if shift_id is not None:
+        sql+=" AND updated_shift_id=?"
+        params=(shift_id,)
+    return [dict(r) for r in conn.execute(sql+" ORDER BY updated_at",params)]
 
-def decide(conn,wo,choice,shift_id,actor):
+def decide(conn,wo,choice,shift_id,actor,actor_name=""):
     ensure(conn)
     if choice not in ('rts','keep_oos'):raise ValueError('Invalid RTS decision')
     state=conn.execute("SELECT * FROM breakdown_state WHERE wo_number=?",(wo,)).fetchone()
     if not state or state['status']!='completed' or state['decision']:
         raise KeyError('Breakdown not pending a decision')
-    conn.execute("UPDATE breakdown_state SET decision=?,updated_at=? WHERE wo_number=?",
-                 (choice,_now(),wo))
+    if state["updated_shift_id"]!=shift_id:
+        raise ValueError("Only the documented completing shift can review this breakdown")
+    if choice=='rts' and (
+        unresolved(conn,state['asset'],wo) or
+        conn.execute("""SELECT 1 FROM breakdown_manual_holds
+            WHERE lower(trim(asset))=lower(trim(?))""",(state['asset'],)).fetchone()
+    ):
+        raise ValueError("Another active breakdown or OOS hold prevents RTS")
     resolved=False
     if choice=='rts':
-        resolved=_resolve(conn,wo,state['asset'],shift_id,actor)
+        resolved=_resolve(conn,wo,state['asset'],shift_id,actor,
+                          confirm_manual=True,actor_name=actor_name)
+        if not resolved:
+            raise ValueError("Unable to verify RTS while the equipment is held")
+    conn.execute("UPDATE breakdown_state SET decision=?,updated_at=? WHERE wo_number=?",
+                 (choice,_now(),wo))
     return {'wo_number':wo,'decision':choice,'resolved':resolved}
 
 def hold(conn,asset,enabled,actor,reason=''):
@@ -160,5 +199,5 @@ def overview(conn,shift_id=None):
         rts=[dict(r) for r in conn.execute(
             'SELECT * FROM breakdown_rts_events WHERE shift_id=? ORDER BY recorded_at',(shift_id,))]
     else:rts=[]
-    return {'open':unresolved_rows,'pending':pending(conn),
+    return {'open':unresolved_rows,'pending':pending(conn,shift_id),
             'holds':hold_rows,'resolved_this_shift':rts}
