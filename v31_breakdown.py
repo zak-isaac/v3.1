@@ -66,10 +66,12 @@ def _resolve(conn,wo,asset,shift_id,actor,*,confirm_manual=False,actor_name=""):
     # The completing shift explicitly confirmed physical RTS. Close matching
     # legacy/manual OOS incidents in the SAME transaction so they cannot
     # remain as stale duplicates on the global OOS board.
+    shift=conn.execute("SELECT code FROM shifts WHERE id=?",(shift_id,)).fetchone()
     for item in manual:
         v31_oos.mark_rts(conn,item["id"],rts_by=actor,
             rts_by_name=actor_name or actor,shift_id=shift_id,
-            shift_code="",now_iso=_now(),notes="Linked breakdown RTS")
+            shift_code=shift["code"] if shift else "",
+            now_iso=_now(),notes="Linked breakdown RTS")
     conn.execute("""INSERT OR IGNORE INTO breakdown_rts_events
        (wo_number,asset,shift_id,actor,recorded_at) VALUES(?,?,?,?,?)""",
        (wo,asset,shift_id,actor,_now()))
