@@ -1359,9 +1359,10 @@ def breakdown_decision(wo_number:str,payload:BreakdownDecision,request:Request):
     try:
         with _db() as conn:
             result=v31_breakdown.decide(conn,wo_number,payload.decision,
-                                         row['id'],session['a'])
+                                         row['id'],session['a'],
+                                         roster()[session['a']].get('name','Associate'))
             _invalidate_passdown(conn,row['id'])
-    except KeyError as exc:
+    except (KeyError,ValueError) as exc:
         raise HTTPException(409,str(exc))
     return result
 
