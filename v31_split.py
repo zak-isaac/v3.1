@@ -354,6 +354,14 @@ def assign(rows, selected_split, shift_code, shift_day, decisions=None,
         if status in ("closed","completed"):
             if owners.get(wo) == (shift_code, day):
                 accepted.append(r)
+            else:
+                # A different shift may complete this shared WO. Its earlier
+                # technician labor is still reportable on the shift where
+                # that labor STARTED, but it must never count as a repair
+                # completion, completed PM, or RTS for this shift.
+                begin = parse_close(r.get("start_at"))
+                if begin and _resolve(begin,tech,history,roster_shifts) == (shift_code,day):
+                    accepted.append({**r, "_activity_only": True})
         elif status == "in process":
             # Breakdown OOS retains start-time ownership, because an active
             # breakdown naturally has no completion timestamp yet.
