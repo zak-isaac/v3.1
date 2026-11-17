@@ -248,19 +248,20 @@ def select_records(rows: list[dict], selected: set[str], start: datetime, end: d
             eligible.append({**r, "kind": "pm"})
             continue
         if status == "completed":
-            # Non-PM Completed rows can be included as closure reminders
-            # into passdown as a closure reminder, never as a completed PM.
+            # Completed means the work was performed; vendor invoicing or an
+            # administrative sign-off can leave the WO unclosed for days.
+            # Preserve technician remarks without inventing a closure request
+            # or asserting that the equipment is physically RTS.
             summary["completed_unclosed"] += 1
-            if closure_reviews.get(r["wo_number"]) == "add":
-                first_reminder = r["wo_number"] not in reminder_wos
-                reminder = "Reminder: Please close this WO in Cetaris before the shift ends."
-                note = r["remarks"].strip()
-                if first_reminder:
-                    reminder_wos.add(r["wo_number"])
-                    note = (note + "; " if note else "") + reminder
-                    summary["closure_reminders"] += 1
-                eligible.append({**r, "kind": "happening", "closure_reminder": True,
-                                 "remarks": note})
+            summary["happening_rows"] += 1
+            eligible.append({**r, "kind": "happening", "closure_reminder": True})
+            continue
+        if status == "in process":
+            # Work performed this shift must appear even when nobody has
+            # completed the WO. PMs here are NOT counted as completed PMs.
+            summary["in_process"] += 1
+            summary["happening_rows"] += 1
+            eligible.append({**r, "kind": "happening", "closure_reminder": True})
             continue
         if status != "closed":
             summary["not_closed"] += 1
