@@ -72,7 +72,8 @@ def summary(conn, shift_id):
                   'wo_number':row['wo_number'],'reason':
                     'Completed — awaiting confirmation' if row['status']=='completed'
                     else 'In Process',
-                  'pending_decision':row['status']=='completed' and not row['decision'],
+                  'pending_decision':row['status']=='completed' and not row['decision']
+                                     and row['updated_shift_id']==shift_id,
                   'decision':row['decision']}
     for row in breakdown['holds']:
         key=_key(row['asset'])
