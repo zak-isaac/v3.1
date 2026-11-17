@@ -82,6 +82,48 @@ def test_completed_breakdown_stays_with_completing_shift_and_reconciles_oos(
     assert client.get("/api/assets/status").json()["pending"] == []
 
 
+def test_keep_oos_requires_new_verified_completion_before_next_shift_rts(
+    client, monkeypatch
+):
+    clock(monkeypatch, day=26, hour=17)
+    s2 = enter(client, "S2")
+    first = row("BD-REWORK", category="Breakdown", status="Completed",
+                started="2026-10-26 16:15", serviced="2026-10-26 16:40",
+                remarks="Repair attempted; equipment still down")
+    assert upload(client, [first]).status_code == 200
+    assert import_techs(client, ["Synthetic A"]).status_code == 200
+    review = client.post("/api/breakdowns/BD-REWORK/decision",
+                         json={"decision": "keep_oos"})
+    assert review.status_code == 200, review.text
+    with m._db() as conn:
+        assert v31_breakdown.pending(conn, s2) == []
+
+    # Reimporting S2's unchanged Completed file does not reopen the decision.
+    assert import_techs(client, ["Synthetic A"]).status_code == 200
+    with m._db() as conn:
+        assert v31_breakdown.pending(conn, s2) == []
+
+    # S4 performs new repair work four days later and actually completes it.
+    clock(monkeypatch, day=30, hour=16)
+    started = client.post("/api/shifts/start", json={"code": "S4"})
+    assert started.status_code == 200, started.text
+    s4 = started.json()["id"]
+    later = row("BD-REWORK", category="Breakdown", status="Completed",
+                started="2026-10-30 14:40", serviced="2026-10-30 15:05",
+                remarks="Final repairs completed; operation checked")
+    assert upload(client, [later]).status_code == 200
+    assert import_techs(client, ["Synthetic A"]).status_code == 200
+    with m._db() as conn:
+        assert v31_breakdown.pending(conn, s2) == []
+        assert [x["wo_number"] for x in v31_breakdown.pending(conn, s4)] == [
+            "BD-REWORK"
+        ]
+    result = client.post("/api/breakdowns/BD-REWORK/decision",
+                         json={"decision": "rts"})
+    assert result.status_code == 200, result.text
+    assert result.json()["resolved"] is True
+
+
 def test_other_shift_completed_status_does_not_reassign_breakdown(client, monkeypatch):
     clock(monkeypatch, day=26, hour=10)
     s1 = enter(client, "S1")
