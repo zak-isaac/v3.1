@@ -437,6 +437,10 @@ def test_completed_non_pm_pending_review_not_silently_closed(client,monkeypatch)
     assert len(result["rows"])==1
     assert result["rows"][0]["wo_number"]=="9301"
     assert result["rows"][0]["status"]=="COMPLETED"
+    html=client.get('/api/shifts/report/preview').json()['html']
+    followups=html.split('>Open Follow-ups / Shift Carry-overs</strong>',1)[1].split(
+        '>Reliable Operations</strong>',1)[0]
+    assert '9301' not in followups  # Vendor invoice is not a repair carryover.
     # The passdown includes the maintenance work, not an invented reminder
     # to close a vendor invoice before the shift can end.
     generated=client.post("/api/shifts/report",json={})
