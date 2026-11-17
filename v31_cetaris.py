@@ -233,6 +233,12 @@ def select_records(rows: list[dict], selected: set[str], start: datetime, end: d
         summary["selected_rows"] += 1
         # Labor Start Date is not a WO eligibility boundary.
         status = r["status"].strip().casefold()
+        if r.get("_activity_only"):
+            # Document labor from an earlier shift on a WO finished by
+            # somebody else. Never award the earlier shift the completion.
+            summary["happening_rows"] += 1
+            eligible.append({**r, "kind": "happening", "closure_reminder": True})
+            continue
         if status == "completed" and r["wo_number"] in closed_wos:
             status = "closed"
         category = r["rfr"].strip().casefold()
