@@ -100,10 +100,10 @@ def sync(conn,rows,selected,accepted,shift_id):
     # Only current-shift completion evidence can change the global breakdown
     # lifecycle. Activity-only rows remain visible in that shift's report,
     # but are NOT proof that it completed or returned the asset.
-    accepted_keys={(str(r.get('wo_number') or '').strip(),
-                    str(r.get('tech_name') or '').strip(),
-                    normalize_wo_status(r.get('status'))[0].casefold())
-                   for r in accepted if not r.get('_activity_only')}
+    # Use exact accepted labor-row identity from the current import.
+    # WO+tech+status is NOT unique: a monthly export can have several days
+    # with the same technician and status, only one attributable here.
+    accepted_ids={id(r) for r in accepted if not r.get('_activity_only')}
     grouped={}
     for raw in rows:
         if normalize_primary_rfr(raw.get('rfr'))[1]!='01':
@@ -113,8 +113,7 @@ def sync(conn,rows,selected,accepted,shift_id):
         status=normalize_wo_status(raw.get('status'))[0].casefold()
         if not wo or not asset or status not in PRIORITY:
             continue
-        if (wo,str(raw.get('tech_name') or '').strip(),
-            normalize_wo_status(raw.get('status'))[0].casefold()) not in accepted_keys:
+        if id(raw) not in accepted_ids:
             continue
         old=grouped.get(wo)
         if not old or PRIORITY[status]>PRIORITY[old[0]]:
@@ -144,11 +143,9 @@ def sync(conn,rows,selected,accepted,shift_id):
           rts_logged=excluded.rts_logged,updated_at=excluded.updated_at""",
           (wo,asset,status,shift_id,decision,logged,_now()))
         changes+=1
-        if status in PRIORITY and not logged and decision!='rts':
-            # Never infer physical RTS from Cetaris Closed, Completed, or
-            # any intermediate status. Physical return is a separate action.
-            conn.execute("""UPDATE report_wo SET status='OOS'
-              WHERE shift_id=? AND wo_number=? AND is_manual=0""",(shift_id,wo))
+        # Never overwrite report_wo's Cetaris C/D/I/W/O/P work status with
+        # an equipment status. Physical OOS is recorded separately by manual
+        # OOS, an explicit hold, or a keep-OOS review decision.
     # No automatic RTS on Closed. Both D and C require a documented,
     # shift-owned physical RTS confirmation. A later administrative closure
     # does not create a new repair event or overwrite prior verified returns.
