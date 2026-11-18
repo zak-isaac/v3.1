@@ -277,3 +277,87 @@ def test_loto_missing_key_saves_without_false_missing_element_error(live_server)
             assert 'LOTO save failed' not in page.locator('#toast').inner_text()
         finally:
             browser.close()
+
+
+def test_real_browser_parts_pending_is_active_not_oos_and_rts_modal_reconciles(
+    live_server
+):
+    """Exercise the new live UI end to end with a synthetic persisted WO."""
+    base_url,tmp_path=live_server
+    with sync_playwright() as p:
+        try:
+            browser=p.chromium.launch()
+        except Exception as exc:
+            pytest.skip(f"Chromium unavailable: {exc}")
+        page=browser.new_page()
+        script_errors=[]
+        page.on('pageerror',lambda error:script_errors.append(str(error)))
+        page.on('dialog',lambda dialog:dialog.accept())
+        try:
+            page.goto(base_url)
+            login=page.evaluate("""async () => {
+              const r=await fetch('/api/login',{method:'POST',credentials:'same-origin',
+                headers:{'Content-Type':'application/json'},
+                body:JSON.stringify({associate:'555099',intent:'direct'})});
+              return {status:r.status};
+            }""")
+            assert login['status']==200,login
+            page.goto(base_url+'/shift-report.html')
+            page.wait_for_function('!!window.v31AssetManager && !!window.V31Reporting',
+                                   timeout=12000)
+            with sqlite3.connect(tmp_path/'shifts.sqlite3') as conn:
+                shift=conn.execute(
+                    "SELECT id FROM shifts WHERE owner='555099' ORDER BY id DESC LIMIT 1"
+                ).fetchone()
+                assert shift is not None
+                from v31_breakdown import ensure
+                conn.row_factory=sqlite3.Row
+                ensure(conn)
+                conn.execute("""INSERT INTO breakdown_state
+                    (wo_number,asset,status,updated_shift_id,decision,rts_logged,updated_at)
+                    VALUES(?,?,?,?,?,?,?)""",
+                    ("BROWSER-PARTS-1","CONV-PARTS","parts pending",
+                     shift[0],"",0,"2026-11-18T14:10:00-05:00"))
+
+            page.locator('[data-tab="breakdown"]').click()
+            page.evaluate('window.v31AssetManager.refresh()')
+            active=page.locator('#v31-active-breakdown-list')
+            active.get_by_text('CONV-PARTS').wait_for(timeout=12000)
+            assert 'Parts Pending' in active.inner_text()
+            assert not page.locator('#v31-oos-list').get_by_text(
+                'CONV-PARTS',exact=True).count()
+            assert active.locator('[data-active-oos="CONV-PARTS"]').count()==1
+
+            with page.expect_response(
+                lambda response:response.url.endswith('/api/oos')
+                and response.request.method=='POST',timeout=12000
+            ) as marked:
+                active.locator('[data-active-oos="CONV-PARTS"]').click()
+            assert marked.value.status==200,marked.value.text()
+            page.locator('#v31-oos-list').get_by_text('CONV-PARTS').wait_for(
+                timeout=12000)
+
+            # The completion shift now reviews actual operational RTS.
+            with sqlite3.connect(tmp_path/'shifts.sqlite3') as conn:
+                conn.execute("""UPDATE breakdown_state SET status='completed',
+                    updated_at='2026-11-18T14:20:00-05:00'
+                    WHERE wo_number='BROWSER-PARTS-1'""")
+            page.evaluate('window.v31AssetManager.promptCompletedBreakdowns()')
+            page.locator('#modal-title').get_by_text(
+                'Breakdown RTS Review',exact=False).wait_for(timeout=12000)
+            assert 'CONV-PARTS' in page.locator('#modal-body').inner_text()
+            with page.expect_response(
+                lambda response:'/api/breakdowns/BROWSER-PARTS-1/decision'
+                in response.url and response.request.method=='POST',timeout=12000
+            ) as verified:
+                page.locator('#modal-actions').get_by_role(
+                    'button',name='Confirm RTS').click()
+            assert verified.value.status==200,verified.value.text()
+            page.locator('#v31-oos-rts-list').get_by_text('CONV-PARTS').wait_for(
+                timeout=12000)
+            assert not page.locator('#v31-oos-list').get_by_text(
+                'CONV-PARTS',exact=True).count()
+            assert 'No active Breakdown WOs' in active.inner_text()
+            assert script_errors==[],script_errors
+        finally:
+            browser.close()
