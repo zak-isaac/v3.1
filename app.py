@@ -1686,6 +1686,17 @@ def oos_mark_rts(oos_id: int, payload: ManualOOSResolve, request: Request):
     session, shift = _report_access(request)
     profile = roster()[session['a']]
     with _db() as conn:
+        existing=v31_oos.get(conn,oos_id)
+        if existing and existing['open']:
+            asset=existing['asset'].strip()
+            v31_breakdown.ensure(conn)
+            if v31_breakdown.unresolved(conn,asset):
+                raise HTTPException(409,
+                  'A tracked breakdown is unresolved; confirm its completed repair before RTS')
+            if conn.execute("""SELECT 1 FROM breakdown_manual_holds
+                WHERE lower(trim(asset))=lower(trim(?))""",(asset,)).fetchone():
+                raise HTTPException(409,
+                  'This asset has an active OOS hold; release it before RTS')
         record, error = v31_oos.mark_rts(conn, oos_id, rts_by=session['a'],
             rts_by_name=profile.get('name', 'Associate'), shift_id=session['s'],
             shift_code=shift['code'], now_iso=datetime.now(TZ).isoformat(),
