@@ -17,7 +17,22 @@
    return result;
  };
  const toast=msg=>window.v31ReportView?.toast?.(msg);
- const statusCard=(item,type)=>{
+ const activeCard=item=>{
+   const description=[item.source,item.wo_number?'WO# '+item.wo_number:'',
+                      item.reason].filter(Boolean).map(esc).join(' · ');
+   const actions=[];
+   if(item.pending_decision){
+     actions.push('<button type="button" class="btn btn-light btn-small" data-breakdown-rts="'+esc(item.wo_number)+'">Confirm RTS</button>');
+     actions.push('<button type="button" class="btn btn-light btn-small" data-breakdown-oos="'+esc(item.wo_number)+'">Keep OOS</button>');
+   }else if(!item.operational_oos){
+     actions.push('<button type="button" class="btn btn-light btn-small" data-active-oos="'+esc(item.asset)+'">Mark OOS</button>');
+   }
+   return '<div class="item-card"><div><strong>'+esc(item.asset)+'</strong>'+
+     '<small>'+description+'</small></div>'+
+     (item.operational_oos?'<span class="status-pill oos">OOS confirmed</span>':'')+
+     actions.join('')+'</div>';
+ };
+const statusCard=(item,type)=>{
    const details=[item.source,item.wo_number?'WO# '+item.wo_number:'',item.reason]
      .filter(Boolean).map(esc).join(' · ');
    const actions=[];
@@ -37,7 +52,7 @@
  function render(){
    const host=root();if(!host)return;
    if(!status){host.innerHTML='<p class="field-help">Asset status is unavailable. Refresh to retry.</p>';return;}
-   const oos=status.oos||[],rts=status.rts||[];
+   const oos=status.oos||[],rts=status.rts||[],active=status.active_breakdowns||[];
    host.innerHTML=`<div class="pane-header">
        <div><h3>Asset Status</h3><p>OOS persists across shifts. RTS shows this shift's confirmed returns.</p></div>
        <div style="display:flex;gap:8px;flex-wrap:wrap">
@@ -58,6 +73,10 @@
        <button type="button" class="btn btn-light btn-small" id="v31-oos-cancel" style="margin-top:10px;">Cancel</button>
        <p id="v31-oos-error" class="field-help" role="alert"></p>
      </div>
+     <div class="pane-header"><div><h3>Active Breakdown WOs · ${active.length}</h3>
+       <p>Open repair work, including Parts Pending. WO status does not automatically mean equipment is OOS.</p></div></div>
+     <div class="item-list" id="v31-active-breakdown-list">${active.length?active.map(activeCard).join(''):
+       '<p class="field-help">No active Breakdown WOs recorded.</p>'}</div>
      <div class="pane-header"><div><h3>Currently Out of Service · ${oos.length}</h3></div></div>
      <div class="item-list" id="v31-oos-list">${oos.length?oos.map(x=>statusCard(x,'oos')).join(''):
        '<p class="field-help">No equipment currently marked OOS.</p>'}</div>
@@ -122,6 +141,16 @@
      button.disabled=true;
      try{await api('/api/breakdowns/hold',{asset,enabled:false});await reloadAfterChange();toast('OOS hold released');}
      catch(e){button.disabled=false;toast(e.message);}
+   }));
+   host.querySelectorAll('[data-active-oos]').forEach(button=>button.addEventListener('click',async()=>{
+     const asset=button.dataset.activeOos;
+     if(!window.confirm('Confirm '+asset+' is physically out of service? This does not change the Cetaris WO status.'))return;
+     button.disabled=true;
+     try{
+       await api('/api/oos',{asset});
+       await reloadAfterChange();
+       toast(asset+' marked OOS; the active Breakdown WO remains tracked');
+     }catch(e){button.disabled=false;toast(e.message);}
    }));
    host.querySelectorAll('[data-breakdown-rts], [data-breakdown-oos]').forEach(button=>button.addEventListener('click',async()=>{
      const wo=button.dataset.breakdownRts||button.dataset.breakdownOos;
