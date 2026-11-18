@@ -41,7 +41,7 @@
    host.innerHTML=`<div class="pane-header">
        <div><h3>Asset Status</h3><p>OOS persists across shifts. RTS shows this shift's confirmed returns.</p></div>
        <div style="display:flex;gap:8px;flex-wrap:wrap">
-         ${(status.pending||[]).length?'<button type="button" class="btn btn-light" id="v31-breakdown-review-btn">Review Completed ('+(status.pending||[]).length+')</button>':''}
+         ${(status.pending||[]).length?'<button type="button" class="btn btn-light" id="v31-breakdown-review-btn">Review RTS ('+(status.pending||[]).length+')</button>':''}
          <button type="button" class="btn btn-primary" id="v31-oos-add-btn">+ Add</button>
        </div>
      </div>
@@ -150,10 +150,10 @@
    const next=()=>{
      const item=queue.shift();
      if(!item)return;
-     const title='Completed Breakdown · WO# '+item.wo_number;
+     const title='Breakdown RTS Review · WO# '+item.wo_number;
      const html='<div class="detail-list"><p><strong>Asset:</strong> '+esc(item.asset)+
        '</p><p><strong>WO:</strong> '+esc(item.wo_number)+
-       '</p><p><strong>Cetaris:</strong> Completed (not necessarily Closed)</p>'+
+       '</p><p><strong>Cetaris WO Status:</strong> '+esc(item.status||'Completed')+'</p>'+
        '<p>Was this equipment actually returned to service? Vendor invoicing '+
        'or other administrative closure may still be outstanding.</p></div>';
      const act=async choice=>{
