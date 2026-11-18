@@ -343,8 +343,8 @@ def test_real_browser_parts_pending_is_active_not_oos_and_rts_modal_reconciles(
                     updated_at='2026-11-18T14:20:00-05:00'
                     WHERE wo_number='BROWSER-PARTS-1'""")
             page.evaluate('window.v31AssetManager.promptCompletedBreakdowns()')
-            page.locator('#modal-title').get_by_text(
-                'Breakdown RTS Review',exact=False).wait_for(timeout=12000)
+            page.locator('#modal-title').wait_for(timeout=12000)
+            assert 'Breakdown RTS Review' in page.locator('#modal-title').inner_text()
             assert 'CONV-PARTS' in page.locator('#modal-body').inner_text()
             with page.expect_response(
                 lambda response:'/api/breakdowns/BROWSER-PARTS-1/decision'
