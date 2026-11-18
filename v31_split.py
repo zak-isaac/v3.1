@@ -5,6 +5,7 @@ technician grace through 06:30. Unverifiable completion is excluded and explaine
 """
 from __future__ import annotations
 from collections import defaultdict
+from v31_cetaris_codes import normalize_wo_status, ACTIVE_WO_STATUSES, COMPLETED_WO_STATUSES
 from datetime import date, datetime, time, timedelta
 
 
@@ -281,7 +282,7 @@ def assign(rows, selected_split, shift_code, shift_day, decisions=None,
     selected_completed = {
         str(r.get("wo_number") or "") for r in rows
         if r.get("tech_name") in selected and
-        str(r.get("status") or "").strip().casefold() in ("closed","completed")
+        normalize_wo_status(r.get("status"))[0].casefold() in COMPLETED_WO_STATUSES
     }
     # Include all participants in each selected WO when deciding its owner.
     for r in rows:
@@ -290,7 +291,7 @@ def assign(rows, selected_split, shift_code, shift_day, decisions=None,
         if begin and len(_windows(begin)) == 1:
             history[tech].append((begin, _windows(begin)[0]))
         if (str(r.get("wo_number") or "") in selected_completed and
-            str(r.get("status") or "").strip().casefold() in ("closed","completed")):
+            normalize_wo_status(r.get("status"))[0].casefold() in COMPLETED_WO_STATUSES):
             by_wo[str(r.get("wo_number") or "")].append(r)
 
     owners = {}
@@ -350,8 +351,8 @@ def assign(rows, selected_split, shift_code, shift_day, decisions=None,
         if tech not in selected:
             continue
         wo = str(r.get("wo_number") or "")
-        status = str(r.get("status") or "").strip().casefold()
-        if status in ("closed","completed"):
+        status = normalize_wo_status(r.get("status"))[0].casefold()
+        if status in COMPLETED_WO_STATUSES:
             if owners.get(wo) == (shift_code, day):
                 accepted.append(r)
             else:
@@ -362,7 +363,9 @@ def assign(rows, selected_split, shift_code, shift_day, decisions=None,
                 begin = parse_close(r.get("start_at"))
                 if begin and _resolve(begin,tech,history,roster_shifts) == (shift_code,day):
                     accepted.append({**r, "_activity_only": True})
-        elif status == "in process":
+        elif status in ACTIVE_WO_STATUSES:
+            # I/W/O/P activity belongs to the actual labor shift.
+            # It does not imply repair completion or physical RTS.
             # Breakdown OOS retains start-time ownership, because an active
             # breakdown naturally has no completion timestamp yet.
             when = parse_close(r.get("start_at")) or parse_close(r.get("opened_at"))
