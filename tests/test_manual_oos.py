@@ -264,7 +264,10 @@ def test_rts_direct_cannot_override_an_unresolved_cetaris_breakdown(client,monke
     res=client.post('/api/oos/rts',json={'asset':'BLDG'})
     assert res.status_code==409
     assert 'breakdown' in res.json()['detail'].lower()
-    assert any(x['asset']=='BLDG' for x in client.get('/api/assets/status').json()['oos'])
+    assets=client.get('/api/assets/status').json()
+    assert any(x['asset']=='BLDG' for x in assets['active_breakdowns'])
+    # The Cetaris WO alone does not verify a physical equipment lockout.
+    assert not any(x['asset']=='BLDG' for x in assets['oos'])
 
 
 def test_email_current_oos_matches_live_dashboard_across_shifts(client, monkeypatch):
