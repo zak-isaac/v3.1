@@ -206,22 +206,17 @@ def technician_counts(rows: list[dict]) -> list[dict]:
 
 
 def _is_pm_category(r: dict) -> bool:
-    """A WO is PM primarily through a populated SJ / PM Code -- that field's
-    sole purpose in Cetaris is tagging a PM job plan, unlike Primary RFR
-    which is free-text reason-for-repair that can read many different ways
-    for the same underlying work. Real facility exports confirmed this:
-    every populated SJ / PM Code (e.g. 'RNPK.001.PKM', 'E.001.BALER.WALK')
-    co-occurred with Primary RFR == 'Preventive Maintenance' in every
-    sample checked (2026-10-26, pm_uploads/*.csv) -- the two signals never
-    disagreed there. Primary RFR remains a fallback only for the case
-    where SJ / PM Code is blank but RFR still says Preventive/Preventative
-    Maintenance, so no currently-recognized real PM silently stops
-    counting. Never flip a WO to PM from RFR text alone once a populated
-    PM Code is available to check first.
+    """Do not reclassify a known Primary RFR as PM from an optional code.
+
+    Every Cetaris category (especially Found During PM, Breakdown and
+    Process Interruption) must keep its explicit Primary RFR identity.
+    A populated SJ / PM Code is corroboration, or a fallback only when
+    the Primary RFR is absent/unrecognized.
     """
-    if str(r.get("pm_code", "")).strip():
-        return True
-    return r["rfr"].strip().casefold() in PM_CATEGORIES
+    _name, code = normalize_primary_rfr(r.get("rfr", ""))
+    if code:
+        return code == "08"
+    return bool(str(r.get("pm_code", "")).strip())
 
 
 def select_records(rows: list[dict], selected: set[str], start: datetime, end: datetime,
