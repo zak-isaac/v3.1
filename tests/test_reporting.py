@@ -118,7 +118,7 @@ def test_verified_cetaris_closed_reconciles_edited_pending_without_erasing_remar
     assert upload(client,[row("CLSR001",status="Closed")]).status_code==200
     assert import_techs(client,['Synthetic A']).status_code==200
     updated=client.get('/api/reporting/state').json()['rows'][0]
-    assert updated['status']=='RTS'
+    assert updated['status']=='CLOSED'
     assert updated['edited']==1
     assert 'waiting for final Cetaris' in updated['remarks']
 
@@ -162,7 +162,7 @@ def test_two_tech_one_closed_wo_grouped_with_remarks(client,monkeypatch):
     assert wo["wo_number"]=="9001"
     assert wo["cause"]=="Photoeye not sensing"
     assert wo["asset"]=="ASSET9001"
-    assert wo["status"]=="RTS"
+    assert wo["status"]=="CLOSED"  # Cetaris closure isn't physical RTS.
     assert "Synthetic A" in wo["tech"] and "Synthetic B" in wo["tech"]
     assert "Located sensor fault" in wo["remarks"] and "Replaced sensor" in wo["remarks"]
     assert wo["excluded"] is False
@@ -569,7 +569,12 @@ def test_cross_shift_breakdown_can_transition_from_oos_to_rts(client,monkeypatch
     final=import_techs(client,["Synthetic A"])
     assert final.status_code==200,final.text
     current=client.get("/api/reporting/state").json()["rows"]
-    assert len(current)==1 and current[0]["status"]=="RTS"
+    assert len(current)==1 and current[0]["status"]=="OOS"
+    # Cetaris Closed must NOT silently return a breakdown to service.
+    assert client.get('/api/assets/status').json()['rts']==[]
+    review=client.post('/api/breakdowns/BREAK1/decision',json={'decision':'rts'})
+    assert review.status_code==200,review.text
+    assert review.json()['resolved'] is True
     with m._db() as db:
         old=db.execute("SELECT status FROM report_wo WHERE shift_id=?",(s1,)).fetchone()
         new=db.execute("SELECT status FROM report_wo WHERE shift_id=?",(s2,)).fetchone()
@@ -978,6 +983,12 @@ def test_eml_rts_only_breakdown_equipment_deduplicated_and_signature_uniform(cli
     b2['Asset #']='BLDG'
     assert upload(client,[normal,b1,b2]).status_code==200
     assert import_techs(client,['Synthetic A']).status_code==200
+    # The two Closed breakdown WOs require a physical RTS confirmation.
+    assert client.get('/api/assets/status').json()['rts']==[]
+    for number in ('BREAK1','BREAK2'):
+        result=client.post('/api/breakdowns/'+number+'/decision',
+                           json={'decision':'rts'})
+        assert result.status_code==200,result.text
     # The event stores the asset identifier as imported from the WO. Editing
     # a display field afterwards must never fabricate a different RTS event.
     preview=client.get('/api/shifts/report/preview')
