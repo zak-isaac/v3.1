@@ -10,10 +10,14 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 import v31_oos
+from v31_cetaris_codes import normalize_wo_status, normalize_primary_rfr
 
 TZ=ZoneInfo("America/Indiana/Indianapolis")
-PRIORITY={"in process":1,"completed":2,"closed":3}
-ALIASES={"manager review required":"completed"}
+# These are not a strict chronological ladder: P -> I and I -> P are both
+# legitimate, and W/O are intermediate statuses, not repair completion.
+PRIORITY={"in process":1,"parts pending":1,"manager review required":1,
+          "outside service":1,"completed":2,"closed":3}
+ACTIVE=tuple(status for status,level in PRIORITY.items() if level == 1)
 
 def _now():
     return datetime.now(TZ).isoformat()
@@ -47,7 +51,9 @@ def _has_hold(conn,asset):
 def unresolved(conn,asset,exclude_wo=""):
     return conn.execute("""SELECT 1 FROM breakdown_state
         WHERE lower(trim(asset))=lower(trim(?)) AND wo_number<>?
-        AND (status='in process' OR (status='completed' AND decision<>'rts'))
+        AND rts_logged=0 AND status IN
+          ('in process','parts pending','manager review required','outside service',
+           'completed','closed')
         LIMIT 1""",(asset,exclude_wo)).fetchone() is not None
 
 def _resolve(conn,wo,asset,shift_id,actor,*,confirm_manual=False,actor_name=""):
@@ -95,20 +101,19 @@ def sync(conn,rows,selected,accepted,shift_id):
     # but are NOT proof that it completed or returned the asset.
     accepted_keys={(str(r.get('wo_number') or '').strip(),
                     str(r.get('tech_name') or '').strip(),
-                    str(r.get('status') or '').strip().casefold())
+                    normalize_wo_status(r.get('status'))[0].casefold())
                    for r in accepted if not r.get('_activity_only')}
     grouped={}
     for raw in rows:
-        if str(raw.get('rfr') or '').strip().casefold()!='breakdown':
+        if normalize_primary_rfr(raw.get('rfr'))[1]!='01':
             continue
         wo=str(raw.get('wo_number') or '').strip()
         asset=str(raw.get('asset_id') or '').strip()
-        status=ALIASES.get(str(raw.get('status') or '').strip().casefold(),
-                           str(raw.get('status') or '').strip().casefold())
+        status=normalize_wo_status(raw.get('status'))[0].casefold()
         if not wo or not asset or status not in PRIORITY:
             continue
         if (wo,str(raw.get('tech_name') or '').strip(),
-            str(raw.get('status') or '').strip().casefold()) not in accepted_keys:
+            normalize_wo_status(raw.get('status'))[0].casefold()) not in accepted_keys:
             continue
         old=grouped.get(wo)
         if not old or PRIORITY[status]>PRIORITY[old[0]]:
@@ -138,17 +143,14 @@ def sync(conn,rows,selected,accepted,shift_id):
           rts_logged=excluded.rts_logged,updated_at=excluded.updated_at""",
           (wo,asset,status,shift_id,decision,logged,_now()))
         changes+=1
-        if status in ('in process','completed') and not (status=='completed' and decision=='rts'):
-            # Ensure import doesn't falsely mark an unresolved asset RTS.
+        if status in PRIORITY and not logged and decision!='rts':
+            # Never infer physical RTS from Cetaris Closed, Completed, or
+            # any intermediate status. Physical return is a separate action.
             conn.execute("""UPDATE report_wo SET status='OOS'
               WHERE shift_id=? AND wo_number=? AND is_manual=0""",(shift_id,wo))
-    for wo,(status,asset) in grouped.items():
-        if status=='closed':
-            _resolve(conn,wo,asset,shift_id,'cetaris_closed')
-        elif status=='completed':
-            state=conn.execute('SELECT decision FROM breakdown_state WHERE wo_number=?',(wo,)).fetchone()
-            if state and state['decision']=='rts':
-                _resolve(conn,wo,asset,shift_id,'prior_review')
+    # No automatic RTS on Closed. Both D and C require a documented,
+    # shift-owned physical RTS confirmation. A later administrative closure
+    # does not create a new repair event or overwrite prior verified returns.
     return changes
 
 def pending(conn,shift_id=None):
@@ -156,7 +158,8 @@ def pending(conn,shift_id=None):
     # A completed breakdown is reviewable only in its verified completion
     # shift, never merely by the shift that imported a later daily file.
     sql="""SELECT wo_number,asset,updated_shift_id
-      FROM breakdown_state WHERE status='completed' AND decision=''"""
+      FROM breakdown_state WHERE status IN ('completed','closed')
+        AND decision='' AND rts_logged=0"""
     params=()
     if shift_id is not None:
         sql+=" AND updated_shift_id=?"
@@ -167,7 +170,7 @@ def decide(conn,wo,choice,shift_id,actor,actor_name=""):
     ensure(conn)
     if choice not in ('rts','keep_oos'):raise ValueError('Invalid RTS decision')
     state=conn.execute("SELECT * FROM breakdown_state WHERE wo_number=?",(wo,)).fetchone()
-    if not state or state['status']!='completed' or state['decision']:
+    if not state or state['status'] not in ('completed','closed') or state['decision'] or state['rts_logged']:
         raise KeyError('Breakdown not pending a decision')
     if state["updated_shift_id"]!=shift_id:
         raise ValueError("Only the documented completing shift can review this breakdown")
@@ -201,7 +204,8 @@ def hold(conn,asset,enabled,actor,reason=''):
 def overview(conn,shift_id=None):
     ensure(conn)
     unresolved_rows=[dict(r) for r in conn.execute("""SELECT * FROM breakdown_state
-      WHERE status='in process' OR (status='completed' AND decision<>'rts')
+      WHERE rts_logged=0 AND status IN ('in process','parts pending',
+        'manager review required','outside service','completed','closed')
       ORDER BY updated_at DESC""")]
     hold_rows=[dict(r) for r in conn.execute('SELECT * FROM breakdown_manual_holds ORDER BY asset')]
     if shift_id is not None:
