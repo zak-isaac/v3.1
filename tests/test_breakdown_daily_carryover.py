@@ -83,8 +83,8 @@ def test_completed_breakdown_stays_with_completing_shift_and_reconciles_oos(
                            (s1, "BD-01")).fetchone()
         new = conn.execute("SELECT status FROM report_wo WHERE shift_id=? AND wo_number=?",
                            (s2, "BD-01")).fetchone()
-    assert old["status"] == "OOS"
-    assert new["status"] == "RTS"
+    assert old["status"] == "IN_PROGRESS"
+    assert new["status"] == "COMPLETED"
     assert client.get("/api/oos").json()["open"] == []
     assets = client.get("/api/assets/status").json()
     assert assets["oos"] == []
