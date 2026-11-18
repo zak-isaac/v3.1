@@ -68,12 +68,20 @@ def summary(conn, shift_id):
                   'manual_oos_id':row['id']}
     for row in breakdown['open']:
         key=_key(row['asset'])
+        workflow_status={
+            'in process':'In Process',
+            'parts pending':'Parts Pending — awaiting replacement parts',
+            'manager review required':'Manager Review',
+            'outside service':'Outside Service',
+            'completed':'Completed — physical RTS review',
+            'closed':'Closed — physical RTS review',
+        }.get(row['status'],row['status'])
+        if row['decision']=='keep_oos':
+            workflow_status+=' (kept OOS)'
         oos[key]={'asset':row['asset'],'source':'Cetaris breakdown',
-                  'wo_number':row['wo_number'],'reason':
-                    ('Completed — still OOS' if row['decision']=='keep_oos'
-                     else 'Completed — RTS review required') if row['status']=='completed'
-                    else 'Repair in progress',
-                  'pending_decision':row['status']=='completed' and not row['decision']
+                  'wo_number':row['wo_number'],'reason':workflow_status,
+                  'pending_decision':row['status'] in ('completed','closed')
+                                     and not row['decision']
                                      and row['updated_shift_id']==shift_id,
                   'decision':row['decision']}
     for row in breakdown['holds']:
