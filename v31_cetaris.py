@@ -23,6 +23,10 @@ from typing import Any
 import csv
 
 from openpyxl import load_workbook
+from v31_cetaris_codes import (
+    normalize_wo_status, normalize_primary_rfr,
+    ACTIVE_WO_STATUSES, COMPLETED_WO_STATUSES,
+)
 
 REQUIRED = (
     "WO Number", "Asset #", "WO Status", "Primary RFR",
@@ -149,10 +153,15 @@ def parse_excel(data: bytes, stats: dict | None = None) -> list[dict]:
             # is the common case, not the fallback -- but prefer Asset ID
             # when a given export does populate it.
             asset_id = _text(get(row, "Asset ID")) or _text(get(row, "Asset #"))
+            status_raw = _text(get(row, "WO Status"))
+            rfr_raw = _text(get(row, "Primary RFR"))
+            status, status_code = normalize_wo_status(status_raw)
+            rfr, rfr_code = normalize_primary_rfr(rfr_raw)
             results.append({
                 "wo_number": wo, "asset_id": asset_id,
-                "status": _text(get(row,"WO Status")),
-                "rfr": _text(get(row,"Primary RFR")),
+                "status": status, "status_code": status_code,
+                "status_raw": status_raw,
+                "rfr": rfr, "rfr_code": rfr_code, "rfr_raw": rfr_raw,
                 # Optional provenance fields, not used by select_records()'s
                 # RFR-based categorization -- see module docstring.
                 "pm_code": _text(get(row, "SJ / PM Code")),
@@ -217,7 +226,11 @@ def _is_pm_category(r: dict) -> bool:
 
 def select_records(rows: list[dict], selected: set[str], start: datetime, end: datetime,
                    closure_reviews: dict[str, str] | None = None):
-    """Count Completed or Closed PM WOs; other Completed WOs require MST choice."""
+    """Include shift labor for C/D/I/W/O/P and all Primary RFR types.
+
+    Only true Completed/Closed PMs count as completed PMs.  A Closed WO
+    does not imply that an asset was physically returned to service.
+    """
     closure_reviews = closure_reviews or {}
     # Cetaris sometimes repeats a WO across labor rows. A confirmed Closed
     # status for that WO takes precedence over a stale Completed labor row.
@@ -226,13 +239,17 @@ def select_records(rows: list[dict], selected: set[str], start: datetime, end: d
                   str(r.get("status","")).strip().casefold() == "closed"}
     summary = Counter()
     eligible = []
-    reminder_wos = set()
+    # One WO can contain multiple labor rows with inconsistent status snapshots.
+    # Preserve each selected technician's remarks and choose statuses below.
     for r in rows:
         if r["tech_name"] not in selected:
             continue
         summary["selected_rows"] += 1
         # Labor Start Date is not a WO eligibility boundary.
-        status = r["status"].strip().casefold()
+        status = normalize_wo_status(r["status"])[0].casefold()
+        category = normalize_primary_rfr(r["rfr"])[0].casefold()
+        summary["rfr_" + str(r.get("rfr_code") or "unknown")] += 1
+        summary["wo_status_" + str(r.get("status_code") or "unknown")] += 1
         if r.get("_activity_only"):
             # Document labor from an earlier shift on a WO finished by
             # somebody else. Never award the earlier shift the completion.
@@ -241,7 +258,6 @@ def select_records(rows: list[dict], selected: set[str], start: datetime, end: d
             continue
         if status == "completed" and r["wo_number"] in closed_wos:
             status = "closed"
-        category = r["rfr"].strip().casefold()
         if category == "breakdown" and status == "in process":
             summary["breakdown_in_process"] += 1
             eligible.append({**r, "kind": "oos"})
@@ -262,12 +278,18 @@ def select_records(rows: list[dict], selected: set[str], start: datetime, end: d
             summary["happening_rows"] += 1
             eligible.append({**r, "kind": "happening", "work_state": "COMPLETED"})
             continue
-        if status == "in process":
-            # Work performed this shift must appear even when nobody has
-            # completed the WO. PMs here are NOT counted as completed PMs.
-            summary["in_process"] += 1
+        if status in ACTIVE_WO_STATUSES:
+            # I/W/O/P are all real in-flight WO statuses.  They are work,
+            # never PM completion and never automatic RTS.  Parts Pending
+            # remains a persisted breakdown state between daily uploads.
+            work_states = {"in process": "IN_PROGRESS",
+                           "manager review required": "MANAGER_REVIEW",
+                           "outside service": "OUTSIDE_SERVICE",
+                           "parts pending": "PARTS_PENDING"}
+            summary["active_" + (r.get("status_code") or "unknown")] += 1
             summary["happening_rows"] += 1
-            eligible.append({**r, "kind": "happening", "work_state": "IN_PROGRESS"})
+            eligible.append({**r, "kind": "happening",
+                             "work_state": work_states[status]})
             continue
         if status != "closed":
             summary["not_closed"] += 1
@@ -279,7 +301,7 @@ def select_records(rows: list[dict], selected: set[str], start: datetime, end: d
             # All other RFR categories, including unfamiliar or blank values,
             # belong in Shift Happenings. Preserve the source RFR verbatim.
             summary["happening_rows"] += 1
-            eligible.append({**r, "kind": "happening"})
+            eligible.append({**r, "kind": "happening", "work_state": "CLOSED"})
     # A technician may log more than one labor row on a WO. Preserve each unique remark.
     grouped = {}
     for r in eligible:
