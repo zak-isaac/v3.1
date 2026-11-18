@@ -259,8 +259,13 @@ def select_records(rows: list[dict], selected: set[str], start: datetime, end: d
         if status == "completed" and r["wo_number"] in closed_wos:
             status = "closed"
         if category == "breakdown" and status == "in process":
+            # A work order being active does NOT prove a physical lockout.
+            # Record technician activity here; the persistent breakdown
+            # tracker handles the repair lifecycle independently.
             summary["breakdown_in_process"] += 1
-            eligible.append({**r, "kind": "oos"})
+            summary["happening_rows"] += 1
+            eligible.append({**r, "kind": "happening",
+                             "work_state": "IN_PROGRESS"})
             continue
         if status == "completed" and _is_pm_category(r):
             # Completing maintenance fulfills a PM. Cetaris administrative
