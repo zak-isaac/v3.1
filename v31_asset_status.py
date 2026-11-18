@@ -51,21 +51,27 @@ def summary(conn, shift_id):
     for key,row in latest.items():
         if row['status']!='OOS' or (key in last_manual and not last_manual[key]['open']):
             continue
-        # Current breakdown state is authoritative when a WO has progressed
-        # from OOS to Closed/confirmed RTS on a later shift. Never keep a
-        # previous OOS snapshot in the live facility KPI after it was fixed.
         tracked=conn.execute(
-            'SELECT 1 FROM breakdown_state WHERE wo_number=?',(row['wo_number'],)
-        ).fetchone()
-        if tracked:
-            continue  # Added below only if unresolved, with actual WO evidence.
-        oos[key]={'asset':row['asset'],'source':'Historical breakdown WO',
-                  'wo_number':row['wo_number'],'reason':'Unresolved previous OOS'}
+            'SELECT rts_logged FROM breakdown_state WHERE wo_number=?',
+            (row['wo_number'],)).fetchone()
+        if tracked and tracked['rts_logged']:
+            continue
+        # Preserve historical OOS records during a V3.1 upgrade instead of
+        # silently clearing equipment that may still be locked out. New
+        # imports no longer manufacture OOS records from a WO status alone.
+        oos[key]={'asset':row['asset'],'source':'Historical OOS record',
+                  'wo_number':row['wo_number'],
+                  'reason':'Previously reported OOS — verify current availability'}
     for row in manual_open:
         key=_key(row['asset'])
         oos[key]={'asset':row['asset'],'source':'OOS record',
                   'wo_number':'','reason':row.get('cause') or 'Repair / verification outstanding',
                   'manual_oos_id':row['id']}
+
+    # Every unresolved Breakdown WO is active, but not necessarily down.
+    # A physical OOS claim requires a manual OOS entry, explicit hold,
+    # or the completing shift's explicit "Keep OOS" decision.
+    active_breakdowns=[]
     for row in breakdown['open']:
         key=_key(row['asset'])
         workflow_status={
@@ -78,19 +84,27 @@ def summary(conn, shift_id):
         }.get(row['status'],row['status'])
         if row['decision']=='keep_oos':
             workflow_status+=' (kept OOS)'
-        oos[key]={'asset':row['asset'],'source':'Cetaris breakdown',
-                  'wo_number':row['wo_number'],'reason':workflow_status,
-                  'pending_decision':row['status'] in ('completed','closed')
-                                     and not row['decision']
-                                     and row['updated_shift_id']==shift_id,
-                  'decision':row['decision']}
+            oos[key]={'asset':row['asset'],'source':'Confirmed breakdown OOS',
+                      'wo_number':row['wo_number'],'reason':workflow_status,
+                      'decision':row['decision']}
+        active_breakdowns.append({
+            'asset':row['asset'],'source':'Active breakdown WO',
+            'wo_number':row['wo_number'],'reason':workflow_status,
+            'status':row['status'],'decision':row['decision'],
+            'pending_decision':row['status'] in ('completed','closed')
+                                and not row['decision']
+                                and row['updated_shift_id']==shift_id,
+        })
     for row in breakdown['holds']:
         key=_key(row['asset'])
         prior=oos.get(key,{})
         oos[key]={'asset':row['asset'],'source':'Manual hold',
                   'wo_number':prior.get('wo_number',''),
                   'reason':row.get('reason') or 'Hold remains active',
-                  'hold':True,'pending_decision':prior.get('pending_decision',False)}
+                  'hold':True}
+
+    for entry in active_breakdowns:
+        entry['operational_oos']=_key(entry['asset']) in oos
 
     # Keep displayed RTS and the Outlook email in sync via one authoritative
     # list. Count breakdown WOs only after a documented RTS confirmation.
@@ -100,6 +114,8 @@ def summary(conn, shift_id):
                if item['breakdown'] and item['wo_number']}
 
     return {'oos':sorted(oos.values(),key=lambda item:item['asset'].casefold()),
+            'active_breakdowns':sorted(active_breakdowns,
+                                      key=lambda item:item['asset'].casefold()),
             'rts':sorted(rts.values(),key=lambda item:item['asset'].casefold()),
             'breakdowns':sorted(confirmed.values(),key=lambda item:item['asset'].casefold()),
             'pending':breakdown['pending']}
