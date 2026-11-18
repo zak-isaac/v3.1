@@ -365,7 +365,8 @@ def test_pm_counts_once_and_does_not_enter_shift_happenings(client,monkeypatch):
     assert data["pm_count"]==1
     assert data["pms"][0]["wo_number"]=="PM900"
     assert "PM900" not in {v["wo_number"] for v in data["rows"]}
-    assert any(x["wo_number"]=="9003" and x["status"]=="OOS" for x in data["rows"])
+    assert any(x["wo_number"]=="9003" and x["status"]=="IN_PROGRESS" for x in data["rows"])
+    assert any(x["wo_number"]=="9003" for x in client.get('/api/assets/status').json()['active_breakdowns'])
 
 
 def test_edit_and_exclude_survive_reimport_and_relogin(client,monkeypatch):
@@ -558,7 +559,8 @@ def test_cross_shift_breakdown_can_transition_from_oos_to_rts(client,monkeypatch
     first=import_techs(client,["Synthetic A"])
     assert first.status_code==200,first.text
     first_record=client.get("/api/reporting/state").json()["rows"][0]
-    assert first_record["status"]=="OOS"
+    assert first_record["status"]=="IN_PROGRESS"
+    assert client.get('/api/assets/status').json()['oos']==[]
     clock(monkeypatch,day=26,hour=14)
     second=client.post("/api/shifts/start",json={"code":"S2"})
     assert second.status_code==200,second.text
@@ -569,7 +571,7 @@ def test_cross_shift_breakdown_can_transition_from_oos_to_rts(client,monkeypatch
     final=import_techs(client,["Synthetic A"])
     assert final.status_code==200,final.text
     current=client.get("/api/reporting/state").json()["rows"]
-    assert len(current)==1 and current[0]["status"]=="OOS"
+    assert len(current)==1 and current[0]["status"]=="CLOSED"
     # Cetaris Closed must NOT silently return a breakdown to service.
     assert client.get('/api/assets/status').json()['rts']==[]
     review=client.post('/api/breakdowns/BREAK1/decision',json={'decision':'rts'})
@@ -578,7 +580,7 @@ def test_cross_shift_breakdown_can_transition_from_oos_to_rts(client,monkeypatch
     with m._db() as db:
         old=db.execute("SELECT status FROM report_wo WHERE shift_id=?",(s1,)).fetchone()
         new=db.execute("SELECT status FROM report_wo WHERE shift_id=?",(s2,)).fetchone()
-    assert old["status"]=="OOS" and new["status"]=="RTS"
+    assert old["status"]=="IN_PROGRESS" and new["status"]=="CLOSED"
     # Old shift audit remains immutable but live persistent OOS must clear
     # after the same breakdown's Closed/RTS event in the following shift.
     assets=client.get('/api/assets/status')
