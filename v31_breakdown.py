@@ -1,8 +1,9 @@
 """V3-inspired Cetaris breakdown lifecycle with confirmed RTS and manual OOS holds.
 
-In Process -> globally OOS. Completed/Manager Review Required -> human RTS or
-keep OOS decision. Closed -> RTS only when no outstanding same-asset breakdown
-or explicit/manual hold. Never use unrelated maintenance as RTS evidence.
+C/D/I/W/O/P Cetaris WO statuses remain independent of equipment return.
+Active repairs (including Parts Pending) persist; Completed/Closed require
+shift-owned human RTS or keep-OOS review, with explicit equipment holds obeyed.
+Never use unrelated maintenance as RTS evidence.
 Global state survives shift boundaries; historical snapshots are immutable.
 """
 from __future__ import annotations
@@ -157,7 +158,7 @@ def pending(conn,shift_id=None):
     ensure(conn)
     # A completed breakdown is reviewable only in its verified completion
     # shift, never merely by the shift that imported a later daily file.
-    sql="""SELECT wo_number,asset,updated_shift_id
+    sql="""SELECT wo_number,asset,status,updated_shift_id
       FROM breakdown_state WHERE status IN ('completed','closed')
         AND decision='' AND rts_logged=0"""
     params=()
