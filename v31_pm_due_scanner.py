@@ -14,6 +14,7 @@ import csv
 from openpyxl import load_workbook
 from openpyxl.utils.datetime import from_excel
 from v31_cetaris_codes import normalize_primary_rfr, normalize_wo_status
+from v31_cetaris import _parse_dt
 
 PENDING_CODES=frozenset(("T","I","P","W","O","U"))
 DONE_CODES=frozenset(("D","C"))
@@ -133,6 +134,7 @@ def scan(content,code,shift_day):
                 continue
             state=("completed" if status_code in DONE_CODES else
                    "outstanding" if status_code in PENDING_CODES else "review")
+            updated=_parse_dt(get(row,"update date / time"))
             item={"wo_number":wo,"wo_date":_cell(get(row,"wo date / time")),
                   "pm_due_date":parsed.strftime("%m/%d/%Y"),
                   "due_iso":parsed.isoformat(),
@@ -141,7 +143,7 @@ def scan(content,code,shift_day):
                   "wo_status":status or raw_status or "Status not provided",
                   "status_code":status_code,"state":state,
                   "source":"WO Details",
-                  "_updated":_cell(get(row,"update date / time"))}
+                  "_updated":updated.isoformat() if updated else ""}
             previous=keyed.get(wo)
             if previous is None:
                 keyed[wo]=item
@@ -152,7 +154,7 @@ def scan(content,code,shift_day):
                 # timestamps are absent, avoid declaring a finished PM open
                 # merely because an older To-Be-Done labor row was repeated.
                 if ((new_time and (not prior_time or new_time>prior_time)) or
-                    (not prior_time and not new_time and
+                    ((new_time==prior_time or (not prior_time and not new_time)) and
                      previous["state"]!="completed" and state=="completed")):
                     keyed[wo]=item
         result["rows"]=sorted(
