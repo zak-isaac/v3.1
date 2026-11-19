@@ -362,6 +362,10 @@ def import_selection(conn, shift_id: int, shift_code: str, shift_day: str,
         wo=str(r.get("wo_number") or "")
         candidates=[parse_close(r.get(f)) for f in
                     ("last_complete_at","in_service_at","start_at")]
+        if r.get("_update_only"):
+            # The old WO Start Date remains historical; a new, accepted
+            # technician note update belongs to the present shift.
+            candidates.append(parse_close(r.get("updated_at")))
         moment=max((c for c in candidates if c), default=None)
         if moment and (wo not in wo_work_at or moment>wo_work_at[wo]):
             wo_work_at[wo]=moment
