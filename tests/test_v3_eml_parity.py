@@ -99,7 +99,7 @@ def test_pm_needing_completion_renders_as_bordered_zebra_table_in_eml(client, mo
     clock(monkeypatch)
     enter(client, "S1")
     _import_one_wo(client)
-    pm_csv = b"WO Number,PM Due Date,Asset #\nPMPARITY1,11/05/2026,BALER-PARITY\n"
+    pm_csv = b"WO Number,PM Due Date,Asset #\nPMPARITY1,10/26/2026,BALER-PARITY\n"
     uploaded = client.post("/api/pm-needing-completion/upload",
         files={"file": ("pm-needing.csv", pm_csv, "text/csv")})
     assert uploaded.status_code == 200, uploaded.text
