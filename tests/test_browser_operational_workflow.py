@@ -91,8 +91,13 @@ def test_real_browser_manual_pm_breakdown_passdown_and_end_shift(live_server):
         page.locator('[data-nav="report"]').click()
 
         # PM needing completion: an actual file, not just a preview filename.
+        # Use the shift date actually selected in the live Indiana-time
+        # browser session, not an unrelated hardcoded PM due date.
+        target=page.evaluate("""async () => (await (await fetch(
+            '/api/pm-needing-completion')).json()).target_dates[0]""")
+        due=f"{target[5:7]}/{target[8:10]}/{target[:4]}"
         pm_csv=chr(10).join(['WO Number,PM Due Date,Asset #',
-                             'PMUI001,11/05/2026,BALER-UI','']).encode('utf-8')
+                             f'PMUI001,{due},BALER-UI','']).encode('utf-8')
         with page.expect_response(lambda r:'/api/pm-needing-completion/upload' in r.url) as uploaded:
             page.locator('#pending-picker').set_input_files({
               'name':'pm-needing-ui.csv','mimeType':'text/csv','buffer':pm_csv
