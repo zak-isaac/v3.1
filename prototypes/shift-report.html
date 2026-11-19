@@ -434,25 +434,33 @@ function rowDetail(id){
 }
 function listPane(kind){let list=kind==='vendors'?state.vendors:state.ro;let title=kind==='vendors'?'Vendor Activity':'RO / Work Requests';return `<div class="secondary-pane"><div class="pane-header"><div><h3>${title}</h3><p>Items entered manually for this shift's final report.</p></div><button class="btn btn-primary" id="add-list-entry">+ Add ${kind==='vendors'?'Vendor':'RO'}</button></div><div class="item-list">${list.length?list.map((t,i)=>`<div class="item-card"><div><strong>${esc(t)}</strong><small>Manual reporting entry</small></div><button class="btn btn-light btn-small" data-list-edit="${i}">Edit</button></div>`).join(''):'<p>No entries have been added for this shift.</p>'}</div></div>`;}
 function pmTab(){
-  const needed=state.pmNeeds||{present:false,count:0,rows:[]};
-  const completed=state.pms.length?state.pms.map(r=>`<div class="item-card"><div><strong>${esc(r.asset||'Asset not specified')} · WO# ${esc(r.wo_number)}</strong><small>${esc(r.tech||'')}</small></div><span class="status-pill rts">Completed</span></div>`).join(''):'<p class="field-help">No completed PMs imported yet.</p>';
-  // Match the V2/V3 Outlook PM table instead of mixing outstanding PMs
-  // into generic asset cards. Show exactly the columns parsed from the file.
+  const needed=state.pmNeeds||{present:false,has_source:false,count:0,due_count:0,completed_count:0,rows:[],notes:[],target_dates:[]};
+  const completed=state.pms.length?state.pms.map(r=>`<div class="item-card"><div><strong>${esc(r.asset||'Asset not specified')} · WO# ${esc(r.wo_number)}</strong><small>${esc(r.tech||'')}</small></div><span class="status-pill rts">Completed</span></div>`).join(''):'<p class="field-help">No completed PMs imported for this shift.</p>';
   const cell=(value,bold=false)=>`<td style="padding:8px 10px;border:1px solid #d1d5db;${bold?'font-weight:700;':''}">${esc(value||'—')}</td>`;
-  const toDo=needed.rows?.length?`<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13px;min-width:660px">
+  const due=needed.rows?.length?`<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13px;min-width:760px">
     <thead><tr style="background:#144a86;color:#fff"><th style="padding:10px;text-align:left">WO #</th>
     <th style="padding:10px;text-align:left">Asset</th><th style="padding:10px;text-align:left">PM Due Date</th>
+    <th style="padding:10px;text-align:left">WO Status</th><th style="padding:10px;text-align:left">Due Flag</th>
     <th style="padding:10px;text-align:left">Promise Date / Time</th><th style="padding:10px;text-align:left">WO Date / Time</th></tr></thead>
     <tbody>${needed.rows.map((r,i)=>`<tr style="background:${i%2?'#f3f7fc':'#fff'}">
       ${cell(r.wo_number,true)}${cell(r.asset_num,true)}${cell(r.pm_due_date,true)}
+      ${cell(r.wo_status||'Not provided')}${cell(r.state==='completed'?'Completed':r.state==='review'?'Review — due today':'NEEDS COMPLETION',r.state!=='completed')}
       ${cell(r.promise_date)}${cell(r.wo_date)}</tr>`).join('')}</tbody></table></div>`:'';
-  const missing=needed.present?(needed.parsed?'No PM rows in the uploaded file.':'Reference file saved; details not machine-parsed.'):'No PMs Needing Completion file uploaded yet.';
+  const missing=needed.has_source?
+      'No PMs with the selected due date were identified. Verify that the exported To-Be-Done list covers the date; this does not prove none are due.':
+      'No daily PM source available. Upload Today’s DAILY PMs, or include due PMs in the WO Details export.';
+  const dates=(needed.target_dates||[]).join(', ');
+  const notes=(needed.notes||[]).map(n=>`<p class="field-help" style="color:#a15c00">${esc(n)}</p>`).join('');
   return `<div class="secondary-pane">
-    <div class="pane-header"><div><h3>Completed PMs · ${state.pmCount}</h3><p>From the completed-work-order Cetaris import.</p></div></div>
+    <div class="pane-header"><div><h3>Completed PMs This Shift · ${state.pmCount}</h3><p>Verified from completed Cetaris PM work orders.</p></div></div>
     <div class="item-list">${completed}</div>
-    <div class="pane-header"><div><h3>PMs Needing Completion · ${needed.count||0}</h3><p>Outstanding PM work orders extracted from the separate V2/V3 report. Counted once per WO.</p></div></div>
-    ${needed.present?'<p>Uploaded: '+esc(needed.filename)+'</p>':''}
-    <div class="item-list">${toDo||'<p class="field-help">'+missing+'</p>'}</div>
+    <div class="pane-header"><div><h3>Daily PMs Due · ${needed.due_count||0}</h3>
+      <p>PM Due Date: ${esc(dates||'selected shift date')} · Still needing completion: <strong>${needed.count||0}</strong> · Completed: ${needed.completed_count||0}</p>
+      <p>All Primary RFR 08 PMs due on these dates, including unassigned To-Be-Done WOs. Work orders counted once.</p></div></div>
+    ${needed.auto_available?'<p class="field-help">WO Details scan: '+esc(needed.auto_filename||'Cetaris export')+'</p>':''}
+    ${needed.present?'<p class="field-help">Supplemental Today’s DAILY PMs: '+esc(needed.filename)+'</p>':''}
+    ${notes}
+    <div class="item-list">${due||'<p class="field-help">'+missing+'</p>'}</div>
   </div>`;
 }
 function breakdownTab(){
@@ -637,11 +645,13 @@ function buildEmailHtml(){
     :`<p style="font-size:14px;font-family:Calibri,Arial,sans-serif;margin-top:18px;"><strong style="color:#b45309;">&#9888; LOTO Verification Pending</strong></p>`;
   const missingKeyHtml=state.missingKeys?.length
     ?`<p style="color:#c00;margin:2px 0;font-size:14px;font-family:Calibri,Arial,sans-serif;"><strong>Missing key${state.missingKeys.length>1?'s':''}:</strong> ${esc(state.missingKeys.join(', '))}</p>`:'';
-  // V3.1 does not yet have the real pending-PM data source wired (see
-  // README). Showing "none pending" would be a false claim -- the MST has
-  // no way to know if that's true. State it as unavailable instead, and
-  // remove this block entirely once Phase 2 wires the real V3 PM workflow.
-  const pmHtml=`<p style="margin:16px 0 2px;"><strong style="font-size:16px;">PM's Needing to be Completed</strong></p><p style="margin:0 0 6px;font-size:14px;color:#6b7280;font-style:italic;">Pending-PM tracking is not yet connected in V3.1 -- not shown.</p>`;
+  // Match server-rendered daily due-PM data, not an old placeholder.
+  // The canonical .eml is saved server-side from this same persisted inventory.
+  const pmDue=state.pmNeeds||{rows:[],count:0,due_count:0,completed_count:0};
+  const pmRows=(pmDue.rows||[]).map(p=>`<tr><td>${esc(p.wo_number)}</td><td>${esc(p.asset_num||'')}</td><td>${esc(p.pm_due_date||'')}</td><td>${esc(p.wo_status||'')}${p.state==='completed'?'':' — NEEDS COMPLETION'}</td></tr>`).join('');
+  const pmHtml=`<p style="margin:16px 0 2px;"><strong style="font-size:16px;">PMs Needing Completion</strong></p>
+    <p>PMs due: ${pmDue.due_count||0} · Still needing completion: ${pmDue.count||0} · Completed: ${pmDue.completed_count||0}</p>
+    ${pmRows?'<table style="border-collapse:collapse;" border="1"><thead><tr><th>WO #</th><th>Asset</th><th>PM Due Date</th><th>WO Status</th></tr></thead><tbody>'+pmRows+'</tbody></table>':'<p>Due-PM list not confirmed; verify the To-Be-Done export.</p>'}`;
   return '<html><body style="font-family:Calibri,Arial,sans-serif;font-size:14px;color:#111;max-width:700px;line-height:1.6;">'+
     `<p style="margin:0 0 18px;font-size:18px;"><strong>${esc(shift)} End of Shift Passdown</strong></p>`+
     sec('Vendors',bulletList(state.vendors.map(v=>esc(v))))+
