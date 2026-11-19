@@ -81,6 +81,7 @@ def test_proactive_repair_closed_with_pm_code_is_not_counted_as_pm():
     base={"wo_number":"PROCODE","tech_name":"Tech One","asset_id":"RC0011",
           "rfr":"Proactive Repair","pm_code":"E.001.BALER.WALK",
           "remarks":"Adjusted photoeye","status":"Closed",
+          "reported_issue":"Proactive photoeye adjustment",
           "start_at":"2026-10-26T08:10:00","in_service_at":""}
     accepted,summary=select_records([base],{"Tech One"},None,None)
     assert len(accepted)==1
