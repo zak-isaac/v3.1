@@ -165,8 +165,17 @@ def stage(conn, shift_id, payload: bytes, filename: str, actor: str):
         uploaded_by=excluded.uploaded_by,uploaded_at=excluded.uploaded_at,applied_at=NULL,
         prior_techs_json=excluded.prior_techs_json""",
         (shift_id,filename,_json(rows),_json(stats),actor,_now(),_json(prior_names)))
+    # The WO Details file can contain due PMs with NO Technician (usually
+    # To Be Done). Keep this due-date scan distinct from labor attribution:
+    # a To-Be-Done PM must never become a completed PM or a happening.
+    due_summary=v31_pm.scan_wo_details(conn,shift_id,filename,payload)
+    # An updated due-PM table changes the saved Outlook passdown, even before
+    # the new shift labor rows have been explicitly selected/imported.
+    conn.execute("""UPDATE shifts SET report_saved_at='',report_content='',
+        report_html='',report_hash='',report_eml=X'' WHERE id=?""",(shift_id,))
     return {"filename":filename,"technicians":technicians,
-            "stats":stats,"staged":True,"requires_selection":True}
+            "stats":stats,"staged":True,"requires_selection":True,
+            "pm_due":due_summary}
 
 
 def stage_details(conn, shift_id):
