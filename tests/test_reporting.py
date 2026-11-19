@@ -310,8 +310,8 @@ def test_pm_needing_completion_upload_is_real_and_separate_from_completed_pm_cou
     clock(monkeypatch)
     shift_id=enter(client)
     csv=(b"WO Number,WO Date / Time,PM Due Date,Promise Date / Time,Asset #\n"
-         b"PM100,10/26/2026,10/27/2026,10/28/2026,CONV-1\n"
-         b"PM200,10/26/2026,10/27/2026,10/28/2026,CONV-2\n")
+         b"PM100,10/26/2026,10/26/2026,10/28/2026,CONV-1\n"
+         b"PM200,10/26/2026,10/26/2026,10/28/2026,CONV-2\n")
     uploaded=client.post('/api/pm-needing-completion/upload',files={
         'file':('pm-needing.csv',csv,'text/csv')
     })
@@ -336,7 +336,7 @@ def test_pm_needing_completion_upload_is_real_and_separate_from_completed_pm_cou
 def test_pm_report_rejects_unparseable_workbook_without_erasing_previous(client,monkeypatch):
     clock(monkeypatch)
     enter(client)
-    good=b'WO Number,PM Due Date,Asset #\nPM101,10/27/2026,ASSET-1\n'
+    good=b'WO Number,PM Due Date,Asset #\nPM101,10/26/2026,ASSET-1\n'
     saved=client.post('/api/pm-needing-completion/upload',files={'file':('good.csv',good,'text/csv')})
     assert saved.status_code==200
     bad=client.post('/api/pm-needing-completion/upload',files={
