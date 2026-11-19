@@ -846,7 +846,7 @@ window.v31ReportView={
         state.loto=!!data.draft.loto;
         state.missingKeys=data.draft.missingKeys||[];
         $('#loto-toggle').checked=state.loto;
-        $('.loto-key',$('#missing-keys')).forEach(c=>c.checked=state.missingKeys.includes(c.value));
+        $$('.loto-key',$('#missing-keys')).forEach(c=>c.checked=state.missingKeys.includes(c.value));
         $('#loto-state').textContent=state.loto?'Verified':'Not verified';
         $('#loto-state').classList.toggle('missing',!state.loto);
       }
