@@ -352,23 +352,49 @@ def assign(rows, selected_split, shift_code, shift_day, decisions=None,
             continue
         wo = str(r.get("wo_number") or "")
         status = normalize_wo_status(r.get("status"))[0].casefold()
+        begin = parse_close(r.get("start_at"))
+        start_owner = _resolve(begin, tech, history, roster_shifts) if begin else None
+        updated = parse_close(r.get("updated_at"))
+        # Cetaris may retain yesterday's original Start Date when a
+        # technician adds new remarks on the same WO today. Treat a
+        # technician-associated, documented Update Date / Time as evidence
+        # of today's REPORT ACTIVITY only; it is never proof of finishing
+        # the repair or physically returning equipment to service.
+        updated_owner = (
+            _resolve(updated, tech, history, roster_shifts)
+            if updated and (begin is None or updated > begin)
+               and str(r.get("remarks") or "").strip()
+            else None
+        )
+        updated_this_shift = updated_owner == (shift_code, day)
         if status in COMPLETED_WO_STATUSES:
             if owners.get(wo) == (shift_code, day):
                 accepted.append(r)
             else:
-                # A different shift may complete this shared WO. Its earlier
-                # technician labor is still reportable on the shift where
-                # that labor STARTED, but it must never count as a repair
-                # completion, completed PM, or RTS for this shift.
-                begin = parse_close(r.get("start_at"))
-                if begin and _resolve(begin,tech,history,roster_shifts) == (shift_code,day):
+                # Existing Closed/Completed WO numbers must never prevent a
+                # new shift documenting work today. The old WO's completion
+                # belongs to its original shift, while today's work belongs
+                # to the technician's ACTUAL labor/update shift.
+                if start_owner == (shift_code,day):
                     accepted.append({**r, "_activity_only": True})
+                elif updated_this_shift:
+                    accepted.append({**r, "_activity_only": True,
+                                     "_update_only": True})
         elif status in ACTIVE_WO_STATUSES:
-            # I/W/O/P activity belongs to the actual labor shift.
-            # It does not imply repair completion or physical RTS.
-            # Breakdown OOS retains start-time ownership, because an active
-            # breakdown naturally has no completion timestamp yet.
-            when = parse_close(r.get("start_at")) or parse_close(r.get("opened_at"))
-            if when and _resolve(when,tech,history,roster_shifts) == (shift_code, day):
+            # Prefer a genuine new technician labor start. WO Date / Time
+            # is the WO's initial creation time, not daily work evidence.
+            if start_owner == (shift_code,day):
                 accepted.append(r)
+            elif updated_this_shift:
+                # Updating notes on a pre-existing active WO must appear in
+                # this shift's Happenings, but not create an RTS/completion or
+                # overwrite the global breakdown lifecycle from an edit.
+                accepted.append({**r, "_activity_only": True,
+                                 "_update_only": True})
+            elif not begin and not updated:
+                # Legacy exports with no labor clock can only use WO opened
+                # time as a conservative initial activity fallback.
+                opened = parse_close(r.get("opened_at"))
+                if opened and _resolve(opened,tech,history,roster_shifts)==(shift_code,day):
+                    accepted.append(r)
     return accepted, pending
