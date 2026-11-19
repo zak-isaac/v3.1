@@ -736,6 +736,9 @@ for(let i=1;i<=20;i++){
   const span=document.createElement('span');span.textContent=`Key ${i}`;label.append(cb,span);keyGrid.append(label);
 }
 const toggle=$('#loto-toggle');
+// Protect optimistic LOTO state from an older in-flight refresh. Server
+// state is reconciled once the immediate save finishes.
+let lotoWritesPending=0;
 function checkedKeys(){return $$('.loto-key',keyGrid).filter(c=>c.checked).map(c=>c.value);}
 function lotoVisual(){
   state.loto=toggle.checked;
@@ -750,11 +753,20 @@ async function persistLoto(){
   const savedLabel=$('#last-saved');
   if(savedLabel){const now=new Date();savedLabel.textContent=`Changed ${now.toLocaleTimeString([], {hour:'numeric',minute:'2-digit'})}`;}
 }
-toggle.addEventListener('change',()=>{persistLoto().catch(e=>toast('LOTO save failed: '+e.message));});
+toggle.addEventListener('change',async()=>{
+  lotoWritesPending++;
+  try{await persistLoto();}
+  catch(e){toast('LOTO save failed: '+e.message);}
+  finally{
+    lotoWritesPending--;
+    window.V31Reporting?.refresh()?.catch(()=>{});
+  }
+});
 keyGrid.addEventListener('change',async e=>{
   const box=e.target;
   if(!box.classList.contains('loto-key'))return;
   const previousKeys=[...state.missingKeys], previousVerified=toggle.checked;
+  lotoWritesPending++;
   // Marking a missing key records a completed inspection, not an unverified one.
   if(box.checked)toggle.checked=true;
   lotoVisual();
@@ -780,8 +792,12 @@ keyGrid.addEventListener('change',async e=>{
     // Refresh authoritative server state if one of the two writes succeeded.
     window.V31Reporting?.refresh()?.catch(()=>{});
   }finally{
-    $$('.loto-key',keyGrid).forEach(c=>c.disabled=false);
+    $('.loto-key',keyGrid).forEach(c=>c.disabled=false);
     if(generateButton)generateButton.disabled=wasGenerateDisabled;
+    lotoWritesPending--;
+    // Reconcile one authoritative server snapshot after the write, rather
+    // than allowing an older request to turn verification back off.
+    window.V31Reporting?.refresh()?.catch(()=>{});
   }
 });
 $('#loto-keys-toggle').addEventListener('click',()=>{const area=$('#loto-select-area');const open=area.hidden;area.hidden=!open;$('#loto-keys-toggle').setAttribute('aria-expanded',String(open));});
@@ -825,11 +841,15 @@ window.v31ReportView={
     state.stageImported=!!data.stage?.imported;
     if(data.draft){
       state.vendors=data.draft.vendors||[];state.ro=data.draft.ro||[];
-      state.notes=data.draft.notes||'';state.loto=!!data.draft.loto;
-      state.missingKeys=data.draft.missingKeys||[];
-      $('#loto-toggle').checked=state.loto;$$('.loto-key',$('#missing-keys')).forEach(c=>c.checked=state.missingKeys.includes(c.value));
-      $('#loto-state').textContent=state.loto?'Verified':'Not verified';
-      $('#loto-state').classList.toggle('missing',!state.loto);
+      state.notes=data.draft.notes||'';
+      if(!lotoWritesPending){
+        state.loto=!!data.draft.loto;
+        state.missingKeys=data.draft.missingKeys||[];
+        $('#loto-toggle').checked=state.loto;
+        $('.loto-key',$('#missing-keys')).forEach(c=>c.checked=state.missingKeys.includes(c.value));
+        $('#loto-state').textContent=state.loto?'Verified':'Not verified';
+        $('#loto-state').classList.toggle('missing',!state.loto);
+      }
     }
     $('#cetaris-state').textContent=!data.stage?.staged?'No Cetaris File Imported':
       data.stage.imported?'Cetaris Imported':'Cetaris Parsed · Confirm Technicians';
