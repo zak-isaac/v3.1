@@ -69,7 +69,11 @@ async function upload(file){
    await refresh();
    const n=result.stats.parsed_rows||0;
    if(!n){
-     feedback('File accepted but no technician labor rows were found. Review the Cetaris export and header columns.','warning');
+     if(result.pm_due?.due_count){
+       feedback(result.pm_due.due_count+' PMs due on the selected date(s) were identified. No technician labor rows were found, so Shift Happenings remain empty. Review the Daily PMs Due tab.','warning');
+     }else{
+       feedback('File accepted but no technician labor rows or due PMs were found. Verify WO Details filters and upload Today\u2019s DAILY PMs if pending work is missing.','warning');
+     }
      return;
    }
    feedback(n+' labor rows parsed. Drax-matched technicians are selected below; confirm to import.');
