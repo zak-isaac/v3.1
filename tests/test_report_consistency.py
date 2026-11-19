@@ -325,7 +325,32 @@ def test_loto_missing_key_selection_also_satisfies_shift_progress(page_ctx):
     # Reveal the missing-key checklist and select one key -- never touch the
     # main "Verified" switch.
     page.locator('#loto-keys-toggle').click()
-    page.locator('.loto-key').first.check()
+    with page.expect_response(
+        lambda response: '/api/reporting/loto/missing-key' in response.url
+        and response.request.method == 'POST', timeout=12000
+    ) as saved_key:
+        page.locator('.loto-key').first.check()
+    assert saved_key.value.status == 200
+    # Final EML must not generate while a facility key warning is saving.
+    try:
+        page.wait_for_function("""async () => {
+            const button=document.querySelector('#generate-eml');
+            if(!button || button.disabled)return false;
+            const response=await fetch('/api/reporting/state');
+            if(!response.ok)return false;
+            const state=await response.json();
+            return state.draft?.loto===true &&
+                state.draft?.missingKeys?.includes('Key 1');
+        }""",timeout=12000)
+    except Exception as err:
+        diagnostics=page.evaluate("""async () => ({
+            disabled:document.querySelector('#generate-eml')?.disabled,
+            verified:document.querySelector('#loto-toggle')?.checked,
+            toast:document.querySelector('#toast')?.textContent,
+            state:await (await fetch('/api/reporting/state')).json()
+        })""")
+        raise AssertionError('LOTO save did not restore report readiness: '+
+                             str(diagnostics)) from err
 
     assert page.locator('#loto-toggle').is_checked(), \
         "Documenting a missing key also marks LOTO checked for this shift"
