@@ -42,7 +42,7 @@ def test_old_in_process_wo_with_new_update_today_is_in_todays_happenings(
     current=client.get("/api/reporting/state").json()
     assert len(current["rows"])==1,current["rows"]
     assert current["rows"][0]["wo_number"]=="REPEAT-I"
-    assert current["rows"][0]["status"]=="WORKED"
+    assert current["rows"][0]["status"]=="IN_PROGRESS"
     assert "New troubleshooting recorded during S2" in current["rows"][0]["remarks"]
     with helpers.m._db() as conn:
         earlier=conn.execute(
