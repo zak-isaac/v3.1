@@ -792,7 +792,7 @@ keyGrid.addEventListener('change',async e=>{
     // Refresh authoritative server state if one of the two writes succeeded.
     window.V31Reporting?.refresh()?.catch(()=>{});
   }finally{
-    $('.loto-key',keyGrid).forEach(c=>c.disabled=false);
+    $$('.loto-key',keyGrid).forEach(c=>c.disabled=false);
     if(generateButton)generateButton.disabled=wasGenerateDisabled;
     lotoWritesPending--;
     // Reconcile one authoritative server snapshot after the write, rather
