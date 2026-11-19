@@ -12,6 +12,7 @@ from collections import Counter
 import csv
 
 from openpyxl import load_workbook
+from openpyxl.utils.datetime import from_excel
 from v31_cetaris_codes import normalize_primary_rfr, normalize_wo_status
 
 PENDING_CODES=frozenset(("T","I","P","W","O","U"))
@@ -24,6 +25,9 @@ def due_dates_for_shift(code, shift_day):
     return frozenset(days)
 
 def due_date(value):
+    if isinstance(value,(int,float)) and 20000<=value<=90000:
+        parsed=from_excel(value)
+        return parsed.date() if isinstance(parsed,datetime) else parsed
     if isinstance(value,datetime):
         return value.date()
     if isinstance(value,date):
@@ -31,12 +35,21 @@ def due_date(value):
     value=str(value or "").strip()
     if not value:
         return None
+    if value.replace(".", "", 1).isdigit():
+        try:
+            number=float(value)
+            if 20000<=number<=90000:
+                parsed=from_excel(number)
+                return parsed.date() if isinstance(parsed,datetime) else parsed
+        except (TypeError,ValueError):
+            pass
     try:
         return datetime.fromisoformat(value.replace("Z","+00:00")).date()
     except ValueError:
         pass
     for fmt in ("%m/%d/%Y","%m/%d/%y","%m-%d-%Y",
-                "%m/%d/%Y %I:%M %p","%m/%d/%Y %H:%M",
+                "%m/%d/%Y %I:%M %p","%m/%d/%Y %I:%M:%S %p",
+                "%m/%d/%Y %H:%M",
                 "%Y-%m-%d %I:%M:%S %p"):
         try:
             return datetime.strptime(value,fmt).date()
