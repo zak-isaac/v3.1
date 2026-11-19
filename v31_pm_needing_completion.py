@@ -64,9 +64,21 @@ def scan_wo_details(conn,shift_id,filename,content):
             "to_be_done_seen":result["to_be_done_seen"],
             "notes":result["notes"]}
 
-def _completed_wo_numbers(conn):
+def _completed_wo_numbers(conn,shift_id):
     if not conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='report_pm'").fetchone():
         return set()
+    # A later shift must not retroactively mark an earlier shift's due
+    # inventory completed. Only accept completed PMs already reported by
+    # the time the target shift opened, plus its own PM completions.
+    if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='shifts'").fetchone():
+        target=conn.execute("SELECT created_at FROM shifts WHERE id=?",(shift_id,)).fetchone()
+        if target:
+            return {r[0] for r in conn.execute(
+                """SELECT DISTINCT p.wo_number FROM report_pm p
+                   JOIN shifts s ON s.id=p.shift_id
+                   WHERE p.selection_hidden=0
+                     AND (s.created_at<=? OR p.shift_id=?)""",
+                (target["created_at"],shift_id))}
     return {r[0] for r in conn.execute(
         "SELECT DISTINCT wo_number FROM report_pm WHERE selection_hidden=0")}
 
@@ -128,7 +140,7 @@ def get(conn,shift_id,include_data=False):
         # Do not declare facility PM coverage complete from a filtered
         # WO Details export that includes no To-Be-Done WOs.
         notes.append("WO Details alone may not include the full list of To-Be-Done PMs")
-    completed=_completed_wo_numbers(conn)
+    completed=_completed_wo_numbers(conn,shift_id)
     for item in matched.values():
         if item["wo_number"] in completed:
             item["state"]="completed"
