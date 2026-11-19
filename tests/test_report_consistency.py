@@ -357,5 +357,12 @@ def test_loto_missing_key_selection_also_satisfies_shift_progress(page_ctx):
     assert page.locator('#progress-number').inner_text() == "100%", \
         "A documented missing key is a completed LOTO check and must count toward Shift Progress"
 
-    with page.expect_download():
-        page.locator('#generate-eml').click()
+    with page.expect_download(timeout=15000):
+        # The real handler immediately disables Generate against duplicate
+        # requests. Dispatch exactly one native button click after confirming
+        # that LOTO and the facility warning have been saved.
+        page.evaluate("""() => {
+            const button=document.querySelector('#generate-eml');
+            if(!button || button.disabled)throw Error('Generate not ready after LOTO save');
+            button.click();
+        }""")
