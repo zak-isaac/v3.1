@@ -246,10 +246,18 @@ def select_records(rows: list[dict], selected: set[str], start: datetime, end: d
         summary["rfr_" + str(r.get("rfr_code") or "unknown")] += 1
         summary["wo_status_" + str(r.get("status_code") or "unknown")] += 1
         if r.get("_activity_only"):
-            # Document labor from an earlier shift on a WO finished by
-            # somebody else. Never award the earlier shift the completion.
+            # Document new activity without granting today's uploader the
+            # original WO's completion. An I/W/O/P note update retains
+            # Cetaris's active status in Shift Happenings.
             summary["happening_rows"] += 1
-            eligible.append({**r, "kind": "happening", "work_state": "WORKED"})
+            active_states={"in process":"IN_PROGRESS",
+                           "manager review required":"MANAGER_REVIEW",
+                           "outside service":"OUTSIDE_SERVICE",
+                           "parts pending":"PARTS_PENDING"}
+            activity_state=(active_states.get(status,"WORKED")
+                            if r.get("_update_only") else "WORKED")
+            eligible.append({**r, "kind": "happening",
+                             "work_state": activity_state})
             continue
         if status == "completed" and r["wo_number"] in closed_wos:
             status = "closed"
