@@ -43,6 +43,7 @@ def test_old_in_process_wo_with_new_update_today_is_in_todays_happenings(
     assert len(current["rows"])==1,current["rows"]
     assert current["rows"][0]["wo_number"]=="REPEAT-I"
     assert current["rows"][0]["status"]=="IN_PROGRESS"
+    assert current["rows"][0]["work_at"]=="2026-10-26T18:15:00"
     assert "New troubleshooting recorded during S2" in current["rows"][0]["remarks"]
     with helpers.m._db() as conn:
         earlier=conn.execute(
@@ -124,3 +125,36 @@ def test_admin_only_update_does_not_create_fake_technician_activity(
     assert upload(client,[metadata]).status_code==200
     assert import_techs(client,["Synthetic A"]).status_code==200
     assert client.get("/api/reporting/state").json()["rows"]==[]
+
+
+def test_yesterdays_wo_updated_today_preserves_both_days(
+    client,monkeypatch
+):
+    _include_update_timestamp(monkeypatch)
+    clock(monkeypatch,day=25,hour=10)  # Sunday weekend S4
+    old_shift=enter(client,"S4")
+    original=row("REPEAT-NEXT-DAY",category="11",status="P",
+                 started="2026-10-25 09:00",serviced=None,
+                 remarks="Ordered replacement part during Sunday repair")
+    assert upload(client,[original]).status_code==200
+    assert import_techs(client,["Synthetic A"]).status_code==200
+    clock(monkeypatch,day=26,hour=10)  # Monday S1
+    new_shift=client.post("/api/shifts/start",json={"code":"S1"})
+    assert new_shift.status_code==200,new_shift.text
+    today={**original,
+           "Update Date / Time":"2026-10-26 08:40",
+           "Technician Remarks":"Replacement part received; continued checks"}
+    assert upload(client,[today]).status_code==200
+    assert import_techs(client,["Synthetic A"]).status_code==200
+    result=client.get("/api/reporting/state").json()
+    assert len(result["rows"])==1,result["rows"]
+    assert result["rows"][0]["wo_number"]=="REPEAT-NEXT-DAY"
+    assert result["rows"][0]["status"]=="PARTS_PENDING"
+    assert result["rows"][0]["work_at"]=="2026-10-26T08:40:00"
+    with helpers.m._db() as conn:
+        earlier=conn.execute(
+            "SELECT remarks,status FROM report_wo WHERE shift_id=? AND wo_number=?",
+            (old_shift,"REPEAT-NEXT-DAY")).fetchone()
+        assert earlier["status"]=="PARTS_PENDING"
+        assert earlier["remarks"]=="Ordered replacement part during Sunday repair"
+    assert client.get("/api/assets/status").json()["rts"]==[]
