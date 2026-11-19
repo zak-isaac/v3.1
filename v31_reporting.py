@@ -171,8 +171,9 @@ def stage(conn, shift_id, payload: bytes, filename: str, actor: str):
     due_summary=v31_pm.scan_wo_details(conn,shift_id,filename,payload)
     # An updated due-PM table changes the saved Outlook passdown, even before
     # the new shift labor rows have been explicitly selected/imported.
-    conn.execute("""UPDATE shifts SET report_saved_at='',report_content='',
-        report_html='',report_hash='',report_eml=X'' WHERE id=?""",(shift_id,))
+    if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='shifts'").fetchone():
+        conn.execute("""UPDATE shifts SET report_saved_at='',report_content='',
+            report_html='',report_hash='',report_eml=X'' WHERE id=?""",(shift_id,))
     return {"filename":filename,"technicians":technicians,
             "stats":stats,"staged":True,"requires_selection":True,
             "pm_due":due_summary}
