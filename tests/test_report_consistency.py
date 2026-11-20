@@ -246,7 +246,7 @@ def test_pm_needing_completion_section_never_invents_unuploaded_rows(page_ctx):
     content = download_info.value.path().read_text(encoding="utf-8")
 
     assert "PMs Needing Completion" in content
-    assert "Outstanding PM count is unverified" in content
+    assert "PM urgency has not been verified" in content
     assert "No PMs pending this shift." not in content
 
 
