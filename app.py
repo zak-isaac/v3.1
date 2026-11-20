@@ -787,10 +787,21 @@ def _end_shift_readiness(conn,row):
         blockers.append('Generate and save the Outlook passdown before End Shift.')
     elif not digest_ok:
         blockers.append('Saved Outlook report failed integrity verification; regenerate it.')
-    stage=conn.execute("SELECT applied_at FROM report_stage WHERE shift_id=?",(row['id'],)).fetchone() if conn.execute(
+    stage=conn.execute("SELECT applied_at,stats_json FROM report_stage WHERE shift_id=?",
+        (row['id'],)).fetchone() if conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='report_stage'").fetchone() else None
     if stage and not stage['applied_at']:
-        blockers.append('A newer Cetaris file is staged but not imported. Confirm its technicians first.')
+        # One-file WO Details can contain only unassigned To-Be-Done PMs:
+        # they have no technician to select, yet are valid PM inventory.
+        # Never waive technician review for a file with labor rows.
+        stage_stats=json.loads(stage['stats_json'] or '{}')
+        no_labor=not stage_stats.get('technicians')
+        import v31_pm_needing_completion as _pm_due
+        pm_inventory=_pm_due.get(conn,row['id']) if no_labor else {}
+        pm_only=no_labor and pm_inventory.get('auto_available') and (
+            pm_inventory.get('due_count',0)+pm_inventory.get('past_due_count',0)>0)
+        if not pm_only:
+            blockers.append('A newer Cetaris file is staged but not imported. Confirm its technicians first.')
     warnings=[]
     import v31_reporting
     v31_reporting._table(conn)
