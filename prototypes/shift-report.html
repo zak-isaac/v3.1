@@ -438,7 +438,7 @@ function rowDetail(id){
 }
 function listPane(kind){let list=kind==='vendors'?state.vendors:state.ro;let title=kind==='vendors'?'Vendor Activity':'RO / Work Requests';return `<div class="secondary-pane"><div class="pane-header"><div><h3>${title}</h3><p>Items entered manually for this shift's final report.</p></div><button class="btn btn-primary" id="add-list-entry">+ Add ${kind==='vendors'?'Vendor':'RO'}</button></div><div class="item-list">${list.length?list.map((t,i)=>`<div class="item-card"><div><strong>${esc(t)}</strong><small>Manual reporting entry</small></div><button class="btn btn-light btn-small" data-list-edit="${i}">Edit</button></div>`).join(''):'<p>No entries have been added for this shift.</p>'}</div></div>`;}
 function pmTab(){
-  const needed=state.pmNeeds||{present:false,has_source:false,count:0,due_count:0,completed_count:0,rows:[],notes:[],target_dates:[]};
+  const needed=state.pmNeeds||{present:false,has_source:false,count:0,due_count:0,rows:[],notes:[],target_dates:[]};
   const completed=state.pms.length?state.pms.map(r=>`<div class="item-card"><div><strong>${esc(r.asset||'Asset not specified')} · WO# ${esc(r.wo_number)}</strong><small>${esc(r.tech||'')}</small></div><span class="status-pill rts">Completed</span></div>`).join(''):'<p class="field-help">No completed PMs imported for this shift.</p>';
   const cell=(value,bold=false,tone='')=>`<td style="padding:8px 10px;border:1px solid #d1d5db;${tone==='red'?'background:#fde8e8;color:#991b1b;':tone==='yellow'?'background:#fff2c7;color:#805500;':tone==='neutral'?'background:#f3f4f6;':''}${bold?'font-weight:700;':''}">${esc(value||'—')}</td>`;
   const due=needed.rows?.length?`<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13px;min-width:760px">
@@ -446,11 +446,10 @@ function pmTab(){
     <th style="padding:10px;text-align:left">Asset</th><th style="padding:10px;text-align:left">PM Due Date</th>
     <th style="padding:10px;text-align:left">WO Status</th><th style="padding:10px;text-align:left">Due Flag</th>
     <th style="padding:10px;text-align:left">Promise Date / Time</th><th style="padding:10px;text-align:left">WO Date / Time</th></tr></thead>
-    <tbody>${needed.rows.map((r,i)=>{const urgency=r.state==='completed'?'neutral':'yellow';return `<tr>
-      ${cell(r.wo_number,true,urgency)}${cell(r.asset_num,true,urgency)}${cell(r.pm_due_date,true,urgency)}
-      ${cell(r.wo_status||'Not provided',false,urgency)}${cell(r.state==='completed'?'Completed':'DUE TODAY — 11:59 PM',r.state!=='completed',urgency)}
-      ${cell(r.promise_date,false,urgency)}${cell(r.wo_date,false,urgency)}</tr>`}).join('')}</tbody></table></div>`:'';
-  const overdue=needed.past_due_rows||[];
+    <tbody>${needed.rows.map(r=>`<tr>
+      ${cell(r.wo_number,true,'yellow')}${cell(r.asset_num,true,'yellow')}${cell(r.pm_due_date,true,'yellow')}
+      ${cell(r.wo_status||'Not provided',false,'yellow')}${cell('DUE TODAY — 11:59 PM',true,'yellow')}
+      ${cell(r.promise_date,false,'yellow')}${cell(r.wo_date,false,'yellow')}</tr>`).join('')}</tbody></table></div>`:'';  const overdue=needed.past_due_rows||[];
   const overdueTable=overdue.length?`<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13px;min-width:620px"><thead>
     <tr style="background:#8c2630;color:#fff"><th style="padding:10px;text-align:left">WO #</th><th style="padding:10px;text-align:left">Asset</th><th style="padding:10px;text-align:left">PM Due Date</th><th style="padding:10px;text-align:left">Last WO Status</th><th style="padding:10px;text-align:left">Flag</th></tr></thead>
     <tbody>${overdue.map(r=>`<tr>
@@ -466,13 +465,13 @@ function pmTab(){
     <div class="pane-header"><div><h3>Completed PMs This Shift · ${state.pmCount}</h3><p>Verified from completed Cetaris PM work orders.</p></div></div>
     <div class="item-list">${completed}</div>
     <div class="pane-header"><div><h3>Daily PMs Due · ${needed.due_count||0}</h3>
-      <p>Yellow: due on ${esc(dates||'selected shift date')} until 11:59 PM · Still needing completion: <strong>${needed.count||0}</strong> · Completed: ${needed.completed_count||0}</p>
-      <p>All Primary RFR 08 PMs due on these dates, including unassigned To-Be-Done WOs. Work orders counted once.</p></div></div>
+      <p>Yellow: To Be Done PMs due on ${esc(dates||'selected shift date')} until 11:59 PM · Still needing completion: <strong>${needed.count||0}</strong></p>
+      <p>Only Primary RFR 08 PMs marked To Be Done, including unassigned work orders. Work orders counted once.</p></div></div>
     ${needed.auto_available?'<p class="field-help">Single Cetaris WO Details source: '+esc(needed.auto_filename||'Cetaris export')+'</p>':''}
     ${notes}
     <div class="item-list">${due||'<p class="field-help">'+missing+'</p>'}</div>
     <div class="pane-header"><div><h3>Past Due PMs · ${overdue.length}</h3>
-      <p>Red: unfinished PMs with a due date before the report date, found in this file only.</p></div></div>
+      <p>Red: To Be Done PMs with a due date before the report date, found in this file only.</p></div></div>
     <div class="item-list">${overdueTable}</div>
   </div>`;
 }
@@ -660,10 +659,10 @@ function buildEmailHtml(){
     ?`<p style="color:#c00;margin:2px 0;font-size:14px;font-family:Calibri,Arial,sans-serif;"><strong>Missing key${state.missingKeys.length>1?'s':''}:</strong> ${esc(state.missingKeys.join(', '))}</p>`:'';
   // Match server-rendered daily due-PM data, not an old placeholder.
   // The canonical .eml is saved server-side from this same persisted inventory.
-  const pmDue=state.pmNeeds||{rows:[],past_due_rows:[],count:0,due_count:0,completed_count:0};
-  const pmRows=(pmDue.rows||[]).map(p=>`<tr style="background-color:${p.state==='completed'?'#f3f4f6':'#fff2c7'}"><td>${esc(p.wo_number)}</td><td>${esc(p.asset_num||'')}</td><td>${esc(p.pm_due_date||'')}</td><td>${esc(p.wo_status||'')}${p.state==='completed'?' — Completed':' — DUE TODAY (11:59 PM)'}</td></tr>`).join('');
+  const pmDue=state.pmNeeds||{rows:[],past_due_rows:[],count:0,due_count:0};
+  const pmRows=(pmDue.rows||[]).map(p=>`<tr style="background-color:#fff2c7"><td>${esc(p.wo_number)}</td><td>${esc(p.asset_num||'')}</td><td>${esc(p.pm_due_date||'')}</td><td>${esc(p.wo_status||'')} — DUE TODAY (11:59 PM)</td></tr>`).join('');
   const pmHtml=`<p style="margin:16px 0 2px;"><strong style="font-size:16px;">PMs Needing Completion</strong></p>
-    <p>PMs due: ${pmDue.due_count||0} · Still needing completion: ${pmDue.count||0} · Completed: ${pmDue.completed_count||0}</p>
+    <p>To Be Done PMs due today: ${pmDue.due_count||0} · Past Due: ${pmDue.past_due_count||0}</p>
     ${pmRows?'<table style="border-collapse:collapse;" border="1"><thead><tr><th>WO #</th><th>Asset</th><th>PM Due Date</th><th>WO Status</th></tr></thead><tbody>'+pmRows+'</tbody></table>':'<p>Due-PM list not confirmed; verify the WO Details export.</p>'}
     <p><strong>Past Due PMs: ${pmDue.past_due_count||0}</strong></p>
     ${(pmDue.past_due_rows||[]).map(p=>`<p style="background-color:#fde8e8;color:#991b1b;padding:6px"><strong>PAST DUE</strong> · ${esc(p.wo_number)} · ${esc(p.asset_num)} · Due ${esc(p.pm_due_date)} · ${esc(p.wo_status)}</p>`).join('')}`;
