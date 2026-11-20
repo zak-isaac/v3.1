@@ -523,7 +523,6 @@ def landing(request: Request):
         '<script defer src="/web/shift-history.js"></script>'+
         '<script defer src="/web/manual-oos.js"></script>'+
         '<script defer src="/web/shift-data.js"></script>'+
-        '<script defer src="/web/pm-needing-completion.js"></script>'+
         '<script defer src="/web/analytics.js"></script>'))
 
 
@@ -1122,18 +1121,11 @@ def pm_needing_completion_state(request:Request):
 @app.post('/api/pm-needing-completion/upload')
 async def pm_needing_completion_upload(request:Request,file:UploadFile=File(...)):
     _origin_check(request)
-    session,shift=_report_access(request)
-    try:
-        data=await file.read(v31_pm.MAX_BYTES+1)
-    finally:
-        await file.close()
-    try:
-        with _db() as conn:
-            result=v31_pm.upload(conn,shift['id'],file.filename or '',data,session['a'])
-            _invalidate_passdown(conn,shift['id'])
-    except ValueError as exc:
-        raise HTTPException(422,str(exc))
-    return result
+    _report_access(request)
+    # The second PM upload is retired. Old saved references stay intact.
+    await file.close()
+    raise HTTPException(410,
+        'Separate PM uploads are retired. Import full Cetaris WO Details instead.')
 
 
 @app.get('/api/pm-needing-completion/download')
