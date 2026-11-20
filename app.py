@@ -1579,11 +1579,11 @@ class DirectAssetRTS(BaseModel):
 
 @app.post('/api/oos/rts')
 def asset_rts_direct(payload: DirectAssetRTS, request: Request):
-    """MST confirms physical RTS; never silently close a Cetaris breakdown.
+    """Explicit physical RTS; reconcile any already Completed/Closed WOs.
 
-    If a manual OOS exists it is closed with its history. Otherwise this is
-    a direct RTS observation, not a completed breakdown work order, and must
-    not be added to the breakdown-only RTS email section.
+    Other unfinished repair WOs remain tracked separately. Neither their
+    presence nor the original WO's shift prevents a confirmed RTS. Explicit
+    safety holds must still be released before equipment is returned.
     """
     _origin_check(request)
     session,shift=_report_access(request)
@@ -1593,8 +1593,6 @@ def asset_rts_direct(payload: DirectAssetRTS, request: Request):
         raise HTTPException(422, 'Asset ID is required')
     with _db() as conn:
         v31_breakdown.ensure(conn)
-        if v31_breakdown.unresolved(conn,asset):
-            raise HTTPException(409, 'A Cetaris breakdown is still open; resolve its WO decision first')
         if conn.execute("""SELECT 1 FROM breakdown_manual_holds
                 WHERE lower(trim(asset))=lower(trim(?))""",(asset,)).fetchone():
             raise HTTPException(409, 'This asset has an active OOS hold; release it before RTS')
@@ -1611,6 +1609,11 @@ def asset_rts_direct(payload: DirectAssetRTS, request: Request):
             result=v31_oos.record_direct_rts(conn,asset=asset,
                 actor=session['a'],actor_name=profile.get('name','Associate'),
                 shift_id=shift['id'],shift_code=shift['code'],now_iso=now_iso)
+        # The technician explicitly confirmed physical RTS. Clear every
+        # already-completed Breakdown for the asset, even if an earlier
+        # shift opened it; leave other unfinished WOs untouched.
+        v31_breakdown.confirm_completed_asset_rts(
+            conn,asset,shift['id'],session['a'],profile.get('name','Associate'))
         _invalidate_passdown(conn,shift['id'])
     return result
 
@@ -1693,9 +1696,6 @@ def oos_mark_rts(oos_id: int, payload: ManualOOSResolve, request: Request):
         if existing and existing['open']:
             asset=existing['asset'].strip()
             v31_breakdown.ensure(conn)
-            if v31_breakdown.unresolved(conn,asset):
-                raise HTTPException(409,
-                  'A tracked breakdown is unresolved; confirm its completed repair before RTS')
             if conn.execute("""SELECT 1 FROM breakdown_manual_holds
                 WHERE lower(trim(asset))=lower(trim(?))""",(asset,)).fetchone():
                 raise HTTPException(409,
@@ -1705,6 +1705,9 @@ def oos_mark_rts(oos_id: int, payload: ManualOOSResolve, request: Request):
             shift_code=shift['code'], now_iso=datetime.now(TZ).isoformat(),
             notes=payload.notes.strip())
         if error is None:
+            v31_breakdown.confirm_completed_asset_rts(
+                conn,record['asset'],shift['id'],session['a'],
+                profile.get('name','Associate'))
             # A newly RTS asset must appear in a regenerated passdown before
             # the shift can be ended.
             _invalidate_passdown(conn, session['s'])
