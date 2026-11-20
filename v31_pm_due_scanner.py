@@ -90,14 +90,14 @@ def scan(content,code,shift_day):
     dates=due_dates_for_shift(code,shift_day)
     result={"rows":[],"available":False,"target_dates":sorted(x.isoformat() for x in dates),
             "matching":0,"missing_due":0,"to_be_done_seen":0,
-            "scanned_rows":0,"notes":[]}
+            "scanned_rows":0,"notes":[],"catalog_rows":[],"skipped_pkm_assets":0}
     for headers,grid in _grid(content):
         if not headers:
             result["notes"].append("WO Details export contains no headings")
             return result
         mapping={_cell(h).strip().casefold():i for i,h in enumerate(headers) if _cell(h).strip()}
         if "wo number" not in mapping or "pm due date" not in mapping:
-            result["notes"].append("WO Details export lacks WO Number or PM Due Date; upload Today's DAILY PMs")
+            result["notes"].append("WO Details export lacks WO Number or PM Due Date; re-export unfiltered WO Details with PM Due Date")
             return result
         if "primary rfr" not in mapping and "sj / pm code" not in mapping:
             result["notes"].append("WO Details export lacks Primary RFR and SJ / PM Code; PM classification unavailable")
@@ -113,6 +113,11 @@ def scan(content,code,shift_day):
             result["scanned_rows"]+=1
             wo=_cell(get(row,"wo number"))
             if not wo:
+                continue
+            # Facility exception: PKM-prefixed Asset IDs are not imported
+            # into shift work, due-today PMs, or overdue PM inventory.
+            if _cell(get(row,"asset id")).casefold().startswith("pkm"):
+                result["skipped_pkm_assets"]+=1
                 continue
             rfr,code_rfr=normalize_primary_rfr(_cell(get(row,"primary rfr")))
             if code_rfr!="08":
@@ -130,7 +135,9 @@ def scan(content,code,shift_day):
                 status,status_code="To be Done","T"
             if status_code=="T":
                 result["to_be_done_seen"]+=1
-            if parsed not in dates or status_code=="V":
+            if status_code=="V":
+                # Void work orders are retained as historical WO records,
+                # but must never become an outstanding scheduled PM.
                 continue
             state=("completed" if status_code in DONE_CODES else
                    "outstanding" if status_code in PENDING_CODES else "review")
@@ -157,15 +164,18 @@ def scan(content,code,shift_day):
                     ((new_time==prior_time or (not prior_time and not new_time)) and
                      previous["state"]!="completed" and state=="completed")):
                     keyed[wo]=item
+        result["catalog_rows"]=sorted(
+            (dict(item) for item in keyed.values()),
+            key=lambda x:(x["due_iso"],x["wo_number"]))
         result["rows"]=sorted(
             ({k:v for k,v in item.items() if not k.startswith("_")}
-             for item in keyed.values()),
+             for item in keyed.values() if item["due_iso"] in result["target_dates"]),
             key=lambda x:(x["due_iso"],x["wo_number"]))
         if result["missing_due"]:
             result["notes"].append(
                 f'{result["missing_due"]} PM rows lacked a parseable PM Due Date and could not be assigned to a day')
         if not result["to_be_done_seen"]:
             result["notes"].append(
-                "No To-Be-Done PM rows found in WO Details. This export may exclude unassigned PMs; upload Today's DAILY PMs to verify completeness.")
+                "No To-Be-Done PM rows found. The single WO Details export may be filtered; re-export with all RFR 08 PMs including unassigned To-Be-Done WOs.")
         return result
     return result
