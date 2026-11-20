@@ -1,8 +1,10 @@
 """V3-inspired Cetaris breakdown lifecycle with confirmed RTS and manual OOS holds.
 
-In Process -> globally OOS. Completed/Manager Review Required -> human RTS or
-keep OOS decision. Closed -> RTS only when no outstanding same-asset breakdown
-or explicit/manual hold. Never use unrelated maintenance as RTS evidence.
+C/D/I/W/O/P Cetaris WO statuses remain independent of equipment return.
+Active repairs (including Parts Pending) persist; Completed/Closed require
+explicit human RTS or keep-OOS review by an active shift, regardless of
+which shift started or last imported the work order. Explicit holds remain.
+Never use unrelated maintenance as RTS evidence.
 Global state survives shift boundaries; historical snapshots are immutable.
 """
 from __future__ import annotations
@@ -10,10 +12,14 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 import v31_oos
+from v31_cetaris_codes import normalize_wo_status, normalize_primary_rfr
 
 TZ=ZoneInfo("America/Indiana/Indianapolis")
-PRIORITY={"in process":1,"completed":2,"closed":3}
-ALIASES={"manager review required":"completed"}
+# These are not a strict chronological ladder: P -> I and I -> P are both
+# legitimate, and W/O are intermediate statuses, not repair completion.
+PRIORITY={"in process":1,"parts pending":1,"manager review required":1,
+          "outside service":1,"completed":2,"closed":3}
+ACTIVE=tuple(status for status,level in PRIORITY.items() if level == 1)
 
 def _now():
     return datetime.now(TZ).isoformat()
@@ -47,13 +53,36 @@ def _has_hold(conn,asset):
 def unresolved(conn,asset,exclude_wo=""):
     return conn.execute("""SELECT 1 FROM breakdown_state
         WHERE lower(trim(asset))=lower(trim(?)) AND wo_number<>?
-        AND (status='in process' OR (status='completed' AND decision<>'rts'))
+        AND rts_logged=0 AND status IN
+          ('in process','parts pending','manager review required','outside service',
+           'completed','closed')
         LIMIT 1""",(asset,exclude_wo)).fetchone() is not None
 
-def _resolve(conn,wo,asset,shift_id,actor):
+def _resolve(conn,wo,asset,shift_id,actor,*,confirm_manual=False,actor_name=""):
     row=conn.execute("SELECT * FROM breakdown_state WHERE wo_number=?",(wo,)).fetchone()
-    if not row or row["rts_logged"] or _has_hold(conn,asset) or unresolved(conn,asset,wo):
+    if not row or row["rts_logged"]:
         return False
+    # Other repair WOs on the same asset remain independently tracked.
+    # Their existence cannot block an operator-confirmed return of THIS
+    # completed WO or make an unrelated WO appear repaired.
+    # An explicit equipment hold cannot be bypassed by Cetaris closure or
+    # a completed-WO review; it must be separately released first.
+    if conn.execute("""SELECT 1 FROM breakdown_manual_holds
+        WHERE lower(trim(asset))=lower(trim(?))""",(asset,)).fetchone():
+        return False
+    manual=[r for r in v31_oos.list_records(conn,open_only=True)
+            if r["asset"].strip().casefold()==asset.strip().casefold()]
+    if manual and not confirm_manual:
+        return False
+    # The completing shift explicitly confirmed physical RTS. Close matching
+    # legacy/manual OOS incidents in the SAME transaction so they cannot
+    # remain as stale duplicates on the global OOS board.
+    shift=conn.execute("SELECT code FROM shifts WHERE id=?",(shift_id,)).fetchone()
+    for item in manual:
+        v31_oos.mark_rts(conn,item["id"],rts_by=actor,
+            rts_by_name=actor_name or actor,shift_id=shift_id,
+            shift_code=shift["code"] if shift else "",
+            now_iso=_now(),notes="Linked breakdown RTS")
     conn.execute("""INSERT OR IGNORE INTO breakdown_rts_events
        (wo_number,asset,shift_id,actor,recorded_at) VALUES(?,?,?,?,?)""",
        (wo,asset,shift_id,actor,_now()))
@@ -67,36 +96,64 @@ def _resolve(conn,wo,asset,shift_id,actor):
     return True
 
 def sync(conn,rows,selected,accepted,shift_id):
-    """V3 parity: track same WO across imports even if later closure is on
-    a different shift; accept new WOs only if selected/attributed here.
+    """Track repairs across shifts using new labor OR newer Cetaris status.
+
+    New Breakdown WOs require accepted shift labor. For an ALREADY tracked
+    WO, a later unselected technician's dated Completed/Closed status can
+    advance its repair state without creating work for the importing shift.
+    The current shift still must explicitly confirm the physical RTS.
     """
     ensure(conn)
-    selected=set(selected)
-    accepted_wos={str(r.get('wo_number') or '').strip() for r in accepted}
-    tracked={r['wo_number'] for r in conn.execute('SELECT wo_number FROM breakdown_state')}
+    accepted_ids={id(r) for r in accepted if not r.get('_activity_only')}
+    tracked={r['wo_number'] for r in conn.execute(
+        "SELECT wo_number FROM breakdown_state")}
+    # Use the same clock as the reporting session so an S1 import cannot
+    # claim a completion from S2 which has not happened yet.
+    import app as _app
+    now=_app.datetime.now(TZ)
     grouped={}
     for raw in rows:
-        if str(raw.get('rfr') or '').strip().casefold()!='breakdown':
+        if normalize_primary_rfr(raw.get('rfr'))[1]!='01':
             continue
         wo=str(raw.get('wo_number') or '').strip()
         asset=str(raw.get('asset_id') or '').strip()
-        status=ALIASES.get(str(raw.get('status') or '').strip().casefold(),
-                           str(raw.get('status') or '').strip().casefold())
+        status=normalize_wo_status(raw.get('status'))[0].casefold()
         if not wo or not asset or status not in PRIORITY:
             continue
-        if wo not in tracked and (raw.get('tech_name') not in selected or wo not in accepted_wos):
-            continue
+        accepted_here=id(raw) in accepted_ids
+        if not accepted_here:
+            if wo not in tracked or status not in ('completed','closed'):
+                continue
+            timestamp=(raw.get('last_complete_at') or
+                       raw.get('closed_at') or raw.get('updated_at') or
+                       raw.get('in_service_at') or '')
+            if timestamp:
+                try:
+                    completed_at=datetime.fromisoformat(timestamp)
+                except ValueError:
+                    continue
+                if completed_at.tzinfo is None:
+                    completed_at=completed_at.replace(tzinfo=TZ)
+                if completed_at>now:
+                    continue
         old=grouped.get(wo)
         if not old or PRIORITY[status]>PRIORITY[old[0]]:
-            grouped[wo]=(status,asset)
+            grouped[wo]=(status,asset,accepted_here)
     changes=0
-    for wo,(status,asset) in grouped.items():
+    for wo,(status,asset,accepted_here) in grouped.items():
         previous=conn.execute("SELECT * FROM breakdown_state WHERE wo_number=?",(wo,)).fetchone()
         if previous and PRIORITY[status]<PRIORITY.get(previous['status'],0):
             continue
-        if previous and status==previous['status'] and asset==previous['asset']:
+        renewed=(previous and accepted_here and status=='completed' and
+                 previous['status']=='completed' and previous['decision']=='keep_oos'
+                 and previous['updated_shift_id']!=shift_id)
+        if previous and status==previous['status'] and asset==previous['asset'] and not renewed:
             continue
-        decision=previous['decision'] if previous and status==previous['status'] else ''
+        # A documented later shift can complete the original WO; status-only
+        # imports do not award technician work or automatically clear OOS.
+        # Reimporting unchanged files never creates duplicate RTS events.
+        decision=("" if renewed else
+                  previous['decision'] if previous and status==previous['status'] else '')
         logged=previous['rts_logged'] if previous else 0
         conn.execute("""INSERT INTO breakdown_state(
           wo_number,asset,status,updated_shift_id,decision,rts_logged,updated_at)
@@ -107,37 +164,70 @@ def sync(conn,rows,selected,accepted,shift_id):
           rts_logged=excluded.rts_logged,updated_at=excluded.updated_at""",
           (wo,asset,status,shift_id,decision,logged,_now()))
         changes+=1
-        if status in ('in process','completed') and not (status=='completed' and decision=='rts'):
-            # Ensure import doesn't falsely mark an unresolved asset RTS.
-            conn.execute("""UPDATE report_wo SET status='OOS'
-              WHERE shift_id=? AND wo_number=? AND is_manual=0""",(shift_id,wo))
-    for wo,(status,asset) in grouped.items():
-        if status=='closed':
-            _resolve(conn,wo,asset,shift_id,'cetaris_closed')
-        elif status=='completed':
-            state=conn.execute('SELECT decision FROM breakdown_state WHERE wo_number=?',(wo,)).fetchone()
-            if state and state['decision']=='rts':
-                _resolve(conn,wo,asset,shift_id,'prior_review')
+        # Never overwrite report_wo's Cetaris C/D/I/W/O/P work status with
+        # an equipment status. Physical OOS is recorded separately by manual
+        # OOS, an explicit hold, or a keep-OOS review decision.
+    # No automatic RTS on Closed. Both D and C require documented
+    # physical RTS confirmation from an active shift. Later administrative
+    # closure cannot create a duplicate return or change historical reports.
     return changes
 
-def pending(conn):
+def pending(conn,shift_id=None):
     ensure(conn)
-    return [dict(r) for r in conn.execute("""SELECT wo_number,asset,updated_shift_id
-      FROM breakdown_state WHERE status='completed' AND decision=''
-      ORDER BY updated_at""")]
+    # Every current shift may verify a still-unresolved completed breakdown.
+    # Never restrict the physical equipment status to the originating shift.
+    return [dict(r) for r in conn.execute("""SELECT wo_number,asset,status,updated_shift_id
+      FROM breakdown_state WHERE status IN ('completed','closed')
+        AND decision='' AND rts_logged=0 ORDER BY updated_at""")]
 
-def decide(conn,wo,choice,shift_id,actor):
+def decide(conn,wo,choice,shift_id,actor,actor_name=""):
     ensure(conn)
     if choice not in ('rts','keep_oos'):raise ValueError('Invalid RTS decision')
     state=conn.execute("SELECT * FROM breakdown_state WHERE wo_number=?",(wo,)).fetchone()
-    if not state or state['status']!='completed' or state['decision']:
+    if (not state or state['status'] not in ('completed','closed') or
+            state['rts_logged'] or state['decision'] not in ('','keep_oos')):
         raise KeyError('Breakdown not pending a decision')
-    conn.execute("UPDATE breakdown_state SET decision=?,updated_at=? WHERE wo_number=?",
-                 (choice,_now(),wo))
+    if state['decision']=='keep_oos' and choice=='keep_oos':
+        return {'wo_number':wo,'decision':choice,'resolved':False}
+    # A later shift may verify physical RTS even when another shift
+    # performed the original work. A separate open Breakdown WO is not an
+    # automatic equipment lockout. Explicit holds must be released first.
+    if choice=='rts' and conn.execute("""SELECT 1 FROM breakdown_manual_holds
+            WHERE lower(trim(asset))=lower(trim(?))""",(state['asset'],)).fetchone():
+        raise ValueError("Release the explicit OOS hold before confirming RTS")
     resolved=False
     if choice=='rts':
-        resolved=_resolve(conn,wo,state['asset'],shift_id,actor)
+        resolved=_resolve(conn,wo,state['asset'],shift_id,actor,
+                          confirm_manual=True,actor_name=actor_name)
+        if not resolved:
+            raise ValueError("Unable to verify RTS while the equipment is held")
+    conn.execute("UPDATE breakdown_state SET decision=?,updated_at=? WHERE wo_number=?",
+                 (choice,_now(),wo))
     return {'wo_number':wo,'decision':choice,'resolved':resolved}
+
+def confirm_completed_asset_rts(conn,asset,shift_id,actor,actor_name=""):
+    """Reconcile finished Breakdown WOs when a technician manually marks RTS.
+
+    Completion alone never triggers this. Only the explicit physical RTS
+    action does. Other In Process/Parts Pending WOs stay in the Breakdown
+    list; their presence does not block a return of a completed repair.
+    """
+    ensure(conn)
+    completed=conn.execute("""SELECT wo_number FROM breakdown_state
+        WHERE lower(trim(asset))=lower(trim(?)) AND rts_logged=0
+          AND status IN ('completed','closed')
+        ORDER BY updated_at""",(asset,)).fetchall()
+    confirmed=[]
+    for item in completed:
+        wo=item["wo_number"]
+        if _resolve(conn,wo,asset,shift_id,actor,
+                    confirm_manual=True,actor_name=actor_name):
+            conn.execute("""UPDATE breakdown_state
+                SET decision='rts',updated_at=? WHERE wo_number=?""",
+                (_now(),wo))
+            confirmed.append(wo)
+    return confirmed
+
 
 def hold(conn,asset,enabled,actor,reason=''):
     ensure(conn)
@@ -153,12 +243,13 @@ def hold(conn,asset,enabled,actor,reason=''):
 def overview(conn,shift_id=None):
     ensure(conn)
     unresolved_rows=[dict(r) for r in conn.execute("""SELECT * FROM breakdown_state
-      WHERE status='in process' OR (status='completed' AND decision<>'rts')
+      WHERE rts_logged=0 AND status IN ('in process','parts pending',
+        'manager review required','outside service','completed','closed')
       ORDER BY updated_at DESC""")]
     hold_rows=[dict(r) for r in conn.execute('SELECT * FROM breakdown_manual_holds ORDER BY asset')]
     if shift_id is not None:
         rts=[dict(r) for r in conn.execute(
             'SELECT * FROM breakdown_rts_events WHERE shift_id=? ORDER BY recorded_at',(shift_id,))]
     else:rts=[]
-    return {'open':unresolved_rows,'pending':pending(conn),
+    return {'open':unresolved_rows,'pending':pending(conn,shift_id),
             'holds':hold_rows,'resolved_this_shift':rts}

@@ -101,7 +101,7 @@
             <section class="work-area" aria-label="Shift work details"><div class="tabstrip" role="tablist" aria-label="Report sections"><button data-tab="happenings" class="tab current" role="tab" aria-selected="true"><svg class="icon"><use href="#i-stack"/></svg>Shift Happenings <span id="tab-wo-count">(0)</span></button><button data-tab="pm" class="tab" role="tab" aria-selected="false"><svg class="icon"><use href="#i-clipboard"/></svg>PMs <span id="pm-tab-count">(0 / 0)</span></button><button data-tab="breakdown" class="tab" role="tab" aria-selected="false"><svg class="icon"><use href="#i-wrench"/></svg>Breakdown / OOS</button><button data-tab="vendors" class="tab" role="tab" aria-selected="false"><svg class="icon"><use href="#i-truck"/></svg>Vendors <span id="vendor-tab-count">(0)</span></button><button data-tab="ro" class="tab" role="tab" aria-selected="false"><svg class="icon"><use href="#i-file"/></svg>RO <span id="ro-tab-count">(0)</span></button></div><div id="tab-content" class="tab-content" role="tabpanel"></div></section>
           </section>
           <aside class="report-actions" aria-label="Report Actions"><div class="actions-heading"><div><h2>Report Actions</h2></div></div>
-            <div class="action-item pm-action"><div class="action-item-title"><span class="action-icon blue-icon"><svg class="icon"><use href="#i-calendar"/></svg></span><div><strong>PMs Needing Completion</strong><small></small></div></div><button id="upload-pending" class="btn btn-light pm-upload"><svg class="icon"><use href="#i-upload"/></svg> Upload File</button><small id="pending-filename" class="chosen-file"></small></div>
+            <div class="action-item pm-action"><div class="action-item-title"><span class="action-icon blue-icon"><svg class="icon"><use href="#i-calendar"/></svg></span><div><strong>Daily &amp; Past Due PMs</strong><small>Automatically extracted from the same Cetaris WO Details file.</small></div></div><small id="pending-filename" class="chosen-file">Upload WO Details to see due PMs</small></div>
             <button class="action-row" data-open="vendors"><span class="action-icon blue-icon"><svg class="icon"><use href="#i-truck"/></svg></span><span><strong>Vendors</strong></span><svg class="icon chevron-right"><use href="#i-arrow"/></svg></button>
             <button class="action-row" data-open="ro"><span class="action-icon blue-icon"><svg class="icon"><use href="#i-file"/></svg></span><span><strong>Reliable Operations</strong></span><svg class="icon chevron-right"><use href="#i-arrow"/></svg></button>
             <button class="action-row" data-open="notes"><span class="action-icon blue-icon"><svg class="icon"><use href="#i-message"/></svg></span><span><strong>Shift Notes</strong></span><svg class="icon chevron-right"><use href="#i-arrow"/></svg></button>
@@ -189,7 +189,7 @@
           <div class="v31-admin-roster-wrap">
             <table class="v31-admin-table">
               <thead><tr><th>Shift ID</th><th>Date</th><th>Shift</th><th>Shift Owner</th>
-                <th>Happenings</th><th>Reports</th><th>Status</th><th>Actions</th></tr></thead>
+                <th>Happenings</th><th>Reports</th><th>WO / Asset Status</th><th>Actions</th></tr></thead>
               <tbody id="v31-history-rows"></tbody>
             </table>
           </div>
@@ -281,7 +281,7 @@
 </div>
 <div id="modal-root" class="modal-root" hidden><div class="modal-backdrop" data-close-modal="true"></div><section class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title"><header class="modal-header"><div><h2 id="modal-title">Details</h2><p id="modal-description"></p></div><button class="icon-button" data-close-modal="true" aria-label="Close"><svg class="icon"><use href="#i-x"/></svg></button></header><div id="modal-body" class="modal-body"></div><footer id="modal-actions" class="modal-actions"></footer></section></div>
 <div id="toast" class="toast" role="status" aria-live="polite"></div>
-<input type="file" id="cetaris-picker" accept=".xlsx,.csv" hidden><input type="file" id="pending-picker" accept=".xlsx,.xls,.csv,.pdf,.png,.jpg,.jpeg" hidden>
+<input type="file" id="cetaris-picker" accept=".xlsx,.csv" hidden>
 <script>
 /* IND3 Shift Report V3.1 — server-connected local reporting UI. */
 (() => {
@@ -315,16 +315,20 @@ $$('[data-close-modal]').forEach(el=>el.addEventListener('click',closeModal));do
 // legitimate scenario -- only penalize a file that was picked but never
 // confirmed/imported, never the absence of a file in the first place.
 function progressChecklist(){
-  // LOTO verification counts as done once state.loto is true. Marking any
-  // key missing automatically sets the toggle true too (see the keyGrid
-  // change handler below) -- documenting a missing key is itself a
-  // completed inspection, not an incomplete one. Verified and missing-keys
-  // are independent facts now, not mutually exclusive.
-  const lotoDone=!!state.loto;
+  // PM-only WO Details files often contain zero technician labor rows
+  // because the due To-Be-Done WOs have no technician. They still count as
+  // a valid one-file report source and require no impossible tech selection.
+  // A file WITH technician rows still requires shift attribution/import.
+  const due=state.pmNeeds||{};
+  const pmInventoryCount=(due.due_count||0)+(due.past_due_count||0);
+  const pmOnlyReady=!!state.cetarisFile && !state.stageTechCount &&
+    !!due.auto_available && pmInventoryCount>0;
   return [
-    {label:'Cetaris import confirmed (if a file was chosen)',done:!state.cetarisFile||state.stageImported},
-    {label:'Work orders or PMs recorded for this shift',done:(state.rows.length+state.pmCount)>0},
-    {label:'LOTO verification completed for this shift',done:lotoDone},
+    {label:'Cetaris import reviewed (technician work or PM-only file)',
+     done:!state.cetarisFile||state.stageImported||pmOnlyReady},
+    {label:'Work orders or PMs recorded for this shift',
+     done:(state.rows.length+state.pmCount)>0||pmInventoryCount>0},
+    {label:'LOTO verification completed for this shift',done:!!state.loto},
   ];
 }
 function importAuditMarkup(){
@@ -410,11 +414,11 @@ function workTab(){
       <div class="v31-empty-footnote">${ico('info')} ${staged?'Work orders remain in the selected shift until a new verified import is confirmed.':'No sample work orders or invented data are shown.'}</div>
     </section>`;
   }
-  return `<div class="table-tools"><p class="table-description">Non-PM work orders will appear here after a Cetaris import.</p><div class="table-controls"><label class="table-search">${ico('search')}<input type="search" id="wo-search" value="${esc(search)}" placeholder="Search asset, WO#, or remarks" aria-label="Search work orders"></label><div class="category-pills" id="wo-filter-pills" role="tablist" aria-label="Filter work orders">${renderCategoryPills()}</div></div></div><div class="table-wrap"><table class="wo-table"><thead><tr><th>#</th><th>Asset / Work Order</th><th>Category</th><th>Cause / Work Description</th><th>Status</th><th>Actions</th></tr></thead><tbody id="wo-rows"></tbody></table></div><div class="table-bottom-note">${ico('info')} <span>Use View for full details, Edit to update remarks, or Exclude to drop a record from this report.</span></div>`;
+  return `<div class="table-tools"><p class="table-description">Non-PM work orders will appear here after a Cetaris import.</p><div class="table-controls"><label class="table-search">${ico('search')}<input type="search" id="wo-search" value="${esc(search)}" placeholder="Search asset, WO#, or remarks" aria-label="Search work orders"></label><div class="category-pills" id="wo-filter-pills" role="tablist" aria-label="Filter work orders">${renderCategoryPills()}</div></div></div><div class="table-wrap"><table class="wo-table"><thead><tr><th>#</th><th>Asset / Work Order</th><th>Category</th><th>Cause / Work Description</th><th>WO / Asset Status</th><th>Actions</th></tr></thead><tbody id="wo-rows"></tbody></table></div><div class="table-bottom-note">${ico('info')} <span>Use View for full details, Edit to update remarks, or Exclude to drop a record from this report.</span></div>`;
 }
-function populateRows(){const tbody=$('#wo-rows');if(!tbody)return;const pillWrap=$('#wo-filter-pills');if(pillWrap)pillWrap.innerHTML=renderCategoryPills();const rows=state.rows.filter(r=> {const match=category==='excluded'?r.excluded:!r.excluded&&(category==='all'||r.category===category);return match && [r.asset,r.wo,r.cause,r.tech,r.category].some(v=>v.toLowerCase().includes(search.toLowerCase()));});tbody.innerHTML=rows.length?rows.map((r,i)=>`<tr class="${r.excluded?'excluded-row':''}"><td>${i+1}</td><td class="asset-cell"><strong>${esc(r.asset)}</strong><small>WO# ${esc(r.wo)}</small></td><td><span class="category-pill ${catClass(r.category)}">${esc(r.category)}</span></td><td class="cause-cell" title="Technician: ${esc(r.tech)}">${esc(r.cause)}<small>${esc(r.tech)}</small></td><td><span class="status-pill ${r.excluded?'excluded':r.status==='PENDING'?'excluded':r.status.toLowerCase()}">${r.excluded?'Excluded':r.status==='RTS'?`${ico('check')} RTS`:r.status==='PENDING'?'Pending closure':`${ico('alert')} OOS`}</span></td><td><div class="row-buttons"><button class="row-btn" data-detail="${r.id}" title="View work order details" aria-label="View ${esc(r.asset)}">${ico('file')}<span>View</span></button><button class="row-btn" data-edit="${r.id}" title="Edit work order" aria-label="Edit ${esc(r.asset)}">${ico('edit')}<span>Edit</span></button><button class="row-btn ${r.excluded?'':'row-btn-danger'}" data-exclude="${r.id}" title="${r.excluded?'Restore':'Exclude'} work order" aria-label="${r.excluded?'Restore':'Exclude'} ${esc(r.asset)}">${ico(r.excluded?'eye':'eyeoff')}<span>${r.excluded?'Restore':'Exclude'}</span></button></div></td></tr>`).join(''):`<tr><td colspan="6" class="empty-table">No work orders yet. Import a Cetaris file to begin your Shift Happenings.</td></tr>`;
+function populateRows(){const tbody=$('#wo-rows');if(!tbody)return;const pillWrap=$('#wo-filter-pills');if(pillWrap)pillWrap.innerHTML=renderCategoryPills();const rows=state.rows.filter(r=> {const match=category==='excluded'?r.excluded:!r.excluded&&(category==='all'||r.category===category);return match && [r.asset,r.wo,r.cause,r.tech,r.category].some(v=>v.toLowerCase().includes(search.toLowerCase()));});tbody.innerHTML=rows.length?rows.map((r,i)=>`<tr class="${r.excluded?'excluded-row':''}"><td>${i+1}</td><td class="asset-cell"><strong>${esc(r.asset)}</strong><small>WO# ${esc(r.wo)}</small></td><td><span class="category-pill ${catClass(r.category)}">${esc(r.category)}</span></td><td class="cause-cell" title="Technician: ${esc(r.tech)}">${esc(r.cause)}<small>${esc(r.tech)}</small></td><td><span class="status-pill ${r.excluded?'excluded':['PENDING','WORKED','IN_PROGRESS','PARTS_PENDING','MANAGER_REVIEW','OUTSIDE_SERVICE','TO_BE_DONE','UNCLOSED','VOIDED','COMPLETED','CLOSED'].includes(r.status)?'excluded':r.status.toLowerCase()}">${r.excluded?'Excluded':r.status==='RTS'?`${ico('check')} RTS`:r.status==='PENDING'?'Pending follow-up':r.status==='IN_PROGRESS'?'In Process':r.status==='COMPLETED'?'Completed':r.status==='WORKED'?'Worked':r.status==='CLOSED'?'Closed':r.status==='PARTS_PENDING'?'Parts Pending':r.status==='MANAGER_REVIEW'?'Manager Review':r.status==='OUTSIDE_SERVICE'?'Outside Service':r.status==='TO_BE_DONE'?'To be Done':r.status==='UNCLOSED'?'Unclosed':r.status==='VOIDED'?'Void':`${ico('alert')} OOS`}</span></td><td><div class="row-buttons"><button class="row-btn" data-detail="${r.id}" title="View work order details" aria-label="View ${esc(r.asset)}">${ico('file')}<span>View</span></button><button class="row-btn" data-edit="${r.id}" title="Edit work order" aria-label="Edit ${esc(r.asset)}">${ico('edit')}<span>Edit</span></button><button class="row-btn ${r.excluded?'':'row-btn-danger'}" data-exclude="${r.id}" title="${r.excluded?'Restore':'Exclude'} work order" aria-label="${r.excluded?'Restore':'Exclude'} ${esc(r.asset)}">${ico(r.excluded?'eye':'eyeoff')}<span>${r.excluded?'Restore':'Exclude'}</span></button></div></td></tr>`).join(''):`<tr><td colspan="6" class="empty-table">No work orders yet. Import a Cetaris file to begin your Shift Happenings.</td></tr>`;
 $$('[data-edit]',tbody).forEach(b=>b.addEventListener('click',()=>editRow(Number(b.dataset.edit))));$$('[data-exclude]',tbody).forEach(b=>b.addEventListener('click',()=>{const r=state.rows.find(r=>r.id===Number(b.dataset.exclude));const desired=!r.excluded;window.V31Reporting.updateWO(r.wo,{excluded:desired}).then(()=>{r.excluded=desired;updateMetrics();populateRows();toast(`${r.asset} ${r.excluded?'excluded from':'restored to'} Shift Happenings`);}).catch(err=>toast(err.message));}));$$('[data-detail]',tbody).forEach(b=>b.addEventListener('click',()=>rowDetail(Number(b.dataset.detail))));}
-function editRow(id){const r=state.rows.find(r=>r.id===id);showModal(`Edit ${r.asset}`,'Work order changes are saved to this selected shift.',`<div class="field"><label for="edit-asset">Asset ID</label><input id="edit-asset" value="${esc(r.asset)}"></div><div class="field"><label for="edit-cause">Cause / work performed</label><textarea id="edit-cause">${esc(r.cause)}</textarea></div><div class="field"><label for="edit-remarks">Technician remarks</label><textarea id="edit-remarks">${esc(r.remarks||'')}</textarea></div><div class="field"><label for="edit-tech">Technicians</label><input id="edit-tech" value="${esc(r.tech)}"></div><div class="field"><label for="edit-status">Equipment status</label><select id="edit-status" ${r.status==='PENDING'&&!r.isManual?'disabled':''}>${r.status==='PENDING'?'<option value="PENDING" selected>Pending closure — reimport after Cetaris closes</option>':''}<option value="RTS" ${r.status==='RTS'?'selected':''}>Returned to Service (RTS)</option><option value="OOS" ${r.status==='OOS'?'selected':''}>Out of Service (OOS)</option></select></div>`,[{text:'Cancel',onClick:closeModal},{text:'Local AI Suggestion',onClick:()=>showAISuggestion(id)},{text:'Save changes',kind:'btn-primary',onClick:async()=>{const changes={asset:$('#edit-asset').value.trim()||r.asset,cause:$('#edit-cause').value.trim()||r.cause,tech:$('#edit-tech').value.trim()||r.tech,remarks:$('#edit-remarks').value.trim(),status:$('#edit-status').value};try{await window.V31Reporting.updateWO(r.wo,changes);Object.assign(r,changes);closeModal();updateMetrics();renderTab();toast('Work order updated and saved');}catch(err){toast(err.message);}}}]);}
+function editRow(id){const r=state.rows.find(r=>r.id===id);showModal(`Edit ${r.asset}`,'Work order changes are saved to this selected shift.',`<div class="field"><label for="edit-asset">Asset ID</label><input id="edit-asset" value="${esc(r.asset)}"></div><div class="field"><label for="edit-cause">Cause / work performed</label><textarea id="edit-cause">${esc(r.cause)}</textarea></div><div class="field"><label for="edit-remarks">Technician remarks</label><textarea id="edit-remarks">${esc(r.remarks||'')}</textarea></div><div class="field"><label for="edit-tech">Technicians</label><input id="edit-tech" value="${esc(r.tech)}"></div><div class="field"><label for="edit-status">Equipment status</label><select id="edit-status" ${['PENDING','WORKED','IN_PROGRESS','PARTS_PENDING','MANAGER_REVIEW','OUTSIDE_SERVICE','TO_BE_DONE','UNCLOSED','VOIDED','COMPLETED','CLOSED'].includes(r.status)&&!r.isManual?'disabled':''}>${['PENDING','WORKED','IN_PROGRESS','PARTS_PENDING','MANAGER_REVIEW','OUTSIDE_SERVICE','TO_BE_DONE','UNCLOSED','VOIDED','COMPLETED','CLOSED'].includes(r.status)?'<option value="'+esc(r.status)+'" selected>'+esc({'PENDING':'Pending follow-up','WORKED':'Work performed','IN_PROGRESS':'Cetaris In Process','COMPLETED':'Cetaris Completed','CLOSED':'Cetaris Closed','PARTS_PENDING':'Parts Pending','MANAGER_REVIEW':'Manager Review','OUTSIDE_SERVICE':'Outside Service','TO_BE_DONE':'To be Done','UNCLOSED':'Unclosed','VOIDED':'Void'}[r.status])+'</option>':''}<option value="RTS" ${r.status==='RTS'?'selected':''}>Returned to Service (RTS)</option><option value="OOS" ${r.status==='OOS'?'selected':''}>Out of Service (OOS)</option></select></div>`,[{text:'Cancel',onClick:closeModal},{text:'Local AI Suggestion',onClick:()=>showAISuggestion(id)},{text:'Save changes',kind:'btn-primary',onClick:async()=>{const changes={asset:$('#edit-asset').value.trim()||r.asset,cause:$('#edit-cause').value.trim()||r.cause,tech:$('#edit-tech').value.trim()||r.tech,remarks:$('#edit-remarks').value.trim(),status:$('#edit-status').value};try{await window.V31Reporting.updateWO(r.wo,changes);Object.assign(r,changes);closeModal();updateMetrics();renderTab();toast('Work order updated and saved');}catch(err){toast(err.message);}}}]);}
 function rowDetail(id){
   const r=state.rows.find(r=>r.id===id);
   const mark=r.isManual?'Manual entry':r.referenceWo?'Source WO# '+r.referenceWo:'Cetaris WO# '+r.wo;
@@ -434,25 +438,41 @@ function rowDetail(id){
 }
 function listPane(kind){let list=kind==='vendors'?state.vendors:state.ro;let title=kind==='vendors'?'Vendor Activity':'RO / Work Requests';return `<div class="secondary-pane"><div class="pane-header"><div><h3>${title}</h3><p>Items entered manually for this shift's final report.</p></div><button class="btn btn-primary" id="add-list-entry">+ Add ${kind==='vendors'?'Vendor':'RO'}</button></div><div class="item-list">${list.length?list.map((t,i)=>`<div class="item-card"><div><strong>${esc(t)}</strong><small>Manual reporting entry</small></div><button class="btn btn-light btn-small" data-list-edit="${i}">Edit</button></div>`).join(''):'<p>No entries have been added for this shift.</p>'}</div></div>`;}
 function pmTab(){
-  const needed=state.pmNeeds||{present:false,count:0,rows:[]};
-  const completed=state.pms.length?state.pms.map(r=>`<div class="item-card"><div><strong>${esc(r.asset||'Asset not specified')} · WO# ${esc(r.wo_number)}</strong><small>${esc(r.tech||'')}</small></div><span class="status-pill rts">Completed</span></div>`).join(''):'<p class="field-help">No completed PMs imported yet.</p>';
-  // Match the V2/V3 Outlook PM table instead of mixing outstanding PMs
-  // into generic asset cards. Show exactly the columns parsed from the file.
-  const cell=(value,bold=false)=>`<td style="padding:8px 10px;border:1px solid #d1d5db;${bold?'font-weight:700;':''}">${esc(value||'—')}</td>`;
-  const toDo=needed.rows?.length?`<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13px;min-width:660px">
+  const needed=state.pmNeeds||{present:false,has_source:false,count:0,due_count:0,rows:[],notes:[],target_dates:[]};
+  const completed=state.pms.length?state.pms.map(r=>`<div class="item-card"><div><strong>${esc(r.asset||'Asset not specified')} · WO# ${esc(r.wo_number)}</strong><small>${esc(r.tech||'')}</small></div><span class="status-pill rts">Completed</span></div>`).join(''):'<p class="field-help">No completed PMs imported for this shift.</p>';
+  const cell=(value,bold=false,tone='')=>`<td style="padding:8px 10px;border:1px solid #d1d5db;${tone==='red'?'background:#fde8e8;color:#991b1b;':tone==='yellow'?'background:#fff2c7;color:#805500;':tone==='neutral'?'background:#f3f4f6;':''}${bold?'font-weight:700;':''}">${esc(value||'—')}</td>`;
+  const due=needed.rows?.length?`<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13px;min-width:760px">
     <thead><tr style="background:#144a86;color:#fff"><th style="padding:10px;text-align:left">WO #</th>
     <th style="padding:10px;text-align:left">Asset</th><th style="padding:10px;text-align:left">PM Due Date</th>
+    <th style="padding:10px;text-align:left">WO Status</th><th style="padding:10px;text-align:left">Due Flag</th>
     <th style="padding:10px;text-align:left">Promise Date / Time</th><th style="padding:10px;text-align:left">WO Date / Time</th></tr></thead>
-    <tbody>${needed.rows.map((r,i)=>`<tr style="background:${i%2?'#f3f7fc':'#fff'}">
-      ${cell(r.wo_number,true)}${cell(r.asset_num,true)}${cell(r.pm_due_date,true)}
-      ${cell(r.promise_date)}${cell(r.wo_date)}</tr>`).join('')}</tbody></table></div>`:'';
-  const missing=needed.present?(needed.parsed?'No PM rows in the uploaded file.':'Reference file saved; details not machine-parsed.'):'No PMs Needing Completion file uploaded yet.';
+    <tbody>${needed.rows.map((r,i)=>`<tr>
+      ${cell(r.wo_number,true,'yellow')}${cell(r.asset_num,true,'yellow')}${cell(r.pm_due_date,true,'yellow')}
+      ${cell(r.wo_status||'Not provided',false,'yellow')}${cell('DUE TODAY — 11:59 PM',true,'yellow')}
+      ${cell(r.promise_date,false,'yellow')}${cell(r.wo_date,false,'yellow')}</tr>`).join('')}</tbody></table></div>`:'';  const overdue=needed.past_due_rows||[];
+  const overdueTable=overdue.length?`<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13px;min-width:620px"><thead>
+    <tr style="background:#8c2630;color:#fff"><th style="padding:10px;text-align:left">WO #</th><th style="padding:10px;text-align:left">Asset</th><th style="padding:10px;text-align:left">PM Due Date</th><th style="padding:10px;text-align:left">Last WO Status</th><th style="padding:10px;text-align:left">Flag</th></tr></thead>
+    <tbody>${overdue.map(r=>`<tr>
+    ${cell(r.wo_number,true,'red')}${cell(r.asset_num,true,'red')}${cell(r.pm_due_date,true,'red')}
+    ${cell(r.wo_status,false,'red')}${cell('PAST DUE',true,'red')}</tr>`).join('')}</tbody></table></div>`
+    :'<p class="field-help">No unfinished past-due PMs appear in this WO Details export.</p>';
+  const missing=needed.has_source?
+      'No PMs due on the selected date were identified. Check the single Cetaris WO Details export includes all To-Be-Done and unassigned PMs.':
+      'Upload a complete Cetaris WO Details export with PM Due Date and Primary RFR columns.';
+  const dates=(needed.target_dates||[]).join(', ');
+  const notes=(needed.notes||[]).map(n=>`<p class="field-help" style="color:#a15c00">${esc(n)}</p>`).join('');
   return `<div class="secondary-pane">
-    <div class="pane-header"><div><h3>Completed PMs · ${state.pmCount}</h3><p>From the completed-work-order Cetaris import.</p></div></div>
+    <div class="pane-header"><div><h3>Completed PMs This Shift · ${state.pmCount}</h3><p>Verified from completed Cetaris PM work orders.</p></div></div>
     <div class="item-list">${completed}</div>
-    <div class="pane-header"><div><h3>PMs Needing Completion · ${needed.count||0}</h3><p>Outstanding PM work orders extracted from the separate V2/V3 report. Counted once per WO.</p></div></div>
-    ${needed.present?'<p>Uploaded: '+esc(needed.filename)+'</p>':''}
-    <div class="item-list">${toDo||'<p class="field-help">'+missing+'</p>'}</div>
+    <div class="pane-header"><div><h3>Daily PMs Due · ${needed.due_count||0}</h3>
+      <p>Yellow: To Be Done PMs due on ${esc(dates||'selected shift date')} until 11:59 PM · Still needing completion: <strong>${needed.count||0}</strong></p>
+      <p>Only Primary RFR 08 PMs marked To Be Done, including unassigned work orders. Work orders counted once.</p></div></div>
+    ${needed.auto_available?'<p class="field-help">Single Cetaris WO Details source: '+esc(needed.auto_filename||'Cetaris export')+'</p>':''}
+    ${notes}
+    <div class="item-list">${due||'<p class="field-help">'+missing+'</p>'}</div>
+    <div class="pane-header"><div><h3>Past Due PMs · ${overdue.length}</h3>
+      <p>Red: To Be Done PMs with a due date before the report date, found in this file only.</p></div></div>
+    <div class="item-list">${overdueTable}</div>
   </div>`;
 }
 function breakdownTab(){
@@ -637,11 +657,15 @@ function buildEmailHtml(){
     :`<p style="font-size:14px;font-family:Calibri,Arial,sans-serif;margin-top:18px;"><strong style="color:#b45309;">&#9888; LOTO Verification Pending</strong></p>`;
   const missingKeyHtml=state.missingKeys?.length
     ?`<p style="color:#c00;margin:2px 0;font-size:14px;font-family:Calibri,Arial,sans-serif;"><strong>Missing key${state.missingKeys.length>1?'s':''}:</strong> ${esc(state.missingKeys.join(', '))}</p>`:'';
-  // V3.1 does not yet have the real pending-PM data source wired (see
-  // README). Showing "none pending" would be a false claim -- the MST has
-  // no way to know if that's true. State it as unavailable instead, and
-  // remove this block entirely once Phase 2 wires the real V3 PM workflow.
-  const pmHtml=`<p style="margin:16px 0 2px;"><strong style="font-size:16px;">PM's Needing to be Completed</strong></p><p style="margin:0 0 6px;font-size:14px;color:#6b7280;font-style:italic;">Pending-PM tracking is not yet connected in V3.1 -- not shown.</p>`;
+  // Match server-rendered daily due-PM data, not an old placeholder.
+  // The canonical .eml is saved server-side from this same persisted inventory.
+  const pmDue=state.pmNeeds||{rows:[],past_due_rows:[],count:0,due_count:0};
+  const pmRows=(pmDue.rows||[]).map(p=>`<tr style="background-color:#fff2c7"><td>${esc(p.wo_number)}</td><td>${esc(p.asset_num||'')}</td><td>${esc(p.pm_due_date||'')}</td><td>${esc(p.wo_status||'')} — DUE TODAY (11:59 PM)</td></tr>`).join('');
+  const pmHtml=`<p style="margin:16px 0 2px;"><strong style="font-size:16px;">PMs Needing Completion</strong></p>
+    <p>To Be Done PMs due today: ${pmDue.due_count||0} · Past Due: ${pmDue.past_due_count||0}</p>
+    ${pmRows?'<table style="border-collapse:collapse;" border="1"><thead><tr><th>WO #</th><th>Asset</th><th>PM Due Date</th><th>WO Status</th></tr></thead><tbody>'+pmRows+'</tbody></table>':'<p>Due-PM list not confirmed; verify the WO Details export.</p>'}
+    <p><strong>Past Due PMs: ${pmDue.past_due_count||0}</strong></p>
+    ${(pmDue.past_due_rows||[]).map(p=>`<p style="background-color:#fde8e8;color:#991b1b;padding:6px"><strong>PAST DUE</strong> · ${esc(p.wo_number)} · ${esc(p.asset_num)} · Due ${esc(p.pm_due_date)} · ${esc(p.wo_status)}</p>`).join('')}`;
   return '<html><body style="font-family:Calibri,Arial,sans-serif;font-size:14px;color:#111;max-width:700px;line-height:1.6;">'+
     `<p style="margin:0 0 18px;font-size:18px;"><strong>${esc(shift)} End of Shift Passdown</strong></p>`+
     sec('Vendors',bulletList(state.vendors.map(v=>esc(v))))+
@@ -732,11 +756,11 @@ async function confirmEnd(){
               'Review the report and outstanding items.',body,buttons,{wide:true});
   }catch(error){toast(error.message);}
 }
-function showInfo(){showModal('V3.1 Shift Passdown','Separate from live IND3 V3.',`<p>This V3.1 local app uses a separate shift database and actual Cetaris imports. It does not modify the live production V3 application.</p><p><strong>Current workflows:</strong> Cetaris XLSX/CSV import, technician selection, manual repairs, verified breakdown lifecycle, OOS/RTS, carry-overs, LOTO key checks, PMs Needing Completion upload, saved Outlook EML and End Shift.</p><p>Local AI suggestions are optional and require a model installed through an approved process. The V2/V3 production application remains separate.</p>`,[{text:'Got it',onClick:closeModal}]);}
+function showInfo(){showModal('V3.1 Shift Passdown','Separate from live IND3 V3.',`<p>This V3.1 local app uses a separate shift database and actual Cetaris imports. It does not modify the live production V3 application.</p><p><strong>Current workflows:</strong> Cetaris XLSX/CSV import, technician selection, manual repairs, verified breakdown lifecycle, OOS/RTS, carry-overs, LOTO key checks, automatic Daily / Past Due PM inventory from one WO Details file, saved Outlook EML and End Shift.</p><p>Local AI suggestions are optional and require a model installed through an approved process. The V2/V3 production application remains separate.</p>`,[{text:'Got it',onClick:closeModal}]);}
 // Wiring
 $$('.tab').forEach(t=>t.addEventListener('click',()=>{selectedTab=t.dataset.tab;renderTab();}));
 $('#replace-file').addEventListener('click',()=>$('#cetaris-picker').click());$('#cetaris-picker').addEventListener('change',e=>{const f=e.target.files?.[0];if(!f)return;window.V31Reporting?.upload(f);e.target.value='';});
-$('#upload-pending').addEventListener('click',()=>$('#pending-picker').click());/* Upload handling lives in /web/pm-needing-completion.js, not a preview-only handler. */
+
 $('#change-techs').addEventListener('click',()=>window.V31Reporting?.chooseTechs());
 $$('[data-open]').forEach(b=>b.addEventListener('click',()=>b.dataset.open==='notes'?editNotes():editList(b.dataset.open)));
 const keyGrid=$('#missing-keys');
@@ -746,6 +770,9 @@ for(let i=1;i<=20;i++){
   const span=document.createElement('span');span.textContent=`Key ${i}`;label.append(cb,span);keyGrid.append(label);
 }
 const toggle=$('#loto-toggle');
+// Protect optimistic LOTO state from an older in-flight refresh. Server
+// state is reconciled once the immediate save finishes.
+let lotoWritesPending=0;
 function checkedKeys(){return $$('.loto-key',keyGrid).filter(c=>c.checked).map(c=>c.value);}
 function lotoVisual(){
   state.loto=toggle.checked;
@@ -760,11 +787,20 @@ async function persistLoto(){
   const savedLabel=$('#last-saved');
   if(savedLabel){const now=new Date();savedLabel.textContent=`Changed ${now.toLocaleTimeString([], {hour:'numeric',minute:'2-digit'})}`;}
 }
-toggle.addEventListener('change',()=>{persistLoto().catch(e=>toast('LOTO save failed: '+e.message));});
+toggle.addEventListener('change',async()=>{
+  lotoWritesPending++;
+  try{await persistLoto();}
+  catch(e){toast('LOTO save failed: '+e.message);}
+  finally{
+    lotoWritesPending--;
+    window.V31Reporting?.refresh()?.catch(()=>{});
+  }
+});
 keyGrid.addEventListener('change',async e=>{
   const box=e.target;
   if(!box.classList.contains('loto-key'))return;
   const previousKeys=[...state.missingKeys], previousVerified=toggle.checked;
+  lotoWritesPending++;
   // Marking a missing key records a completed inspection, not an unverified one.
   if(box.checked)toggle.checked=true;
   lotoVisual();
@@ -792,6 +828,10 @@ keyGrid.addEventListener('change',async e=>{
   }finally{
     $$('.loto-key',keyGrid).forEach(c=>c.disabled=false);
     if(generateButton)generateButton.disabled=wasGenerateDisabled;
+    lotoWritesPending--;
+    // Reconcile one authoritative server snapshot after the write, rather
+    // than allowing an older request to turn verification back off.
+    window.V31Reporting?.refresh()?.catch(()=>{});
   }
 });
 $('#loto-keys-toggle').addEventListener('click',()=>{const area=$('#loto-select-area');const open=area.hidden;area.hidden=!open;$('#loto-keys-toggle').setAttribute('aria-expanded',String(open));});
@@ -833,13 +873,18 @@ window.v31ReportView={
     state.audit=data.audit||{summary:{},pending:[],ignored:[]};
     state.cetarisFile=data.stage?.filename||'';
     state.stageImported=!!data.stage?.imported;
+    state.stageTechCount=(data.stage?.technicians||[]).length;
     if(data.draft){
       state.vendors=data.draft.vendors||[];state.ro=data.draft.ro||[];
-      state.notes=data.draft.notes||'';state.loto=!!data.draft.loto;
-      state.missingKeys=data.draft.missingKeys||[];
-      $('#loto-toggle').checked=state.loto;$$('.loto-key',$('#missing-keys')).forEach(c=>c.checked=state.missingKeys.includes(c.value));
-      $('#loto-state').textContent=state.loto?'Verified':'Not verified';
-      $('#loto-state').classList.toggle('missing',!state.loto);
+      state.notes=data.draft.notes||'';
+      if(!lotoWritesPending){
+        state.loto=!!data.draft.loto;
+        state.missingKeys=data.draft.missingKeys||[];
+        $('#loto-toggle').checked=state.loto;
+        $$('.loto-key',$('#missing-keys')).forEach(c=>c.checked=state.missingKeys.includes(c.value));
+        $('#loto-state').textContent=state.loto?'Verified':'Not verified';
+        $('#loto-state').classList.toggle('missing',!state.loto);
+      }
     }
     $('#cetaris-state').textContent=!data.stage?.staged?'No Cetaris File Imported':
       data.stage.imported?'Cetaris Imported':'Cetaris Parsed · Confirm Technicians';

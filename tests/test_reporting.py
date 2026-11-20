@@ -112,13 +112,13 @@ def test_verified_cetaris_closed_reconciles_edited_pending_without_erasing_remar
     imported=client.post('/api/reporting/import',json={
         'technicians':['Synthetic A'],'closure_reviews':{'CLSR001':'add'}})
     assert imported.status_code==200,imported.text
-    assert client.get('/api/reporting/state').json()['rows'][0]['status']=='PENDING'
+    assert client.get('/api/reporting/state').json()['rows'][0]['status']=='COMPLETED'
     assert client.post('/api/reporting/work-orders/CLSR001',
                        json={'remarks':'Verified motor checks, waiting for final Cetaris closure'}).status_code==200
     assert upload(client,[row("CLSR001",status="Closed")]).status_code==200
     assert import_techs(client,['Synthetic A']).status_code==200
     updated=client.get('/api/reporting/state').json()['rows'][0]
-    assert updated['status']=='RTS'
+    assert updated['status']=='CLOSED'
     assert updated['edited']==1
     assert 'waiting for final Cetaris' in updated['remarks']
 
@@ -162,7 +162,7 @@ def test_two_tech_one_closed_wo_grouped_with_remarks(client,monkeypatch):
     assert wo["wo_number"]=="9001"
     assert wo["cause"]=="Photoeye not sensing"
     assert wo["asset"]=="ASSET9001"
-    assert wo["status"]=="RTS"
+    assert wo["status"]=="CLOSED"  # Cetaris closure isn't physical RTS.
     assert "Synthetic A" in wo["tech"] and "Synthetic B" in wo["tech"]
     assert "Located sensor fault" in wo["remarks"] and "Replaced sensor" in wo["remarks"]
     assert wo["excluded"] is False
@@ -222,15 +222,15 @@ def test_pending_closure_remains_pending_on_manual_edit(client,monkeypatch):
     })
     assert selected.status_code==200,selected.text
     old=client.get('/api/reporting/state').json()['rows'][0]
-    assert old['status']=='PENDING'
+    assert old['status']=='COMPLETED'
     assert client.post('/api/reporting/work-orders/PEND01',json={
-        'remarks':'Needs Cetaris closure','status':'PENDING'
+        'remarks':'Needs Cetaris closure','status':'COMPLETED'
     }).status_code==200
     assert client.post('/api/reporting/work-orders/PEND01',json={'status':'RTS'}).status_code==422
     final=client.get('/api/reporting/state').json()['rows'][0]
-    assert final['status']=='PENDING'
+    assert final['status']=='COMPLETED'
     ui=client.get('/shift-report.html').text
-    assert 'Pending closure — reimport after Cetaris closes' in ui
+    assert 'Cetaris Completed' in ui
 
 
 def test_manual_proactive_pm_discovery_survives_cetaris_reimport(client,monkeypatch):
@@ -306,45 +306,48 @@ def test_flagged_carryover_requires_adoption_or_dismissal_after_previous_shift_e
     assert repeat.status_code==409
 
 
-def test_pm_needing_completion_upload_is_real_and_separate_from_completed_pm_count(client,monkeypatch):
+def test_one_wo_details_file_drives_due_pm_and_outlook_without_second_upload(
+    client,monkeypatch
+):
+    from test_daily_pm_due_wo_details import stage_details,to_be_done
     clock(monkeypatch)
     shift_id=enter(client)
-    csv=(b"WO Number,WO Date / Time,PM Due Date,Promise Date / Time,Asset #\n"
-         b"PM100,10/26/2026,10/27/2026,10/28/2026,CONV-1\n"
-         b"PM200,10/26/2026,10/27/2026,10/28/2026,CONV-2\n")
-    uploaded=client.post('/api/pm-needing-completion/upload',files={
-        'file':('pm-needing.csv',csv,'text/csv')
-    })
-    assert uploaded.status_code==200,uploaded.text
-    body=uploaded.json()
-    assert body['count']==2 and body['parsed'] is True
+    staged=stage_details(client,[
+        to_be_done("PM100",due="10/26/2026",asset="CONV-1"),
+        to_be_done("PM200",due="10/26/2026",asset="CONV-2"),
+    ])
+    assert staged.status_code==200,staged.text
     state=client.get('/api/reporting/state').json()
     assert state['pm_count']==0
     assert state['pm_needing_completion']['count']==2
-    downloaded=client.get('/api/pm-needing-completion/download')
-    assert downloaded.status_code==200 and downloaded.content==csv
+    assert not state['pm_needing_completion']['present']
+    assert client.get('/api/pm-needing-completion/download').status_code==404
     with m._db() as conn:
         import v31_reporting
         html=v31_reporting.build_passdown_html(conn,shift_id,'S1')
     assert 'PMs Needing Completion' in html
     assert 'PM100' in html and 'PM200' in html and 'CONV-1' in html
-    cleared=client.delete('/api/pm-needing-completion')
-    assert cleared.status_code==200 and cleared.json()['removed']
-    assert client.get('/api/pm-needing-completion').json()['present'] is False
+    # The second PM upload is intentionally gone.
+    retired=client.post('/api/pm-needing-completion/upload',files={
+        'file':('retired.csv',b'WO Number,PM Due Date\\nOld,10/26/2026\\n','text/csv')})
+    assert retired.status_code==410
 
 
-def test_pm_report_rejects_unparseable_workbook_without_erasing_previous(client,monkeypatch):
+def test_bad_wo_details_export_cannot_erase_staged_daily_pm_history(
+    client,monkeypatch
+):
+    from test_daily_pm_due_wo_details import stage_details,to_be_done
     clock(monkeypatch)
     enter(client)
-    good=b'WO Number,PM Due Date,Asset #\nPM101,10/27/2026,ASSET-1\n'
-    saved=client.post('/api/pm-needing-completion/upload',files={'file':('good.csv',good,'text/csv')})
-    assert saved.status_code==200
-    bad=client.post('/api/pm-needing-completion/upload',files={
-        'file':('bad.csv',b'Wrong Heading\nValue\n','text/csv')
-    })
+    assert stage_details(client,[
+        to_be_done("PM101",due="10/26/2026",asset="ASSET-1"),
+    ]).status_code==200
+    bad=client.post('/api/reporting/stage',files={
+       'file':('bad.csv',b'Wrong Heading\\nValue\\n','text/csv')})
     assert bad.status_code==422
-    old=client.get('/api/pm-needing-completion').json()
-    assert old['filename']=='good.csv' and old['count']==1
+    prior=client.get('/api/pm-needing-completion').json()
+    assert prior['count']==1 and prior['rows'][0]['wo_number']=='PM101'
+
 
 
 def test_pm_counts_once_and_does_not_enter_shift_happenings(client,monkeypatch):
@@ -365,7 +368,8 @@ def test_pm_counts_once_and_does_not_enter_shift_happenings(client,monkeypatch):
     assert data["pm_count"]==1
     assert data["pms"][0]["wo_number"]=="PM900"
     assert "PM900" not in {v["wo_number"] for v in data["rows"]}
-    assert any(x["wo_number"]=="9003" and x["status"]=="OOS" for x in data["rows"])
+    assert any(x["wo_number"]=="9003" and x["status"]=="IN_PROGRESS" for x in data["rows"])
+    assert any(x["wo_number"]=="9003" for x in client.get('/api/assets/status').json()['active_breakdowns'])
 
 
 def test_edit_and_exclude_survive_reimport_and_relogin(client,monkeypatch):
@@ -433,16 +437,23 @@ def test_completed_non_pm_pending_review_not_silently_closed(client,monkeypatch)
     r=import_techs(client,["Synthetic A"])
     assert r.status_code==200,r.text
     result=client.get("/api/reporting/state").json()
-    assert result["rows"]==[]
-    assert any(x["wo_number"]=="9301" for x in result["audit"]["pending"])
-    # Import diagnostics are visible in the app but never injected into
-    # the Outlook passdown or made a report-generation requirement.
+    # Vendor/invoice closure does not erase work that was actually done.
+    assert len(result["rows"])==1
+    assert result["rows"][0]["wo_number"]=="9301"
+    assert result["rows"][0]["status"]=="COMPLETED"
+    html=client.get('/api/shifts/report/preview').json()['html']
+    followups=html.split('>Open Follow-ups / Shift Carry-overs</strong>',1)[1].split(
+        '>Reliable Operations</strong>',1)[0]
+    assert '9301' not in followups  # Vendor invoice is not a repair carryover.
+    # The passdown includes the maintenance work, not an invented reminder
+    # to close a vendor invoice before the shift can end.
     generated=client.post("/api/shifts/report",json={})
     assert generated.status_code==200,generated.text
     eml=client.get("/api/shifts/report/download")
     assert eml.status_code==200
-    assert b"9301" not in eml.content
+    assert b"9301" in eml.content
     assert b"Cetaris import review" not in eml.content
+    assert b"Reminder: Please close this WO" not in eml.content
 
 
 def test_invalid_workbook_does_not_replace_prior_stage(client,monkeypatch):
@@ -529,8 +540,10 @@ def test_completed_work_order_reminder_is_not_falsely_rts(client,monkeypatch):
     assert result.status_code==200,result.text
     data=client.get("/api/reporting/state").json()
     assert len(data["rows"])==1
-    assert data["rows"][0]["status"]=="PENDING"
-    assert "Please close this WO" in data["rows"][0]["remarks"]
+    assert data["rows"][0]["status"]=="COMPLETED"
+    # Keep the technician's real remarks; do not fabricate a same-shift
+    # closure demand when vendor invoicing may hold Cetaris at Completed.
+    assert data["rows"][0]["remarks"] == "Repaired wiring"
 
 
 def test_cross_shift_breakdown_can_transition_from_oos_to_rts(client,monkeypatch,tmp_path):
@@ -549,7 +562,8 @@ def test_cross_shift_breakdown_can_transition_from_oos_to_rts(client,monkeypatch
     first=import_techs(client,["Synthetic A"])
     assert first.status_code==200,first.text
     first_record=client.get("/api/reporting/state").json()["rows"][0]
-    assert first_record["status"]=="OOS"
+    assert first_record["status"]=="IN_PROGRESS"
+    assert client.get('/api/assets/status').json()['oos']==[]
     clock(monkeypatch,day=26,hour=14)
     second=client.post("/api/shifts/start",json={"code":"S2"})
     assert second.status_code==200,second.text
@@ -560,11 +574,16 @@ def test_cross_shift_breakdown_can_transition_from_oos_to_rts(client,monkeypatch
     final=import_techs(client,["Synthetic A"])
     assert final.status_code==200,final.text
     current=client.get("/api/reporting/state").json()["rows"]
-    assert len(current)==1 and current[0]["status"]=="RTS"
+    assert len(current)==1 and current[0]["status"]=="CLOSED"
+    # Cetaris Closed must NOT silently return a breakdown to service.
+    assert client.get('/api/assets/status').json()['rts']==[]
+    review=client.post('/api/breakdowns/BREAK1/decision',json={'decision':'rts'})
+    assert review.status_code==200,review.text
+    assert review.json()['resolved'] is True
     with m._db() as db:
         old=db.execute("SELECT status FROM report_wo WHERE shift_id=?",(s1,)).fetchone()
         new=db.execute("SELECT status FROM report_wo WHERE shift_id=?",(s2,)).fetchone()
-    assert old["status"]=="OOS" and new["status"]=="RTS"
+    assert old["status"]=="IN_PROGRESS" and new["status"]=="CLOSED"
     # Old shift audit remains immutable but live persistent OOS must clear
     # after the same breakdown's Closed/RTS event in the following shift.
     assets=client.get('/api/assets/status')
@@ -997,6 +1016,12 @@ def test_eml_rts_only_breakdown_equipment_deduplicated_and_signature_uniform(cli
     b2['Asset #']='BLDG'
     assert upload(client,[normal,b1,b2]).status_code==200
     assert import_techs(client,['Synthetic A']).status_code==200
+    # The two Closed breakdown WOs require a physical RTS confirmation.
+    assert client.get('/api/assets/status').json()['rts']==[]
+    for number in ('BREAK1','BREAK2'):
+        result=client.post('/api/breakdowns/'+number+'/decision',
+                           json={'decision':'rts'})
+        assert result.status_code==200,result.text
     # The event stores the asset identifier as imported from the WO. Editing
     # a display field afterwards must never fabricate a different RTS event.
     preview=client.get('/api/shifts/report/preview')

@@ -246,7 +246,7 @@ def test_pm_needing_completion_section_never_invents_unuploaded_rows(page_ctx):
     content = download_info.value.path().read_text(encoding="utf-8")
 
     assert "PMs Needing Completion" in content
-    assert "No PMs Needing Completion report uploaded" in content
+    assert "PM urgency has not been verified" in content
     assert "No PMs pending this shift." not in content
 
 
@@ -325,12 +325,46 @@ def test_loto_missing_key_selection_also_satisfies_shift_progress(page_ctx):
     # Reveal the missing-key checklist and select one key -- never touch the
     # main "Verified" switch.
     page.locator('#loto-keys-toggle').click()
-    page.locator('.loto-key').first.check()
+    with page.expect_response(
+        lambda response: '/api/reporting/loto/missing-key' in response.url
+        and response.request.method == 'POST', timeout=12000
+    ) as saved_key:
+        page.locator('.loto-key').first.check()
+    assert saved_key.value.status == 200
+    # Final EML must not generate while a facility key warning is saving.
+    try:
+        page.wait_for_function("""async () => {
+            const button=document.querySelector('#generate-eml');
+            if(!button || button.disabled)return false;
+            const response=await fetch('/api/reporting/state');
+            if(!response.ok)return false;
+            const state=await response.json();
+            return state.draft?.loto===true &&
+                state.draft?.missingKeys?.includes('Key 1');
+        }""",timeout=12000)
+    except Exception as err:
+        diagnostics=page.evaluate("""async () => ({
+            disabled:document.querySelector('#generate-eml')?.disabled,
+            verified:document.querySelector('#loto-toggle')?.checked,
+            toast:document.querySelector('#toast')?.textContent,
+            state:await (await fetch('/api/reporting/state')).json()
+        })""")
+        raise AssertionError('LOTO save did not restore report readiness: '+
+                             str(diagnostics)) from err
 
     assert page.locator('#loto-toggle').is_checked(), \
         "Documenting a missing key also marks LOTO checked for this shift"
     assert page.locator('#progress-number').inner_text() == "100%", \
         "A documented missing key is a completed LOTO check and must count toward Shift Progress"
 
-    with page.expect_download():
-        page.locator('#generate-eml').click()
+    with page.expect_download(timeout=15000):
+        # Generate may briefly toggle disabled during a late UI refresh.
+        # Check and dispatch the native click atomically inside one poll,
+        # avoiding a race between readiness and the click without retrying
+        # a submitted request or creating duplicate downloads.
+        page.wait_for_function("""() => {
+            const button=document.querySelector('#generate-eml');
+            if(!button || button.disabled)return false;
+            button.click();
+            return true;
+        }""",timeout=12000)

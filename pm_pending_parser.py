@@ -8,6 +8,8 @@ Accepts .xlsx, .xls, .csv
 from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date
+from v31_pm_due_scanner import due_date
+from v31_cetaris_codes import normalize_primary_rfr
 import io
 
 
@@ -18,13 +20,11 @@ class PendingPM:
     pm_due_date:  str
     promise_date: str
     asset_num:    str
+    wo_status:   str = ""
 
     @property
     def due_today(self) -> bool:
-        today = date.today().strftime("%-m/%-d/%Y")   # M/D/YYYY no padding
-        # also try zero-padded
-        today_alt = date.today().strftime("%m/%d/%Y")
-        return self.pm_due_date.startswith(today) or self.pm_due_date.startswith(today_alt)
+        return due_date(self.pm_due_date) == date.today()
 
 
 def _col(headers: list[str], *keywords: str) -> int:
@@ -45,6 +45,8 @@ def _parse_rows(rows: list[list[str]]) -> list[PendingPM]:
     due_col  = _col(headers, "pm due", "due date")
     prom_col = _col(headers, "promise")
     asset_col= _col(headers, "asset")
+    status_col= _col(headers, "wo status")
+    rfr_col= _col(headers, "primary rfr")
 
     results: list[PendingPM] = []
     for row in rows[1:]:
@@ -57,12 +59,19 @@ def _parse_rows(rows: list[list[str]]) -> list[PendingPM]:
         wo = _get(wo_col)
         if not wo or wo.lower() in ("wo number", "nan", "none", ""):
             continue
+        # A filtered Today's DAILY PMs export may omit Primary RFR,
+        # but when provided don't misclassify other RFRs as PMs.
+        if rfr_col >= 0:
+            _rfr,_code=normalize_primary_rfr(_get(rfr_col))
+            if _code != "08":
+                continue
         results.append(PendingPM(
             wo_number   = wo,
             wo_date     = _get(date_col),
             pm_due_date = _get(due_col),
             promise_date= _get(prom_col),
             asset_num   = _get(asset_col),
+            wo_status   = _get(status_col),
         ))
     return results
 

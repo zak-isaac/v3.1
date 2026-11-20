@@ -525,7 +525,6 @@ def landing(request: Request):
         '<script defer src="/web/shift-history.js"></script>'+
         '<script defer src="/web/manual-oos.js"></script>'+
         '<script defer src="/web/shift-data.js"></script>'+
-        '<script defer src="/web/pm-needing-completion.js"></script>'+
         '<script defer src="/web/analytics.js"></script>'))
 
 
@@ -790,10 +789,21 @@ def _end_shift_readiness(conn,row):
         blockers.append('Generate and save the Outlook passdown before End Shift.')
     elif not digest_ok:
         blockers.append('Saved Outlook report failed integrity verification; regenerate it.')
-    stage=conn.execute("SELECT applied_at FROM report_stage WHERE shift_id=?",(row['id'],)).fetchone() if conn.execute(
+    stage=conn.execute("SELECT applied_at,stats_json FROM report_stage WHERE shift_id=?",
+        (row['id'],)).fetchone() if conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='report_stage'").fetchone() else None
     if stage and not stage['applied_at']:
-        blockers.append('A newer Cetaris file is staged but not imported. Confirm its technicians first.')
+        # One-file WO Details can contain only unassigned To-Be-Done PMs:
+        # they have no technician to select, yet are valid PM inventory.
+        # Never waive technician review for a file with labor rows.
+        stage_stats=json.loads(stage['stats_json'] or '{}')
+        no_labor=not stage_stats.get('technicians')
+        import v31_pm_needing_completion as _pm_due
+        pm_inventory=_pm_due.get(conn,row['id']) if no_labor else {}
+        pm_only=no_labor and pm_inventory.get('auto_available') and (
+            pm_inventory.get('due_count',0)+pm_inventory.get('past_due_count',0)>0)
+        if not pm_only:
+            blockers.append('A newer Cetaris file is staged but not imported. Confirm its technicians first.')
     warnings=[]
     import v31_reporting
     v31_reporting._table(conn)
@@ -1200,18 +1210,11 @@ def pm_needing_completion_state(request:Request):
 @app.post('/api/pm-needing-completion/upload')
 async def pm_needing_completion_upload(request:Request,file:UploadFile=File(...)):
     _origin_check(request)
-    session,shift=_report_access(request)
-    try:
-        data=await file.read(v31_pm.MAX_BYTES+1)
-    finally:
-        await file.close()
-    try:
-        with _db() as conn:
-            result=v31_pm.upload(conn,shift['id'],file.filename or '',data,session['a'])
-            _invalidate_passdown(conn,shift['id'])
-    except ValueError as exc:
-        raise HTTPException(422,str(exc))
-    return result
+    _report_access(request)
+    # The second PM upload is retired. Old saved references stay intact.
+    await file.close()
+    raise HTTPException(410,
+        'Separate PM uploads are retired. Import full Cetaris WO Details instead.')
 
 
 @app.get('/api/pm-needing-completion/download')
@@ -1248,7 +1251,7 @@ class ReportingWOEdit(BaseModel):
     cause: str | None = None
     tech: str | None = None
     remarks: str | None = None
-    status: Literal['RTS','OOS','PENDING'] | None = None
+    status: Literal['RTS','OOS','PENDING','WORKED','IN_PROGRESS','PARTS_PENDING','MANAGER_REVIEW','OUTSIDE_SERVICE','TO_BE_DONE','UNCLOSED','VOIDED','COMPLETED','CLOSED'] | None = None
     excluded: bool | None = None
 
 
@@ -1437,9 +1440,10 @@ def breakdown_decision(wo_number:str,payload:BreakdownDecision,request:Request):
     try:
         with _db() as conn:
             result=v31_breakdown.decide(conn,wo_number,payload.decision,
-                                         row['id'],session['a'])
+                                         row['id'],session['a'],
+                                         roster()[session['a']].get('name','Associate'))
             _invalidate_passdown(conn,row['id'])
-    except KeyError as exc:
+    except (KeyError,ValueError) as exc:
         raise HTTPException(409,str(exc))
     return result
 
@@ -1653,11 +1657,11 @@ class DirectAssetRTS(BaseModel):
 
 @app.post('/api/oos/rts')
 def asset_rts_direct(payload: DirectAssetRTS, request: Request):
-    """MST confirms physical RTS; never silently close a Cetaris breakdown.
+    """Explicit physical RTS; reconcile any already Completed/Closed WOs.
 
-    If a manual OOS exists it is closed with its history. Otherwise this is
-    a direct RTS observation, not a completed breakdown work order, and must
-    not be added to the breakdown-only RTS email section.
+    Other unfinished repair WOs remain tracked separately. Neither their
+    presence nor the original WO's shift prevents a confirmed RTS. Explicit
+    safety holds must still be released before equipment is returned.
     """
     _origin_check(request)
     session,shift=_report_access(request)
@@ -1667,8 +1671,6 @@ def asset_rts_direct(payload: DirectAssetRTS, request: Request):
         raise HTTPException(422, 'Asset ID is required')
     with _db() as conn:
         v31_breakdown.ensure(conn)
-        if v31_breakdown.unresolved(conn,asset):
-            raise HTTPException(409, 'A Cetaris breakdown is still open; resolve its WO decision first')
         if conn.execute("""SELECT 1 FROM breakdown_manual_holds
                 WHERE lower(trim(asset))=lower(trim(?))""",(asset,)).fetchone():
             raise HTTPException(409, 'This asset has an active OOS hold; release it before RTS')
@@ -1685,6 +1687,11 @@ def asset_rts_direct(payload: DirectAssetRTS, request: Request):
             result=v31_oos.record_direct_rts(conn,asset=asset,
                 actor=session['a'],actor_name=profile.get('name','Associate'),
                 shift_id=shift['id'],shift_code=shift['code'],now_iso=now_iso)
+        # The technician explicitly confirmed physical RTS. Clear every
+        # already-completed Breakdown for the asset, even if an earlier
+        # shift opened it; leave other unfinished WOs untouched.
+        v31_breakdown.confirm_completed_asset_rts(
+            conn,asset,shift['id'],session['a'],profile.get('name','Associate'))
         _invalidate_passdown(conn,shift['id'])
     return result
 
@@ -1763,11 +1770,22 @@ def oos_mark_rts(oos_id: int, payload: ManualOOSResolve, request: Request):
     session, shift = _report_access(request)
     profile = roster()[session['a']]
     with _db() as conn:
+        existing=v31_oos.get(conn,oos_id)
+        if existing and existing['open']:
+            asset=existing['asset'].strip()
+            v31_breakdown.ensure(conn)
+            if conn.execute("""SELECT 1 FROM breakdown_manual_holds
+                WHERE lower(trim(asset))=lower(trim(?))""",(asset,)).fetchone():
+                raise HTTPException(409,
+                  'This asset has an active OOS hold; release it before RTS')
         record, error = v31_oos.mark_rts(conn, oos_id, rts_by=session['a'],
             rts_by_name=profile.get('name', 'Associate'), shift_id=session['s'],
             shift_code=shift['code'], now_iso=datetime.now(TZ).isoformat(),
             notes=payload.notes.strip())
         if error is None:
+            v31_breakdown.confirm_completed_asset_rts(
+                conn,record['asset'],shift['id'],session['a'],
+                profile.get('name','Associate'))
             # A newly RTS asset must appear in a regenerated passdown before
             # the shift can be ended.
             _invalidate_passdown(conn, session['s'])

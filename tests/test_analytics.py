@@ -37,9 +37,10 @@ def test_analytics_real_shift_workload_manual_pm_and_report_snapshot(client, mon
        'asset':'CONV-92','cause':'Found roller wear during PM','category':'Proactive Repair',
        'status':'RTS'
     }).status_code==200
-    source=b'WO Number,PM Due Date,Asset #\nPM600,10/27/2026,BALER-1\n'
-    assert client.post('/api/pm-needing-completion/upload',
-             files={'file':('unfinished.csv',source,'text/csv')}).status_code==200
+    from test_daily_pm_due_wo_details import stage_details,to_be_done
+    # One Cetaris WO Details file contains the unassigned pending PM.
+    assert stage_details(client,[to_be_done('PM600',due='10/26/2026',
+           asset='BALER-1')]).status_code==200
     assert client.post('/api/shifts/report',json={}).status_code==200
     payload=client.get('/api/analytics/summary?period=7d').json()
     total=payload['totals']

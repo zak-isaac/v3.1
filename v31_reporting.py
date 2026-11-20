@@ -22,6 +22,7 @@ import v31_signature
 import v31_pm_needing_completion as v31_pm
 import v31_breakdown
 import v31_returned_to_service
+import v31_awaiting_parts
 
 TZ=ZoneInfo("America/Indiana/Indianapolis")
 
@@ -165,8 +166,21 @@ def stage(conn, shift_id, payload: bytes, filename: str, actor: str):
         uploaded_by=excluded.uploaded_by,uploaded_at=excluded.uploaded_at,applied_at=NULL,
         prior_techs_json=excluded.prior_techs_json""",
         (shift_id,filename,_json(rows),_json(stats),actor,_now(),_json(prior_names)))
+    # The WO Details file can contain due PMs with NO Technician (usually
+    # To Be Done). Keep this due-date scan distinct from labor attribution:
+    # a To-Be-Done PM must never become a completed PM or a happening.
+    due_summary=v31_pm.scan_wo_details(conn,shift_id,filename,payload)
+    # Scan all WO statuses from the daily export, including unassigned P rows.
+    # Facility-wide Parts Pending is independent from technician labor and PMs.
+    v31_awaiting_parts.observe_wo_details(conn,payload)
+    # Updated due-PM and parts lists change saved Outlook passdown, even before
+    # the new shift labor rows have been explicitly selected/imported.
+    if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='shifts'").fetchone():
+        conn.execute("""UPDATE shifts SET report_saved_at='',report_content='',
+            report_html='',report_hash='',report_eml=X'' WHERE id=?""",(shift_id,))
     return {"filename":filename,"technicians":technicians,
-            "stats":stats,"staged":True,"requires_selection":True}
+            "stats":stats,"staged":True,"requires_selection":True,
+            "pm_due":due_summary}
 
 
 def stage_details(conn, shift_id):
@@ -370,10 +384,14 @@ def import_selection(conn, shift_id: int, shift_code: str, shift_day: str,
         wo=str(r.get("wo_number") or "")
         candidates=[parse_close(r.get(f)) for f in
                     ("last_complete_at","in_service_at","start_at")]
+        if r.get("_update_only"):
+            # The old WO Start Date remains historical; a new, accepted
+            # technician note update belongs to the present shift.
+            candidates.append(parse_close(r.get("updated_at")))
         moment=max((c for c in candidates if c), default=None)
         if moment and (wo not in wo_work_at or moment>wo_work_at[wo]):
             wo_work_at[wo]=moment
-    # Do not silently include Completed non-PMs; MST must choose reminder.
+    # Record real shift labor even when Cetaris administrative closure is pending.
     records,summary=select_records(accepted,selected,datetime.min,datetime.max,
                                     closure_reviews=closure_reviews or {})
     by_wo={}
@@ -385,23 +403,33 @@ def import_selection(conn, shift_id: int, shift_code: str, shift_day: str,
         item=target.setdefault(wo,{"wo":wo,"asset":r.get("asset_id") or "",
             "category":r.get("rfr") or "Other",
             "cause":r.get("reported_issue") or "",
-            "techs":[],"remarks":[],"status":"OOS" if kind=="oos" else ("PENDING" if r.get("closure_reminder") else "RTS")})
+            "techs":[],"remarks":[],"status":"OOS" if kind=="oos" else
+             (r.get("work_state") or ("PENDING" if r.get("closure_reminder") else "RTS"))})
         if r.get("tech_name") and r["tech_name"] not in item["techs"]:
             item["techs"].append(r["tech_name"])
         for remark in r.get("remarks_list") or ([r["remarks"]] if r.get("remarks") else []):
             if remark and remark not in item["remarks"]:
                 item["remarks"].append(remark)
         if kind=="oos":item["status"]="OOS"
+        elif r.get("work_state") and item["status"] not in ("OOS","RTS"):
+            levels={"WORKED":0,"IN_PROGRESS":1,"PENDING":1,
+                    "PARTS_PENDING":1,"MANAGER_REVIEW":1,"OUTSIDE_SERVICE":1,
+                    "TO_BE_DONE":1,"UNCLOSED":1,"VOIDED":1,
+                    "COMPLETED":2,"CLOSED":3}
+            candidate=r["work_state"]
+            if levels.get(candidate,0)>levels.get(item["status"],0):
+                item["status"]=candidate
+        # PM work remains separately counted as PM completed, never here.
     # PM takes precedence over any duplicate labor row from the same WO.
     for wo in pm_by_wo:by_wo.pop(wo,None)
     ignored=[]
     now=_now()
     added=updated=preserved=pm_count=0
     for wo,row in by_wo.items():
-        owned=_existing_elsewhere(conn,shift_id,wo,row['status'])
-        if owned is not None:
-            ignored.append({"wo_number":wo,"reason":"Already recorded in V3.1 shift #"+str(owned)})
-            continue
+        # Different shifts may work on the SAME WO. assign() has already
+        # checked each row's actual technician/work-time evidence. Never
+        # discard the next shift's labor simply because S1 first reported it.
+        # Only the owning completion shift receives a completion / RTS event.
         existing=conn.execute("SELECT id,edited,status FROM report_wo WHERE shift_id=? AND wo_number=?",
                               (shift_id,wo)).fetchone()
         if existing and existing["edited"]:
@@ -410,8 +438,11 @@ def import_selection(conn, shift_id: int, shift_code: str, shift_day: str,
             # A later verified Cetaris Closed event must release a prior
             # PENDING closure even if remarks were edited manually. Preserve
             # human wording, category, exclusion and deliberate OOS holds.
-            new_status=("RTS" if existing["status"]=="PENDING" and row["status"]=="RTS"
-                        else existing["status"])
+            source_states={"WORKED","IN_PROGRESS","PARTS_PENDING",
+                           "MANAGER_REVIEW","OUTSIDE_SERVICE","TO_BE_DONE","UNCLOSED","VOIDED",
+                           "COMPLETED","CLOSED","PENDING"}
+            new_status=(row["status"] if existing["status"] in source_states
+                        and row["status"] in source_states else existing["status"])
             conn.execute("UPDATE report_wo SET source_techs_json=?,status=? WHERE id=?",
                          (_json(row["techs"]),new_status,existing["id"]))
             preserved+=1
@@ -516,13 +547,16 @@ def update_wo(conn,shift_id,wo_number,data:dict):
     permitted={"asset","category","cause","tech","remarks","status","excluded"}
     fields={k:v for k,v in data.items() if k in permitted}
     if not fields:raise ValueError("No supported work-order changes")
-    if row["status"]=="PENDING" and not row["is_manual"] and "status" in fields and fields["status"]!="PENDING":
-        raise ValueError("Pending Cetaris closure must be verified by a new Closed WO import; editing other fields is allowed")
+    if row["status"] in ("PENDING","WORKED","IN_PROGRESS","PARTS_PENDING",
+                           "MANAGER_REVIEW","OUTSIDE_SERVICE","TO_BE_DONE","UNCLOSED","VOIDED","COMPLETED","CLOSED") and not row["is_manual"] and "status" in fields and fields["status"]!=row["status"]:
+        raise ValueError("Cetaris work status cannot be changed manually; edit the remarks or reimport updated evidence")
     for k,v in fields.items():
         if k=="excluded":
             if not isinstance(v,bool):raise ValueError("Excluded must be true or false")
             fields[k]=int(v)
-        elif not isinstance(v,str) or len(v)>5000 or (k=="status" and v not in ("RTS","OOS","PENDING")):
+        elif not isinstance(v,str) or len(v)>5000 or (k=="status" and v not in ("RTS","OOS","PENDING","WORKED",
+                                          "IN_PROGRESS","PARTS_PENDING","MANAGER_REVIEW",
+                                          "OUTSIDE_SERVICE","TO_BE_DONE","UNCLOSED","VOIDED","COMPLETED","CLOSED")):
             raise ValueError("Invalid value for "+k)
         else:fields[k]=v.strip()
     setters=", ".join(k+"=?" for k in fields)
@@ -893,6 +927,9 @@ def build_passdown_html(conn, shift_id, shift_code, lead_name=''):
 
     # Returned to Service means confirmed breakdown recovery OR explicit
     # manual RTS. Routine completed/closed Shift Happenings never qualify.
+    awaiting_parts=[
+        f'<strong>{esc(item["asset"])}</strong> (WO# {esc(item["wo_number"])})'
+        for item in v31_awaiting_parts.list_records(conn)]
     rts=[f'<strong>{esc(item["asset"])}</strong>' for item in
          v31_returned_to_service.confirmed_returns(conn,shift_id)]
     # Use the same facility-wide active OOS inventory as the dashboard.
@@ -943,6 +980,7 @@ def build_passdown_html(conn, shift_id, shift_code, lead_name=''):
         + sec("Open Follow-ups / Shift Carry-overs", bullet_list(followups))
         + sec("Reliable Operations", bullet_list(ro))
         + pm_html
+        + sec("Awaiting Parts", bullet_list(awaiting_parts))
         + sec("Returned to Service", bullet_list(rts))
         + sec("Current Out of Service", bullet_list(oos))
         + loto_html + missing_html + '</body></html>')

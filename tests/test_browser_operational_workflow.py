@@ -79,9 +79,10 @@ def test_real_browser_manual_pm_breakdown_passdown_and_end_shift(live_server):
             return (state.rows||[]).some(
                 row=>row.asset==='VOIDFILL-UI' && row.is_manual);
         }""",timeout=12000)
-        state=page.evaluate("""async () => (await (await fetch(
-            '/api/reporting/state',{credentials:'same-origin'})).json())""")
-        assert any(row['asset']=='VOIDFILL-UI' and row['is_manual'] for row in state['rows'])
+        # The preceding poll already verified the saved manual row in
+        # reporting state. Do not issue a second racing read while the
+        # workspace is asynchronously refreshing; the final EML below
+        # independently verifies the row remains in the passdown.
         # Navigate the actual Analytics page and require the manually entered
         # asset to appear from the backend, never hardcoded demo figures.
         page.locator('[data-nav="analytics"]').click()
@@ -91,15 +92,22 @@ def test_real_browser_manual_pm_breakdown_passdown_and_end_shift(live_server):
         page.locator('[data-nav="report"]').click()
 
         # PM needing completion: an actual file, not just a preview filename.
-        pm_csv=chr(10).join(['WO Number,PM Due Date,Asset #',
-                             'PMUI001,11/05/2026,BALER-UI','']).encode('utf-8')
-        with page.expect_response(lambda r:'/api/pm-needing-completion/upload' in r.url) as uploaded:
-            page.locator('#pending-picker').set_input_files({
-              'name':'pm-needing-ui.csv','mimeType':'text/csv','buffer':pm_csv
+        # Use the shift date actually selected in the live Indiana-time
+        # browser session, not an unrelated hardcoded PM due date.
+        target=page.evaluate("""async () => (await (await fetch(
+            '/api/pm-needing-completion')).json()).target_dates[0]""")
+        due=f"{target[5:7]}/{target[8:10]}/{target[:4]}"
+        from test_browser_pm_due_inventory import _workbook
+        with page.expect_response(lambda r:'/api/reporting/stage' in r.url) as uploaded:
+            page.locator('#cetaris-picker').set_input_files({
+              'name':'single-wo-details.xlsx',
+              'mimeType':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+              'buffer':_workbook(due)
             })
         assert uploaded.value.status==200
+        assert page.locator('#pending-picker').count()==0
         page.locator('[data-tab="pm"]').click()
-        page.get_by_text('PMUI001',exact=False).wait_for(timeout=10000)
+        page.get_by_text('PMAUTO-T',exact=False).wait_for(timeout=10000)
 
         # One unified Asset Status area: the exact V2 inventory is offered
         # as searchable suggestions, and new asset IDs may still be typed.
@@ -120,6 +128,24 @@ def test_real_browser_manual_pm_breakdown_passdown_and_end_shift(live_server):
             page.locator('#v31-oos-mark-rts').click()
         assert marked.value.status==200
         page.locator('#v31-oos-rts-list').get_by_text('PERCART0010').wait_for(timeout=10000)
+
+        # The real RTS list must have a working Mark OOS button.
+        with page.expect_response(
+            lambda r:r.url.endswith('/api/oos') and r.request.method=='POST'
+        ) as reout:
+            page.locator('#v31-oos-rts-list [data-oos-asset="PERCART0010"]').click()
+        assert reout.value.status==200,reout.value.text()
+        page.locator('#v31-oos-list [data-rts-asset="PERCART0010"]').wait_for(timeout=10000)
+        assert page.locator('#v31-oos-rts-list').get_by_text('PERCART0010').count()==0
+
+        # The same asset can be manually returned to service from OOS.
+        with page.expect_response(
+            lambda r:r.url.endswith('/api/oos/rts') and r.request.method=='POST'
+        ) as rereturn:
+            page.locator('#v31-oos-list [data-rts-asset="PERCART0010"]').click()
+        assert rereturn.value.status==200,rereturn.value.text()
+        page.locator('#v31-oos-rts-list [data-oos-asset="PERCART0010"]').wait_for(timeout=10000)
+        assert page.locator('#v31-oos-list').get_by_text('PERCART0010').count()==0
 
         # The RTS KPI includes direct confirmations even though they are not
         # breakdown work orders and do not belong in the email's RTS list.
@@ -154,9 +180,17 @@ def test_real_browser_manual_pm_breakdown_passdown_and_end_shift(live_server):
         page.evaluate("async () => { await window.V31Reporting?.flushDraft?.(); "
                        "await window.V31Reporting?.refresh?.(); }")
 
-        # Server creates the exact saved Outlook message, including manual OOS.
-        with page.expect_download() as dl:
-            page.locator('#generate-eml').click()
+        # Save must finish before Generate becomes available. Issue one
+        # native click: the handler disables this button immediately to
+        # prevent double downloads, which Playwright can otherwise retry.
+        page.wait_for_function("""async () => {
+            const button=document.querySelector('#generate-eml');
+            if(!button || button.disabled)return false;
+            const r=await fetch('/api/reporting/state',{credentials:'same-origin'});
+            return r.ok && (await r.json()).draft?.loto===true;
+        }""",timeout=12000)
+        with page.expect_download(timeout=15000) as dl:
+            page.evaluate("""() => document.querySelector('#generate-eml').click()""")
         eml=dl.value.path().read_text(encoding='utf-8')
         # Download completion alone does not prove the UI handled success:
         # a removed #last-saved element previously raised a null.textContent
@@ -165,7 +199,7 @@ def test_real_browser_manual_pm_breakdown_passdown_and_end_shift(live_server):
             ?.includes('Passdown saved and downloaded')""",timeout=10000)
         assert 'Cannot set properties of null' not in page.locator('#toast').inner_text()
         assert 'VOIDFILL-UI' in eml
-        assert 'PMUI001' in eml
+        assert 'PMAUTO-T' in eml
         assert 'CONV-BROWSER' in eml
         assert 'Manual OOS hold' not in eml
         # A direct RTS is visible in the KPI but not misrepresented as a
@@ -275,5 +309,89 @@ def test_loto_missing_key_saves_without_false_missing_element_error(live_server)
             }""",timeout=12000)
             assert page.locator('#loto-state').inner_text()=='Verified'
             assert 'LOTO save failed' not in page.locator('#toast').inner_text()
+        finally:
+            browser.close()
+
+
+def test_real_browser_parts_pending_is_active_not_oos_and_rts_modal_reconciles(
+    live_server
+):
+    """Exercise the new live UI end to end with a synthetic persisted WO."""
+    base_url,tmp_path=live_server
+    with sync_playwright() as p:
+        try:
+            browser=p.chromium.launch()
+        except Exception as exc:
+            pytest.skip(f"Chromium unavailable: {exc}")
+        page=browser.new_page()
+        script_errors=[]
+        page.on('pageerror',lambda error:script_errors.append(str(error)))
+        page.on('dialog',lambda dialog:dialog.accept())
+        try:
+            page.goto(base_url)
+            login=page.evaluate("""async () => {
+              const r=await fetch('/api/login',{method:'POST',credentials:'same-origin',
+                headers:{'Content-Type':'application/json'},
+                body:JSON.stringify({associate:'555099',intent:'direct'})});
+              return {status:r.status};
+            }""")
+            assert login['status']==200,login
+            page.goto(base_url+'/shift-report.html')
+            page.wait_for_function('!!window.v31AssetManager && !!window.V31Reporting',
+                                   timeout=12000)
+            with sqlite3.connect(tmp_path/'shifts.sqlite3') as conn:
+                shift=conn.execute(
+                    "SELECT id FROM shifts WHERE owner='555099' ORDER BY id DESC LIMIT 1"
+                ).fetchone()
+                assert shift is not None
+                from v31_breakdown import ensure
+                conn.row_factory=sqlite3.Row
+                ensure(conn)
+                conn.execute("""INSERT INTO breakdown_state
+                    (wo_number,asset,status,updated_shift_id,decision,rts_logged,updated_at)
+                    VALUES(?,?,?,?,?,?,?)""",
+                    ("BROWSER-PARTS-1","CONV-PARTS","parts pending",
+                     shift[0],"",0,"2026-11-18T14:10:00-05:00"))
+
+            page.locator('[data-tab="breakdown"]').click()
+            page.evaluate('window.v31AssetManager.refresh()')
+            active=page.locator('#v31-active-breakdown-list')
+            active.get_by_text('CONV-PARTS').wait_for(timeout=12000)
+            assert 'Parts Pending' in active.inner_text()
+            assert not page.locator('#v31-oos-list').get_by_text(
+                'CONV-PARTS',exact=True).count()
+            assert active.locator('[data-active-oos="CONV-PARTS"]').count()==1
+
+            with page.expect_response(
+                lambda response:response.url.endswith('/api/oos')
+                and response.request.method=='POST',timeout=12000
+            ) as marked:
+                active.locator('[data-active-oos="CONV-PARTS"]').click()
+            assert marked.value.status==200,marked.value.text()
+            page.locator('#v31-oos-list').get_by_text('CONV-PARTS').wait_for(
+                timeout=12000)
+
+            # The completion shift now reviews actual operational RTS.
+            with sqlite3.connect(tmp_path/'shifts.sqlite3') as conn:
+                conn.execute("""UPDATE breakdown_state SET status='completed',
+                    updated_at='2026-11-18T14:20:00-05:00'
+                    WHERE wo_number='BROWSER-PARTS-1'""")
+            page.evaluate('window.v31AssetManager.promptCompletedBreakdowns()')
+            page.locator('#modal-title').wait_for(timeout=12000)
+            assert 'Breakdown RTS Review' in page.locator('#modal-title').inner_text()
+            assert 'CONV-PARTS' in page.locator('#modal-body').inner_text()
+            with page.expect_response(
+                lambda response:'/api/breakdowns/BROWSER-PARTS-1/decision'
+                in response.url and response.request.method=='POST',timeout=12000
+            ) as verified:
+                page.locator('#modal-actions').get_by_role(
+                    'button',name='Confirm RTS').click()
+            assert verified.value.status==200,verified.value.text()
+            page.locator('#v31-oos-rts-list').get_by_text('CONV-PARTS').wait_for(
+                timeout=12000)
+            assert not page.locator('#v31-oos-list').get_by_text(
+                'CONV-PARTS',exact=True).count()
+            assert 'No active Breakdown WOs' in active.inner_text()
+            assert script_errors==[],script_errors
         finally:
             browser.close()

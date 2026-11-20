@@ -34,4 +34,17 @@ def confirmed_returns(conn, shift_id):
         if asset:
             events.setdefault(asset.casefold(),{'asset':asset,'source':'Manual RTS',
                 'wo_number':'','breakdown':False})
-    return sorted(events.values(),key=lambda x:x['asset'].casefold())
+    # A technician can return an asset to OOS after it was RTS earlier
+    # this shift. The Outlook email and RTS KPI must reflect the CURRENT
+    # equipment state; historical RTS events remain in the audit tables.
+    current_oos={str(row['asset']).strip().casefold()
+                 for row in v31_oos.list_records(conn,open_only=True)}
+    v31_breakdown.ensure(conn)
+    current_oos.update(str(row['asset']).strip().casefold()
+        for row in conn.execute("SELECT asset FROM breakdown_manual_holds"))
+    current_oos.update(str(row['asset']).strip().casefold()
+        for row in conn.execute("""SELECT asset FROM breakdown_state
+            WHERE rts_logged=0 AND decision='keep_oos'"""))
+    return sorted((item for item in events.values()
+                   if item['asset'].casefold() not in current_oos),
+                  key=lambda x:x['asset'].casefold())

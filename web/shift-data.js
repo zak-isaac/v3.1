@@ -28,6 +28,14 @@ function feedback(message,kind='info'){
 async function refresh(){
  snapshot=await api('/api/reporting/state');
  view.applySnapshot(snapshot);
+ // The PM due inventory can change on WO Details staging independently
+ // of the technician-selection import. Keep the upload summary synced.
+ const due=snapshot.pm_needing_completion||{};
+ const pmLabel=document.querySelector('#pending-filename');
+ if(pmLabel)pmLabel.textContent=due.has_source?
+   ((due.due_count||0)+' PMs due · '+(due.past_due_count||0)+
+   ' past due · '+(due.outstanding_total||0)+' outstanding'):
+   'PM due inventory not verified — import full WO Details';
  // Cetaris import or WO edits may change OOS, RTS and confirmed breakdown
  // evidence. Reload all three KPI sources from the same canonical snapshot.
  await window.v31AssetManager?.refresh?.();
@@ -69,7 +77,11 @@ async function upload(file){
    await refresh();
    const n=result.stats.parsed_rows||0;
    if(!n){
-     feedback('File accepted but no technician labor rows were found. Review the Cetaris export and header columns.','warning');
+     if(result.pm_due?.due_count){
+       feedback(result.pm_due.due_count+' PMs due on the selected date(s) were identified. No technician labor rows were found, so Shift Happenings remain empty. Review the Daily PMs Due tab.','warning');
+     }else{
+       feedback('File accepted but no technician labor rows or To Be Done PMs were found. Verify the Cetaris WO Details export includes RFR 08, WO Status and PM Due Date.','warning');
+     }
      return;
    }
    feedback(n+' labor rows parsed. Drax-matched technicians are selected below; confirm to import.');
@@ -195,6 +207,10 @@ function chooseTechs(){
       feedback('');
     }
     view.toast(n+' qualifying work orders/PMs saved to '+selectedShift+'.');
+    // Completed Breakdown WOs need a human RTS decision, regardless of
+    // whether Cetaris is waiting for a vendor invoice or final WO closure.
+    // The active shift can verify any completed Breakdown's physical RTS.
+    await window.v31AssetManager?.promptCompletedBreakdowns?.();
    }catch(e){feedback(e.message,'error');view.toast(e.message);}
   }}
  ],{wide:true});
