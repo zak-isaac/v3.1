@@ -161,9 +161,17 @@ def test_real_browser_manual_pm_breakdown_passdown_and_end_shift(live_server):
         page.evaluate("async () => { await window.V31Reporting?.flushDraft?.(); "
                        "await window.V31Reporting?.refresh?.(); }")
 
-        # Server creates the exact saved Outlook message, including manual OOS.
-        with page.expect_download() as dl:
-            page.locator('#generate-eml').click()
+        # Save must finish before Generate becomes available. Issue one
+        # native click: the handler disables this button immediately to
+        # prevent double downloads, which Playwright can otherwise retry.
+        page.wait_for_function("""async () => {
+            const button=document.querySelector('#generate-eml');
+            if(!button || button.disabled)return false;
+            const r=await fetch('/api/reporting/state',{credentials:'same-origin'});
+            return r.ok && (await r.json()).draft?.loto===true;
+        }""",timeout=12000)
+        with page.expect_download(timeout=15000) as dl:
+            page.evaluate("""() => document.querySelector('#generate-eml').click()""")
         eml=dl.value.path().read_text(encoding='utf-8')
         # Download completion alone does not prove the UI handled success:
         # a removed #last-saved element previously raised a null.textContent
@@ -172,7 +180,7 @@ def test_real_browser_manual_pm_breakdown_passdown_and_end_shift(live_server):
             ?.includes('Passdown saved and downloaded')""",timeout=10000)
         assert 'Cannot set properties of null' not in page.locator('#toast').inner_text()
         assert 'VOIDFILL-UI' in eml
-        assert 'PMUI001' in eml
+        assert 'PMAUTO-T' in eml
         assert 'CONV-BROWSER' in eml
         assert 'Manual OOS hold' not in eml
         # A direct RTS is visible in the KPI but not misrepresented as a
