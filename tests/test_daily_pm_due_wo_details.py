@@ -77,7 +77,7 @@ def test_unassigned_to_be_done_and_other_due_pms_are_found_in_wo_details(
     assert preview.status_code==200,preview.text
     html=preview.json()["html"]
     assert "PM-T" in html and "PM-D" in html
-    assert "2 still needing completion" in html
+    assert "2 outstanding today" in html
     assert "NOT-PM" not in html
 
 
