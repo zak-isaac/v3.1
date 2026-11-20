@@ -251,23 +251,81 @@ def test_status_kpis_exclude_routine_repairs_and_include_manual_rts_in_email(cli
     assert '(manually reported)' not in preview.json()['html']
 
 
-def test_rts_direct_cannot_override_an_unresolved_cetaris_breakdown(client,monkeypatch):
+def test_manual_rts_can_return_equipment_without_finishing_other_wo(client,monkeypatch):
     clock(monkeypatch,day=26,hour=10)
-    enter(client,'S1')
+    shift_id=enter(client,'S1')
     import v31_breakdown
     with m._db() as conn:
         v31_breakdown.ensure(conn)
         conn.execute("""INSERT INTO breakdown_state(
             wo_number,asset,status,updated_shift_id,decision,rts_logged,updated_at)
             VALUES(?,?,?,?,?,?,?)""",
-            ('BD100','BLDG','in process',1,'',0,'2026-10-26T10:00:00-04:00'))
-    res=client.post('/api/oos/rts',json={'asset':'BLDG'})
-    assert res.status_code==409
-    assert 'breakdown' in res.json()['detail'].lower()
-    assets=client.get('/api/assets/status').json()
-    assert any(x['asset']=='BLDG' for x in assets['active_breakdowns'])
-    # The Cetaris WO alone does not verify a physical equipment lockout.
-    assert not any(x['asset']=='BLDG' for x in assets['oos'])
+            ('BD100','BLDG','in process',shift_id,'',0,'2026-10-26T10:00:00-04:00'))
+    assert client.post('/api/oos',json={'asset':'BLDG'}).status_code==200
+    result=client.post('/api/oos/rts',json={'asset':'BLDG'})
+    assert result.status_code==200,result.text
+    board=client.get('/api/assets/status').json()
+    assert not board['oos']
+    assert [x['asset'] for x in board['rts']]==['BLDG']
+    # An independent unfinished WO is NOT closed by a physical RTS action.
+    assert [x['wo_number'] for x in board['active_breakdowns']]==['BD100']
+
+
+def test_manual_status_buttons_move_oos_to_rts_and_back_in_email(client,monkeypatch):
+    clock(monkeypatch,day=26,hour=10)
+    enter(client,'S1')
+    assert client.post('/api/oos',json={'asset':'CONV-FLIP'}).status_code==200
+    status=client.get('/api/assets/status').json()
+    assert [r['asset'] for r in status['oos']]==['CONV-FLIP']
+    assert status['rts']==[]
+
+    assert client.post('/api/oos/rts',json={'asset':'CONV-FLIP'}).status_code==200
+    status=client.get('/api/assets/status').json()
+    assert not status['oos'] and [r['asset'] for r in status['rts']]==['CONV-FLIP']
+
+    # Clicking Mark OOS on a previously returned asset re-opens it.
+    # Earlier RTS events stay in history but must not remain in the live
+    # RTS list or the outgoing email while the asset is OOS again.
+    assert client.post('/api/oos',json={'asset':'CONV-FLIP'}).status_code==200
+    status=client.get('/api/assets/status').json()
+    assert [r['asset'] for r in status['oos']]==['CONV-FLIP']
+    assert status['rts']==[]
+    html=client.get('/api/shifts/report/preview').json()['html']
+    returned=html.split('>Returned to Service</strong>',1)[1].split(
+        '>Current Out of Service</strong>',1)[0]
+    assert 'CONV-FLIP' not in returned
+    assert '<strong>CONV-FLIP</strong>' in html.split(
+        '>Current Out of Service</strong>',1)[1]
+
+    # The OOS row's Mark RTS action moves the asset back to RTS.
+    assert client.post('/api/oos/rts',json={'asset':'CONV-FLIP'}).status_code==200
+    status=client.get('/api/assets/status').json()
+    assert not status['oos']
+    assert [r['asset'] for r in status['rts']]==['CONV-FLIP']
+    ui=client.get('/web/manual-oos.js').text
+    assert 'data-rts-asset' in ui and 'data-oos-asset' in ui
+
+
+def test_manual_rts_clears_completed_breakdown_from_another_shift(client,monkeypatch):
+    clock(monkeypatch,day=26,hour=10)
+    shift_id=enter(client,'S1')
+    import v31_breakdown
+    with m._db() as conn:
+        v31_breakdown.ensure(conn)
+        conn.execute("""INSERT INTO breakdown_state(
+            wo_number,asset,status,updated_shift_id,decision,rts_logged,updated_at)
+            VALUES(?,?,?,?,?,?,?)""",
+            ('BD-RUNNING','BAGGER-RUNNING','completed',shift_id,'keep_oos',
+             0,'2026-10-26T10:00:00-04:00'))
+    board=client.get('/api/assets/status').json()
+    assert 'BAGGER-RUNNING' in {r['asset'] for r in board['oos']}
+    assert client.post('/api/oos/rts',json={'asset':'BAGGER-RUNNING'}).status_code==200
+    board=client.get('/api/assets/status').json()
+    assert not board['oos']
+    assert not board['active_breakdowns']
+    assert [r['asset'] for r in board['rts']]==['BAGGER-RUNNING']
+
+
 
 
 def test_email_current_oos_matches_live_dashboard_across_shifts(client, monkeypatch):
