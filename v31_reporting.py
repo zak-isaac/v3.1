@@ -402,6 +402,7 @@ def import_selection(conn, shift_id: int, shift_code: str, shift_day: str,
         elif r.get("work_state") and item["status"] not in ("OOS","RTS"):
             levels={"WORKED":0,"IN_PROGRESS":1,"PENDING":1,
                     "PARTS_PENDING":1,"MANAGER_REVIEW":1,"OUTSIDE_SERVICE":1,
+                    "TO_BE_DONE":1,"UNCLOSED":1,"VOIDED":1,
                     "COMPLETED":2,"CLOSED":3}
             candidate=r["work_state"]
             if levels.get(candidate,0)>levels.get(item["status"],0):
@@ -426,7 +427,7 @@ def import_selection(conn, shift_id: int, shift_code: str, shift_day: str,
             # PENDING closure even if remarks were edited manually. Preserve
             # human wording, category, exclusion and deliberate OOS holds.
             source_states={"WORKED","IN_PROGRESS","PARTS_PENDING",
-                           "MANAGER_REVIEW","OUTSIDE_SERVICE",
+                           "MANAGER_REVIEW","OUTSIDE_SERVICE","TO_BE_DONE","UNCLOSED","VOIDED",
                            "COMPLETED","CLOSED","PENDING"}
             new_status=(row["status"] if existing["status"] in source_states
                         and row["status"] in source_states else existing["status"])
@@ -535,7 +536,7 @@ def update_wo(conn,shift_id,wo_number,data:dict):
     fields={k:v for k,v in data.items() if k in permitted}
     if not fields:raise ValueError("No supported work-order changes")
     if row["status"] in ("PENDING","WORKED","IN_PROGRESS","PARTS_PENDING",
-                           "MANAGER_REVIEW","OUTSIDE_SERVICE","COMPLETED","CLOSED") and not row["is_manual"] and "status" in fields and fields["status"]!=row["status"]:
+                           "MANAGER_REVIEW","OUTSIDE_SERVICE","TO_BE_DONE","UNCLOSED","VOIDED","COMPLETED","CLOSED") and not row["is_manual"] and "status" in fields and fields["status"]!=row["status"]:
         raise ValueError("Cetaris work status cannot be changed manually; edit the remarks or reimport updated evidence")
     for k,v in fields.items():
         if k=="excluded":
@@ -543,7 +544,7 @@ def update_wo(conn,shift_id,wo_number,data:dict):
             fields[k]=int(v)
         elif not isinstance(v,str) or len(v)>5000 or (k=="status" and v not in ("RTS","OOS","PENDING","WORKED",
                                           "IN_PROGRESS","PARTS_PENDING","MANAGER_REVIEW",
-                                          "OUTSIDE_SERVICE","COMPLETED","CLOSED")):
+                                          "OUTSIDE_SERVICE","TO_BE_DONE","UNCLOSED","VOIDED","COMPLETED","CLOSED")):
             raise ValueError("Invalid value for "+k)
         else:fields[k]=v.strip()
     setters=", ".join(k+"=?" for k in fields)
