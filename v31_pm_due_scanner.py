@@ -2,8 +2,8 @@
 
 Independent of labor-based Shift Happenings: To be Done/unscheduled PMs
 often have NO Technician, so they must not be discarded by labor parsing.
-Only explicit PM Due Date and Primary RFR=08 (or missing RFR with an
-SJ / PM Code) qualify. Other RFR categories are never silently PMs.
+Only explicit PM Due Date, Primary RFR=08, and WO Status=To Be Done
+qualify for urgency. All other statuses are excluded from due/overdue lists.
 """
 from __future__ import annotations
 from datetime import datetime, date, timedelta
@@ -16,7 +16,7 @@ from openpyxl.utils.datetime import from_excel
 from v31_cetaris_codes import normalize_primary_rfr, normalize_wo_status
 from v31_cetaris import _parse_dt
 
-PENDING_CODES=frozenset(("T","I","P","W","O","U"))
+PENDING_CODES=frozenset(("T",))
 DONE_CODES=frozenset(("D","C"))
 
 def due_dates_for_shift(code, shift_day):
@@ -116,13 +116,13 @@ def scan(content,code,shift_day):
                 continue
             # Facility exception: PKM-prefixed Asset IDs are not imported
             # into shift work, due-today PMs, or overdue PM inventory.
-            if _cell(get(row,"asset id")).casefold().startswith("pkm"):
+            asset_id=_cell(get(row,"asset id")) or _cell(get(row,"asset #"))
+            if asset_id.casefold().startswith("pkm"):
                 result["skipped_pkm_assets"]+=1
                 continue
             rfr,code_rfr=normalize_primary_rfr(_cell(get(row,"primary rfr")))
             if code_rfr!="08":
-                if code_rfr or not _cell(get(row,"sj / pm code")):
-                    continue
+                continue
             result["matching"]+=1
             raw_due=get(row,"pm due date")
             parsed=due_date(raw_due)
@@ -146,7 +146,7 @@ def scan(content,code,shift_day):
                   "pm_due_date":parsed.strftime("%m/%d/%Y"),
                   "due_iso":parsed.isoformat(),
                   "promise_date":_cell(get(row,"promise date / time")),
-                  "asset_num":_cell(get(row,"asset id")) or _cell(get(row,"asset #")),
+                  "asset_num":asset_id,
                   "wo_status":status or raw_status or "Status not provided",
                   "status_code":status_code,"state":state,
                   "source":"WO Details",
@@ -172,7 +172,8 @@ def scan(content,code,shift_day):
             key=lambda x:(x["due_iso"],x["wo_number"]))
         result["rows"]=sorted(
             ({k:v for k,v in item.items() if not k.startswith("_")}
-             for item in keyed.values() if item["due_iso"] in result["target_dates"]),
+             for item in keyed.values() if item["due_iso"] in result["target_dates"]
+             and item["status_code"]=="T"),
             key=lambda x:(x["due_iso"],x["wo_number"]))
         if result["missing_due"]:
             result["notes"].append(
