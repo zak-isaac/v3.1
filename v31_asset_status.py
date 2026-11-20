@@ -92,8 +92,7 @@ def summary(conn, shift_id):
             'wo_number':row['wo_number'],'reason':workflow_status,
             'status':row['status'],'decision':row['decision'],
             'pending_decision':row['status'] in ('completed','closed')
-                                and not row['decision']
-                                and row['updated_shift_id']==shift_id,
+                                and row['decision'] in ('','keep_oos'),
         })
     for row in breakdown['holds']:
         key=_key(row['asset'])
