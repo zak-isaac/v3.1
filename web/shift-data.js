@@ -80,7 +80,7 @@ async function upload(file){
      if(result.pm_due?.due_count){
        feedback(result.pm_due.due_count+' PMs due on the selected date(s) were identified. No technician labor rows were found, so Shift Happenings remain empty. Review the Daily PMs Due tab.','warning');
      }else{
-       feedback('File accepted but no technician labor rows or due PMs were found. Verify WO Details filters and upload Today\u2019s DAILY PMs if pending work is missing.','warning');
+       feedback('File accepted but no technician labor rows or To Be Done PMs were found. Verify the Cetaris WO Details export includes RFR 08, WO Status and PM Due Date.','warning');
      }
      return;
    }
