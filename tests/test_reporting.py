@@ -1041,3 +1041,33 @@ def test_eml_rts_only_breakdown_equipment_deduplicated_and_signature_uniform(cli
     assert "font-size:16px;line-height:22px" in signature
     assert "font-size:18px" not in signature
     assert "Georgia" not in signature
+
+
+def test_pm_reclassification_clears_stale_opposite_table_row(client,monkeypatch):
+    # A WO once recorded as a Shift Happening must not keep a stale report_wo
+    # row once a later upload confirms it as a completed PM for this shift --
+    # it should live only in report_pm afterward, never both.
+    import sqlite3
+    import app as m
+    clock(monkeypatch)
+    shift_id=enter(client)
+    with sqlite3.connect(m.DB_FILE) as conn:
+        conn.execute("""INSERT INTO report_wo
+            (shift_id,wo_number,asset,category,cause,tech,remarks,status,
+             imported_at,is_manual,edited)
+            VALUES(?,?,?,?,?,?,?,?,?,0,0)""",
+            (shift_id,"PM-RECLASS","VOIDFILL","Preventive Maintenance","",
+             "Synthetic A","stale leftover","IN_PROGRESS","2026-10-26T00:00:00"))
+        conn.commit()
+    assert upload(client,[row("PM-RECLASS",tech="Synthetic A",
+                              category="Preventive Maintenance",status="Closed")]).status_code==200
+    assert import_techs(client,["Synthetic A"]).status_code==200
+    with sqlite3.connect(m.DB_FILE) as conn:
+        conn.row_factory=sqlite3.Row
+        wo_rows=conn.execute("SELECT * FROM report_wo WHERE shift_id=? AND wo_number=?",
+                             (shift_id,"PM-RECLASS")).fetchall()
+        pm_rows=conn.execute("SELECT * FROM report_pm WHERE shift_id=? AND wo_number=?",
+                             (shift_id,"PM-RECLASS")).fetchall()
+    assert wo_rows==[]
+    assert len(pm_rows)==1
+    assert pm_rows[0]["asset"]=="ASSETPM-RECLASS"

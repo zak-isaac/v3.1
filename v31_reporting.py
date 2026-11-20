@@ -422,6 +422,21 @@ def import_selection(conn, shift_id: int, shift_code: str, shift_day: str,
         # PM work remains separately counted as PM completed, never here.
     # PM takes precedence over any duplicate labor row from the same WO.
     for wo in pm_by_wo:by_wo.pop(wo,None)
+    # A WO's classification can change between uploads (e.g. a PM's Cetaris
+    # ownership resolves differently once this shift's prior completion is
+    # on record). Reconcile stale rows left in the OTHER table from an
+    # earlier upload so a reclassified WO never shows in both places, or
+    # lingers as a Shift Happening after it is confirmed a completed PM.
+    # Deliberate manual entries/edits are never auto-deleted.
+    if pm_by_wo:
+        conn.executemany(
+            "DELETE FROM report_wo WHERE shift_id=? AND wo_number=? "
+            "AND is_manual=0 AND edited=0",
+            [(shift_id,wo) for wo in pm_by_wo])
+    if by_wo:
+        conn.executemany(
+            "DELETE FROM report_pm WHERE shift_id=? AND wo_number=?",
+            [(shift_id,wo) for wo in by_wo])
     ignored=[]
     now=_now()
     added=updated=preserved=pm_count=0
