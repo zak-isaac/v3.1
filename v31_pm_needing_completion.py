@@ -42,21 +42,16 @@ def _shift_info(conn,shift_id):
     return "S1",datetime.now(TZ).date().isoformat()
 
 def _as_of_date(code, shift_day):
-    """Date for the running shift, including the after-midnight S3/S5 half.
+    """Calendar day receiving the end-of-shift PM handoff.
 
-    The source WO Due Date is a calendar-day deadline (11:59 PM local).
-    A shift started yesterday must show yesterday's PM as RED after
-    midnight and today's PM as YELLOW, without carrying old PM records.
+    S3 and S5 work overnight and send their passdown on the NEXT day.
+    PM urgency is therefore evaluated for that incoming calendar day
+    even if WO Details was staged before midnight. This affects PM due
+    dates ONLY; technician labor and breakdown shift ownership remain
+    attached to their original shift. No earlier PM files are read.
     """
     start=date.fromisoformat(shift_day)
-    if code in ("S3","S5"):
-        # Use app's shared clock so this matches live Indiana time as well
-        # as the isolated shift-time simulation.
-        import app as _app
-        now=_app.datetime.now(TZ).date()
-        if now==start+timedelta(days=1):
-            return now
-    return start
+    return start+timedelta(days=1) if code in ("S3","S5") else start
 
 
 def scan_wo_details(conn,shift_id,filename,content):
