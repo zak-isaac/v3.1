@@ -28,6 +28,9 @@ function feedback(message,kind='info'){
 async function refresh(){
  snapshot=await api('/api/reporting/state');
  view.applySnapshot(snapshot);
+ // The PM due inventory can change on WO Details staging independently
+ // of the technician-selection import. Keep the upload summary synced.
+ window.V31PMNeeds?.apply?.(snapshot.pm_needing_completion);
  // Cetaris import or WO edits may change OOS, RTS and confirmed breakdown
  // evidence. Reload all three KPI sources from the same canonical snapshot.
  await window.v31AssetManager?.refresh?.();
