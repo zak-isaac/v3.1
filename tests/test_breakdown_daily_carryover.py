@@ -63,14 +63,10 @@ def test_completed_breakdown_stays_with_completing_shift_and_reconciles_oos(
     assert import_techs(client, ["Synthetic A"]).status_code == 200
 
     with m._db() as conn:
-        assert v31_breakdown.pending(conn, s1) == []
+        # A completed WO is reviewable by the current shift even when it
+        # was started or previously imported by another shift.
+        assert [x["wo_number"] for x in v31_breakdown.pending(conn, s1)] == ["BD-01"]
         assert [x["wo_number"] for x in v31_breakdown.pending(conn, s2)] == ["BD-01"]
-        try:
-            v31_breakdown.decide(conn, "BD-01", "rts", s1, "8972")
-        except ValueError:
-            pass
-        else:
-            raise AssertionError("Earlier shift was incorrectly allowed to claim RTS")
 
     assert any(x["wo_number"] == "BD-01" for x in
                client.get("/api/assets/status").json()["pending"])
@@ -128,7 +124,9 @@ def test_keep_oos_requires_new_verified_completion_before_next_shift_rts(
     assert upload(client, [later]).status_code == 200
     assert import_techs(client, ["Synthetic A"]).status_code == 200
     with m._db() as conn:
-        assert v31_breakdown.pending(conn, s2) == []
+        assert [x["wo_number"] for x in v31_breakdown.pending(conn, s2)] == [
+            "BD-REWORK"
+        ]
         assert [x["wo_number"] for x in v31_breakdown.pending(conn, s4)] == [
             "BD-REWORK"
         ]
@@ -161,3 +159,69 @@ def test_other_shift_completed_status_does_not_reassign_breakdown(client, monkey
         assert state["updated_shift_id"] == s1
         assert v31_breakdown.pending(conn, s1) == []
     assert client.get("/api/assets/status").json()["rts"] == []
+
+
+def test_existing_breakdown_completed_by_other_shift_reconciles_without_credit(
+    client, monkeypatch
+):
+    clock(monkeypatch,day=26,hour=10)
+    enter(client,"S1")
+    assert client.post("/api/oos",json={"asset":"ASSETBD-HANDOFF"}).status_code==200
+    assert upload(client,[row("BD-HANDOFF",category="Breakdown",status="I",
+          started="2026-10-26 08:00",serviced=None)]).status_code==200
+    assert import_techs(client,["Synthetic A"]).status_code==200
+
+    # A different technician completes the same WO. The next shift imports
+    # the latest Cetaris record but does not take credit for that labor.
+    clock(monkeypatch,day=26,hour=18)
+    s2=client.post("/api/shifts/start",json={"code":"S2"})
+    assert s2.status_code==200,s2.text
+    completed=row("BD-HANDOFF",tech="Synthetic Night",category="Breakdown",
+       status="D",started="2026-10-26 16:00",
+       serviced="2026-10-26 16:40",remarks="Replaced drive and tested")
+    unrelated=row("S2-OWN",category="11",status="I",
+       started="2026-10-26 17:10",serviced=None)
+    assert upload(client,[completed,unrelated]).status_code==200
+    assert import_techs(client,["Synthetic A"]).status_code==200
+    with m._db() as conn:
+        state=conn.execute("SELECT status FROM breakdown_state WHERE wo_number=?",
+                          ("BD-HANDOFF",)).fetchone()
+        assert state["status"]=="completed"
+        assert [r["wo_number"] for r in v31_breakdown.pending(conn)]==[
+            "BD-HANDOFF"]
+    # Physical RTS is confirmed by current shift; no S2 work credit
+    # is invented for the unselected technician's finished WO.
+    happenings=client.get("/api/reporting/state").json()["rows"]
+    assert "BD-HANDOFF" not in {r["wo_number"] for r in happenings}
+    returned=client.post("/api/breakdowns/BD-HANDOFF/decision",
+                         json={"decision":"rts"})
+    assert returned.status_code==200,returned.text
+    assert returned.json()["resolved"] is True
+    board=client.get("/api/assets/status").json()
+    assert "BD-HANDOFF" not in {r["wo_number"] for r in board["active_breakdowns"]}
+    assert "ASSETBD-HANDOFF" not in {r["asset"] for r in board["oos"]}
+    assert "ASSETBD-HANDOFF" in {r["asset"] for r in board["rts"]}
+
+
+def test_one_completed_breakdown_can_rts_while_other_wo_remains_open(
+    client, monkeypatch
+):
+    clock(monkeypatch,day=26,hour=10)
+    enter(client,"S1")
+    finished=row("BD-FINISHED",category="01",status="D",
+       started="2026-10-26 08:00",serviced="2026-10-26 09:00")
+    pending=row("BD-SECOND",category="01",status="P",
+       started="2026-10-26 08:20",serviced=None)
+    pending["Asset #"]=finished["Asset #"]="CONV-12"
+    assert client.post("/api/oos",json={"asset":"CONV-12"}).status_code==200
+    assert upload(client,[finished,pending]).status_code==200
+    assert import_techs(client,["Synthetic A"]).status_code==200
+    confirmed=client.post("/api/breakdowns/BD-FINISHED/decision",
+                          json={"decision":"rts"})
+    assert confirmed.status_code==200,confirmed.text
+    board=client.get("/api/assets/status").json()
+    assert "BD-FINISHED" not in {r["wo_number"] for r in board["active_breakdowns"]}
+    assert "BD-SECOND" in {r["wo_number"] for r in board["active_breakdowns"]}
+    assert not board["oos"]
+    assert {r["asset"] for r in board["rts"]}=={"CONV-12"}
+
