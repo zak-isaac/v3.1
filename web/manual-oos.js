@@ -51,7 +51,7 @@ const statusCard=(item,type)=>{
  function render(){
    const host=root();if(!host)return;
    if(!status){host.innerHTML='<p class="field-help">Asset status is unavailable. Refresh to retry.</p>';return;}
-   const oos=status.oos||[],rts=status.rts||[],active=status.active_breakdowns||[];
+   const oos=status.oos||[],rts=status.rts||[],active=status.active_breakdowns||[],awaiting=status.awaiting_parts||[];
    host.innerHTML=`<div class="pane-header">
        <div><h3>Asset Status</h3><p>OOS persists across shifts. RTS shows this shift's confirmed returns.</p></div>
        <div style="display:flex;gap:8px;flex-wrap:wrap">
@@ -76,6 +76,11 @@ const statusCard=(item,type)=>{
        <p>Open repair work, including Parts Pending. WO status does not automatically mean equipment is OOS.</p></div></div>
      <div class="item-list" id="v31-active-breakdown-list">${active.length?active.map(activeCard).join(''):
        '<p class="field-help">No active Breakdown WOs recorded.</p>'}</div>
+     <div class="pane-header"><div><h3>Awaiting Parts · ${awaiting.length}</h3></div></div>
+     <div class="item-list" id="v31-awaiting-parts-list">${awaiting.length?
+       awaiting.map(item=>'<div class="item-card"><div><strong>'+esc(item.asset)+
+         '</strong> (WO# '+esc(item.wo_number)+')</div></div>').join(''):
+       '<p class="field-help">No work orders currently marked Parts Pending.</p>'}</div>
      <div class="pane-header"><div><h3>Currently Out of Service · ${oos.length}</h3></div></div>
      <div class="item-list" id="v31-oos-list">${oos.length?oos.map(x=>statusCard(x,'oos')).join(''):
        '<p class="field-help">No equipment currently marked OOS.</p>'}</div>
