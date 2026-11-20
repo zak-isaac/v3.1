@@ -128,6 +128,24 @@ def test_real_browser_manual_pm_breakdown_passdown_and_end_shift(live_server):
         assert marked.value.status==200
         page.locator('#v31-oos-rts-list').get_by_text('PERCART0010').wait_for(timeout=10000)
 
+        # The real RTS list must have a working Mark OOS button.
+        with page.expect_response(
+            lambda r:r.url.endswith('/api/oos') and r.request.method=='POST'
+        ) as reout:
+            page.locator('#v31-oos-rts-list [data-oos-asset="PERCART0010"]').click()
+        assert reout.value.status==200,reout.value.text()
+        page.locator('#v31-oos-list [data-rts-asset="PERCART0010"]').wait_for(timeout=10000)
+        assert page.locator('#v31-oos-rts-list').get_by_text('PERCART0010').count()==0
+
+        # The same asset can be manually returned to service from OOS.
+        with page.expect_response(
+            lambda r:r.url.endswith('/api/oos/rts') and r.request.method=='POST'
+        ) as rereturn:
+            page.locator('#v31-oos-list [data-rts-asset="PERCART0010"]').click()
+        assert rereturn.value.status==200,rereturn.value.text()
+        page.locator('#v31-oos-rts-list [data-oos-asset="PERCART0010"]').wait_for(timeout=10000)
+        assert page.locator('#v31-oos-list').get_by_text('PERCART0010').count()==0
+
         # The RTS KPI includes direct confirmations even though they are not
         # breakdown work orders and do not belong in the email's RTS list.
         page.locator('#v31-rts-metric').click()
