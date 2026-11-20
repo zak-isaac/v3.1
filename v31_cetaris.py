@@ -45,6 +45,18 @@ def _text(value: Any) -> str:
     return "" if value is None else str(value).strip()
 
 
+def _hours(value: Any) -> float:
+    try:
+        return max(0.0,float(str(value or '0').replace(',','').strip()))
+    except (TypeError,ValueError):
+        return 0.0
+
+
+def _is_pkm_asset(asset_id: Any) -> bool:
+    # The Asset ID column, not the RFR or PM Code, controls this exclusion.
+    return _text(asset_id).casefold().startswith('pkm')
+
+
 @lru_cache(maxsize=16384)
 def _parse_date_text(value: str) -> datetime | None:
     """Reuse date conversions for repeated Cetaris timestamps within exports."""
@@ -128,7 +140,8 @@ def parse_excel(data: bytes, stats: dict | None = None) -> list[dict]:
             pos = mapping.get(label.casefold())
             return row[pos] if pos is not None and pos < len(row) else None
         results = []
-        source_rows = skipped_no_wo = skipped_no_tech = 0
+        source_rows = skipped_no_wo = skipped_no_tech = skipped_pkm_assets = 0
+        has_hours='reg hrs' in mapping or 'ot hrs' in mapping
         for i, row in enumerate(source):
             if i >= MAX_ROWS:
                 raise ValueError("Import limited to 30,000 labor rows. Narrow your Cetaris export dates.")
@@ -139,6 +152,11 @@ def parse_excel(data: bytes, stats: dict | None = None) -> list[dict]:
             tech = _text(get(row, "Technician"))
             if not wo:
                 skipped_no_wo += 1
+                continue
+            # One-file rule: exclude PKM-prefixed Asset IDs from every
+            # downstream category, including Breakdown and Shift Happenings.
+            if _is_pkm_asset(get(row,'Asset ID')):
+                skipped_pkm_assets += 1
                 continue
             if not tech:
                 skipped_no_tech += 1
@@ -153,12 +171,17 @@ def parse_excel(data: bytes, stats: dict | None = None) -> list[dict]:
             # is the common case, not the fallback -- but prefer Asset ID
             # when a given export does populate it.
             asset_id = _text(get(row, "Asset ID")) or _text(get(row, "Asset #"))
+            reg_hours=_hours(get(row,'Reg Hrs'))
+            ot_hours=_hours(get(row,'OT Hrs'))
             status_raw = _text(get(row, "WO Status"))
             rfr_raw = _text(get(row, "Primary RFR"))
             status, status_code = normalize_wo_status(status_raw)
             rfr, rfr_code = normalize_primary_rfr(rfr_raw)
             results.append({
                 "wo_number": wo, "asset_id": asset_id,
+                "reg_hours": reg_hours, "ot_hours": ot_hours,
+                "logged_hours": round(reg_hours+ot_hours,5),
+                "has_labor_hours": has_hours,
                 "status": status, "status_code": status_code,
                 "status_raw": status_raw,
                 "rfr": rfr, "rfr_code": rfr_code, "rfr_raw": rfr_raw,
@@ -191,6 +214,7 @@ def parse_excel(data: bytes, stats: dict | None = None) -> list[dict]:
         stats["source_rows"] = source_rows
         stats["skipped_no_wo"] = skipped_no_wo
         stats["skipped_no_tech"] = skipped_no_tech
+        stats["skipped_pkm_assets"] = skipped_pkm_assets
         stats["parsed_rows"] = len(results)
         return results
     finally:
@@ -239,6 +263,13 @@ def select_records(rows: list[dict], selected: set[str], start: datetime, end: d
     for r in rows:
         if r["tech_name"] not in selected:
             continue
+        # When Cetaris supplies recorded hours, an entry with zero hours
+        # is not evidence that a technician clocked back out after work.
+        # Older exports without hour columns retain the documented-work
+        # fallback, avoiding regression for historical data.
+        if r.get("has_labor_hours") and not float(r.get("logged_hours") or 0):
+            summary["zero_labor_hours"] += 1
+            continue
         summary["selected_rows"] += 1
         # Labor Start Date is not a WO eligibility boundary.
         status = normalize_wo_status(r["status"])[0].casefold()
@@ -253,7 +284,10 @@ def select_records(rows: list[dict], selected: set[str], start: datetime, end: d
             active_states={"in process":"IN_PROGRESS",
                            "manager review required":"MANAGER_REVIEW",
                            "outside service":"OUTSIDE_SERVICE",
-                           "parts pending":"PARTS_PENDING"}
+                           "parts pending":"PARTS_PENDING",
+                           "to be done":"TO_BE_DONE",
+                           "unclosed":"UNCLOSED",
+                           "void":"VOIDED"}
             activity_state=(active_states.get(status,"WORKED")
                             if r.get("_update_only") else "WORKED")
             eligible.append({**r, "kind": "happening",
@@ -293,7 +327,10 @@ def select_records(rows: list[dict], selected: set[str], start: datetime, end: d
             work_states = {"in process": "IN_PROGRESS",
                            "manager review required": "MANAGER_REVIEW",
                            "outside service": "OUTSIDE_SERVICE",
-                           "parts pending": "PARTS_PENDING"}
+                           "parts pending": "PARTS_PENDING",
+                           "to be done": "TO_BE_DONE",
+                           "unclosed": "UNCLOSED",
+                           "void": "VOIDED"}
             summary["active_" + (r.get("status_code") or "unknown")] += 1
             summary["happening_rows"] += 1
             eligible.append({**r, "kind": "happening",
