@@ -125,7 +125,8 @@ def sync(conn,rows,selected,accepted,shift_id):
             if wo not in tracked or status not in ('completed','closed'):
                 continue
             timestamp=(raw.get('last_complete_at') or
-                       raw.get('closed_at') or raw.get('updated_at') or '')
+                       raw.get('closed_at') or raw.get('updated_at') or
+                       raw.get('in_service_at') or '')
             if timestamp:
                 try:
                     completed_at=datetime.fromisoformat(timestamp)
