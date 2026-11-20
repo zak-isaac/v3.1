@@ -1,14 +1,13 @@
-"""Daily due-PM inventory for IND3 shift reporting.
+"""Single-file PM urgency for IND3 shift reporting.
 
-A staged WO Details file can expose today's PMs (including unassigned
-To-Be-Done WOs). The separate Today’s DAILY PMs upload remains supported
-because a filtered WO Details export might omit unassigned pending work.
-The two are merged on WO number, and completed PMs are reconciled without
-assuming that merely importing a WO means work was performed.
+Every due-today and past-due PM comes exclusively from the staged
+Cetaris WO Details export for this shift. A PM that does not appear in
+that file does not reappear from any historical PM backlog. Breakdown
+and OOS/RTS persistence are separate and unchanged.
 """
 from __future__ import annotations
 from pathlib import Path
-from datetime import datetime,date
+from datetime import datetime,date,timedelta
 from zoneinfo import ZoneInfo
 from html import escape
 import hashlib
@@ -55,7 +54,7 @@ def _as_of_date(code, shift_day):
         # as the isolated shift-time simulation.
         import app as _app
         now=_app.datetime.now(TZ).date()
-        if now==start+__import__("datetime").timedelta(days=1):
+        if now==start+timedelta(days=1):
             return now
     return start
 
