@@ -23,12 +23,12 @@ def test_all_dropdown_codes_and_descriptions_are_normalized():
         assert normalize_primary_rfr(code) == (name, code)
         assert normalize_primary_rfr(name) == (name, code)
         assert normalize_primary_rfr(f"{code} - {name}") == (name, code)
-    assert normalize_wo_status("To be Done")[1] == ""
-    assert normalize_wo_status("Unclosed")[1] == ""
-    assert normalize_wo_status("Void")[1] == ""
+    assert normalize_wo_status("To be Done")[1] == "T"
+    assert normalize_wo_status("Unclosed")[1] == "U"
+    assert normalize_wo_status("Void")[1] == "V"
 
 
-def test_all_ten_primary_rfr_categories_and_six_wo_statuses_import(
+def test_all_ten_primary_rfr_categories_and_nine_wo_statuses_import(
     client, monkeypatch
 ):
     clock(monkeypatch, day=26, hour=10)
@@ -51,7 +51,7 @@ def test_all_ten_primary_rfr_categories_and_six_wo_statuses_import(
     # other categories and in-flight PM work are still represented.
     assert state["pm_count"] == 2
     happenings = {r["wo_number"]:r for r in state["rows"]}
-    assert len(happenings) == 58
+    assert len(happenings) == 88
     for code, rfr in RFR_CATEGORIES.items():
         for status_code, status in WO_STATUSES.items():
             wo = f"CODE-{code}-{status_code}"
@@ -63,6 +63,9 @@ def test_all_ten_primary_rfr_categories_and_six_wo_statuses_import(
                               "Manager Review Required","Outside Service",
                               "Parts Pending")
     assert happenings["CODE-11-P"]["status"] == "PARTS_PENDING"
+    assert happenings["CODE-11-T"]["status"] == "TO_BE_DONE"
+    assert happenings["CODE-11-U"]["status"] == "UNCLOSED"
+    assert happenings["CODE-11-V"]["status"] == "VOIDED"
     assert happenings["CODE-22-W"]["status"] == "MANAGER_REVIEW"
     assert happenings["CODE-44-O"]["status"] == "OUTSIDE_SERVICE"
     assert happenings["CODE-11-C"]["status"] == "CLOSED"
