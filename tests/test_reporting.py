@@ -306,45 +306,48 @@ def test_flagged_carryover_requires_adoption_or_dismissal_after_previous_shift_e
     assert repeat.status_code==409
 
 
-def test_pm_needing_completion_upload_is_real_and_separate_from_completed_pm_count(client,monkeypatch):
+def test_one_wo_details_file_drives_due_pm_and_outlook_without_second_upload(
+    client,monkeypatch
+):
+    from test_daily_pm_due_wo_details import stage_details,to_be_done
     clock(monkeypatch)
     shift_id=enter(client)
-    csv=(b"WO Number,WO Date / Time,PM Due Date,Promise Date / Time,Asset #\n"
-         b"PM100,10/26/2026,10/26/2026,10/28/2026,CONV-1\n"
-         b"PM200,10/26/2026,10/26/2026,10/28/2026,CONV-2\n")
-    uploaded=client.post('/api/pm-needing-completion/upload',files={
-        'file':('pm-needing.csv',csv,'text/csv')
-    })
-    assert uploaded.status_code==200,uploaded.text
-    body=uploaded.json()
-    assert body['count']==2 and body['parsed'] is True
+    staged=stage_details(client,[
+        to_be_done("PM100",due="10/26/2026",asset="CONV-1"),
+        to_be_done("PM200",due="10/26/2026",asset="CONV-2"),
+    ])
+    assert staged.status_code==200,staged.text
     state=client.get('/api/reporting/state').json()
     assert state['pm_count']==0
     assert state['pm_needing_completion']['count']==2
-    downloaded=client.get('/api/pm-needing-completion/download')
-    assert downloaded.status_code==200 and downloaded.content==csv
+    assert not state['pm_needing_completion']['present']
+    assert client.get('/api/pm-needing-completion/download').status_code==404
     with m._db() as conn:
         import v31_reporting
         html=v31_reporting.build_passdown_html(conn,shift_id,'S1')
     assert 'PMs Needing Completion' in html
     assert 'PM100' in html and 'PM200' in html and 'CONV-1' in html
-    cleared=client.delete('/api/pm-needing-completion')
-    assert cleared.status_code==200 and cleared.json()['removed']
-    assert client.get('/api/pm-needing-completion').json()['present'] is False
+    # The second PM upload is intentionally gone.
+    retired=client.post('/api/pm-needing-completion/upload',files={
+        'file':('retired.csv',b'WO Number,PM Due Date\\nOld,10/26/2026\\n','text/csv')})
+    assert retired.status_code==410
 
 
-def test_pm_report_rejects_unparseable_workbook_without_erasing_previous(client,monkeypatch):
+def test_bad_wo_details_export_cannot_erase_staged_daily_pm_history(
+    client,monkeypatch
+):
+    from test_daily_pm_due_wo_details import stage_details,to_be_done
     clock(monkeypatch)
     enter(client)
-    good=b'WO Number,PM Due Date,Asset #\nPM101,10/26/2026,ASSET-1\n'
-    saved=client.post('/api/pm-needing-completion/upload',files={'file':('good.csv',good,'text/csv')})
-    assert saved.status_code==200
-    bad=client.post('/api/pm-needing-completion/upload',files={
-        'file':('bad.csv',b'Wrong Heading\nValue\n','text/csv')
-    })
+    assert stage_details(client,[
+        to_be_done("PM101",due="10/26/2026",asset="ASSET-1"),
+    ]).status_code==200
+    bad=client.post('/api/reporting/stage',files={
+       'file':('bad.csv',b'Wrong Heading\\nValue\\n','text/csv')})
     assert bad.status_code==422
-    old=client.get('/api/pm-needing-completion').json()
-    assert old['filename']=='good.csv' and old['count']==1
+    prior=client.get('/api/pm-needing-completion').json()
+    assert prior['count']==1 and prior['rows'][0]['wo_number']=='PM101'
+
 
 
 def test_pm_counts_once_and_does_not_enter_shift_happenings(client,monkeypatch):
