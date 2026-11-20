@@ -60,8 +60,12 @@ def test_sim_weekday_s1_s2_s3_single_wo_preserves_ownership_and_email(
     state=_ingest(client,[c])
     assert state["rows"][0]["status"]=="COMPLETED"
     with m._db() as conn:
-        assert v31_breakdown.pending(conn,s1)==[]
-        assert v31_breakdown.pending(conn,s2_id)==[]
+        assert [x["wo_number"] for x in v31_breakdown.pending(conn,s1)]==[
+            "SIM-MOTOR"
+        ]
+        assert [x["wo_number"] for x in v31_breakdown.pending(conn,s2_id)]==[
+            "SIM-MOTOR"
+        ]
         assert [x["wo_number"] for x in v31_breakdown.pending(conn,s3_id)]==[
             "SIM-MOTOR"
         ]
@@ -117,7 +121,9 @@ def test_sim_weekend_s4_s5_overnight_parts_and_verified_rts(client,monkeypatch):
                  remarks="New drive installed and tested")
     _ingest(client,[repaired])
     with m._db() as conn:
-        assert v31_breakdown.pending(conn,s4)==[]
+        assert [r["wo_number"] for r in v31_breakdown.pending(conn,s4)]==[
+            "SIM-CONVEYOR"
+        ]
         assert [r["wo_number"] for r in v31_breakdown.pending(conn,s5)]==[
             "SIM-CONVEYOR"
         ]
@@ -171,7 +177,7 @@ def test_sim_vendor_outside_service_completed_unclosed_and_later_closed(
     assert client.get("/api/assets/status").json()["active_breakdowns"]==[]
 
 
-def test_sim_keep_oos_blocks_direct_rts_and_reopens_after_new_completion(
+def test_sim_keep_oos_can_be_manually_returned_without_repair_credit(
     client,monkeypatch
 ):
     clock(monkeypatch,day=26,hour=10)
@@ -186,24 +192,26 @@ def test_sim_keep_oos_blocks_direct_rts_and_reopens_after_new_completion(
         "/api/assets/status").json()["active_breakdowns"])
     assert any(x["asset"]=="ASSETSIM-HOLD" for x in client.get(
         "/api/assets/status").json()["oos"])
-    shortcut=client.post("/api/oos/rts",json={"asset":"ASSETSIM-HOLD"})
-    assert shortcut.status_code==409
-    # Identical upload must not re-open the review dialog.
-    _ingest(client,[item])
-    assert client.get("/api/assets/status").json()["pending"]==[]
-    # Later shift does genuine new work: new review allowed.
+
+    # A later physical inspection may confirm the asset RTS even while the
+    # WO's administrative status remains Completed and the shift changes.
     clock(monkeypatch,day=26,hour=18)
     s2=client.post("/api/shifts/start",json={"code":"S2"})
     assert s2.status_code==200,s2.text
+    shortcut=client.post("/api/oos/rts",json={"asset":"ASSETSIM-HOLD"})
+    assert shortcut.status_code==200,shortcut.text
+    board=client.get("/api/assets/status").json()
+    assert not board["active_breakdowns"] and not board["oos"]
+    assert {r["asset"] for r in board["rts"]}=={"ASSETSIM-HOLD"}
+    with m._db() as conn:
+        record=conn.execute("""SELECT rts_logged,decision FROM breakdown_state
+            WHERE wo_number='SIM-HOLD'""").fetchone()
+        assert record["rts_logged"]==1 and record["decision"]=="rts"
+    # Reimporting the completed WO never fabricates another RTS.
     fixed=row("SIM-HOLD",category="01",status="D",
-              started="2026-10-26 17:25",serviced="2026-10-26 17:50",
-              remarks="Replaced sensor and verified operation")
+              started="2026-10-26 17:25",serviced="2026-10-26 17:50")
     _ingest(client,[fixed])
-    assert [x["wo_number"] for x in client.get(
-        "/api/assets/status").json()["pending"]]==["SIM-HOLD"]
-    rts=client.post("/api/breakdowns/SIM-HOLD/decision",json={"decision":"rts"})
-    assert rts.status_code==200,rts.text
-    assert client.get("/api/assets/status").json()["oos"]==[]
+    assert client.get("/api/assets/status").json()["pending"]==[]
 
 
 def test_sim_all_rfr_types_do_not_create_false_breakdowns(client,monkeypatch):
