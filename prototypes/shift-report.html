@@ -315,16 +315,20 @@ $$('[data-close-modal]').forEach(el=>el.addEventListener('click',closeModal));do
 // legitimate scenario -- only penalize a file that was picked but never
 // confirmed/imported, never the absence of a file in the first place.
 function progressChecklist(){
-  // LOTO verification counts as done once state.loto is true. Marking any
-  // key missing automatically sets the toggle true too (see the keyGrid
-  // change handler below) -- documenting a missing key is itself a
-  // completed inspection, not an incomplete one. Verified and missing-keys
-  // are independent facts now, not mutually exclusive.
-  const lotoDone=!!state.loto;
+  // PM-only WO Details files often contain zero technician labor rows
+  // because the due To-Be-Done WOs have no technician. They still count as
+  // a valid one-file report source and require no impossible tech selection.
+  // A file WITH technician rows still requires shift attribution/import.
+  const due=state.pmNeeds||{};
+  const pmInventoryCount=(due.due_count||0)+(due.past_due_count||0);
+  const pmOnlyReady=!!state.cetarisFile && !state.stageTechCount &&
+    !!due.auto_available && pmInventoryCount>0;
   return [
-    {label:'Cetaris import confirmed (if a file was chosen)',done:!state.cetarisFile||state.stageImported},
-    {label:'Work orders or PMs recorded for this shift',done:(state.rows.length+state.pmCount)>0},
-    {label:'LOTO verification completed for this shift',done:lotoDone},
+    {label:'Cetaris import reviewed (technician work or PM-only file)',
+     done:!state.cetarisFile||state.stageImported||pmOnlyReady},
+    {label:'Work orders or PMs recorded for this shift',
+     done:(state.rows.length+state.pmCount)>0||pmInventoryCount>0},
+    {label:'LOTO verification completed for this shift',done:!!state.loto},
   ];
 }
 function importAuditMarkup(){
@@ -860,6 +864,7 @@ window.v31ReportView={
     state.audit=data.audit||{summary:{},pending:[],ignored:[]};
     state.cetarisFile=data.stage?.filename||'';
     state.stageImported=!!data.stage?.imported;
+    state.stageTechCount=(data.stage?.technicians||[]).length;
     if(data.draft){
       state.vendors=data.draft.vendors||[];state.ro=data.draft.ro||[];
       state.notes=data.draft.notes||'';
