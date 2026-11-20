@@ -265,13 +265,13 @@ def report_section(conn,shift_id):
                 f'Past Due PMs — {pm["past_due_count"]}</strong></p>')
     if overdue:
         past_rows="".join(
-            f'<tr style="background:#{pm_style.pm_zebra_hex(i)};">'
+            f'<tr style="background:#{pm_style.pm_zebra_hex(index)};">'
             f'<td style="{td_s}">{escape(i["wo_number"])}</td>'
             f'<td style="{td_s}">{escape(i["asset_num"])}</td>'
             f'<td style="{td_s}">{escape(i["pm_due_date"])}</td>'
             f'<td style="{td_s}">{escape(i["wo_status"])}</td>'
             f'<td style="{td_s}font-weight:bold;color:#92252e;">PAST DUE</td></tr>'
-            for i_index,i in enumerate(overdue) for i in [dict(i)]
+            for index,i in enumerate(overdue)
         )
         past_header=(f'<tr><th style="{th_s}">WO #</th><th style="{th_s}">Asset</th>'
                      f'<th style="{th_s}">PM Due Date</th><th style="{th_s}">WO Status</th>'
