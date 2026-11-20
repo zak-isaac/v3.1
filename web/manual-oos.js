@@ -37,14 +37,13 @@ const statusCard=(item,type)=>{
      .filter(Boolean).map(esc).join(' · ');
    const actions=[];
    if(type==='oos'){
-     if(item.pending_decision && item.wo_number){
-       actions.push(`<button type="button" class="btn btn-light btn-small" data-breakdown-rts="${esc(item.wo_number)}" data-asset="${esc(item.asset)}">Confirm RTS</button>`);
-       actions.push(`<button type="button" class="btn btn-light btn-small" data-breakdown-oos="${esc(item.wo_number)}">Keep OOS</button>`);
-     }else if(item.hold){
+     if(item.hold){
        actions.push(`<button type="button" class="btn btn-light btn-small" data-release-hold="${esc(item.asset)}">Release Hold</button>`);
-     }else if(item.source!=='Cetaris breakdown'){
-       actions.push(`<button type="button" class="btn btn-light btn-small" data-rts-asset="${esc(item.asset)}">Mark RTS</button>`);
      }
+     actions.push(`<button type="button" class="btn btn-light btn-small" data-rts-asset="${esc(item.asset)}" ${item.hold?'disabled title="Release the explicit OOS hold before RTS"':''}>Mark RTS</button>`);
+   }else if(type==='rts'){
+     // Manually move the asset back to OOS without rewriting Cetaris.
+     actions.push(`<button type="button" class="btn btn-light btn-small" data-oos-asset="${esc(item.asset)}">Mark OOS</button>`);
    }
    return `<div class="item-card"><div><strong>${esc(item.asset)}</strong>
      <small>${details}</small></div>${actions.join('')}</div>`;
@@ -135,6 +134,16 @@ const statusCard=(item,type)=>{
      try{await api('/api/oos/rts',{asset});await reloadAfterChange();toast(asset+' marked RTS');}
      catch(e){button.disabled=false;toast(e.message);}
    }));
+   host.querySelectorAll('[data-oos-asset]').forEach(button=>button.addEventListener('click',async()=>{
+     const asset=button.dataset.oosAsset;
+     if(!window.confirm('Confirm '+asset+' is physically out of service? This will move it from RTS to OOS.'))return;
+     button.disabled=true;
+     try{
+       await api('/api/oos',{asset});
+       await reloadAfterChange();
+       toast(asset+' moved to OOS');
+     }catch(e){button.disabled=false;toast(e.message);}
+   }));
    host.querySelectorAll('[data-release-hold]').forEach(button=>button.addEventListener('click',async()=>{
      const asset=button.dataset.releaseHold;
      if(!window.confirm('Release the explicit OOS hold on '+asset+'? This does not mark the asset RTS.'))return;
@@ -168,7 +177,8 @@ const statusCard=(item,type)=>{
  }
  async function promptCompletedBreakdowns(){
    // Read the authoritative pending list after import, even if a different
-   // refresh was in flight. Only THIS shift's verified completed WOs appear.
+   // refresh was in flight. Any completed Breakdown can be verified by
+   // this shift, even when another shift started or last touched it.
    try{status=await api('/api/assets/status');}
    catch(e){toast('Cannot load breakdown reviews: '+e.message);return;}
    window.v31ReportView?.setAssetStatus?.(status);
