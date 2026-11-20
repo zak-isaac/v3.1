@@ -41,7 +41,7 @@ def stage_details(c,items):
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")})
 
 
-def test_unassigned_to_be_done_and_other_due_pms_are_found_in_wo_details(
+def test_unassigned_to_be_done_only_is_due_in_wo_details(
     client,monkeypatch
 ):
     clock(monkeypatch,day=26,hour=10)
@@ -58,15 +58,15 @@ def test_unassigned_to_be_done_and_other_due_pms_are_found_in_wo_details(
     ]
     response=stage_details(client,items)
     assert response.status_code==200,response.text
-    assert response.json()["pm_due"]["due_count"]==3
-    # The three outstanding/finished PMs have NO Technician and therefore
-    # are not eligible for imported labor, but still belong on the due list.
+    assert response.json()["pm_due"]["due_count"]==1
+    # Only To Be Done is urgent; In Process and Completed are excluded.
+    # No Technician is assigned, so no labor must be fabricated.
     state=client.get("/api/reporting/state").json()
     pm=state["pm_needing_completion"]
     assert pm["auto_available"] and pm["has_source"]
     assert not pm["present"]
-    assert pm["due_count"]==3 and pm["count"]==2 and pm["completed_count"]==1
-    assert {p["wo_number"] for p in pm["rows"]}=={"PM-T","PM-I","PM-D"}
+    assert pm["due_count"]==1 and pm["count"]==1 and pm["completed_count"]==0
+    assert {p["wo_number"] for p in pm["rows"]}=={"PM-T"}
     assert next(p for p in pm["rows"] if p["wo_number"]=="PM-T")["wo_status"]=="To be Done"
     assert pm["rows"][0]["pm_due_date"]=="10/26/2026"
     assert pm["target_dates"]==["2026-10-26"]
@@ -76,64 +76,49 @@ def test_unassigned_to_be_done_and_other_due_pms_are_found_in_wo_details(
     preview=client.get("/api/shifts/report/preview")
     assert preview.status_code==200,preview.text
     html=preview.json()["html"]
-    assert "PM-T" in html and "PM-D" in html
-    assert "2 outstanding today" in html
+    assert "PM-T" in html and "PM-D" not in html
+    assert "1 To Be Done PMs due today" in html
     assert "NOT-PM" not in html
 
 
-def test_past_due_comes_only_from_current_file_not_prior_uploads(
+def test_one_wo_details_file_classifies_to_be_done_by_pm_due_date(
     client,monkeypatch
 ):
     clock(monkeypatch,day=26,hour=10)
-    original_shift=enter(client,"S1")
-    assert stage_details(client,[
+    enter(client,"S1")
+    # One current Cetaris export: overdue PMs can be weeks old.
+    # Do not infer PM status from a WO Date or an earlier upload.
+    items=[
         to_be_done("PM-PAST",due="10/25/2026"),
+        to_be_done("PM-WEEKS",due="10/03/2026"),
         to_be_done("PM-TODAY",due="10/26/2026"),
-        to_be_done("PM-OLD-DONE",due="10/24/2026",status="Completed"),
-        to_be_done("PM-TOMORROW",due="10/27/2026"),
-    ]).status_code==200
-    first=client.get("/api/pm-needing-completion").json()
-    assert first["due_count"]==1 and first["count"]==1
-    assert first["past_due_count"]==1
-    assert [x["wo_number"] for x in first["past_due_rows"]]==["PM-PAST"]
-    assert first["rows"][0]["urgency"]=="yellow"
-    assert first["past_due_rows"][0]["urgency"]=="red"
-
-    clock(monkeypatch,day=27,hour=10)
-    switched=client.post("/api/shifts/start",json={"code":"S1"})
-    assert switched.status_code==200,switched.text
-    # Upload only today's work: older missing WOs must NOT be carried over.
-    assert stage_details(client,[to_be_done("PM-TOMORROW",
-                         due="10/27/2026")]).status_code==200
-    new_report=client.get("/api/pm-needing-completion").json()
-    assert new_report["due_count"]==1
-    assert new_report["past_due_count"]==0
-    assert not new_report["past_due_rows"]
-
-    # The same CURRENT file can show older unfinished WOs as past due.
-    assert stage_details(client,[
-        to_be_done("PM-PAST",due="10/25/2026"),
-        to_be_done("PM-TODAY",due="10/26/2026"),
-        to_be_done("PM-TOMORROW",due="10/27/2026"),
-    ]).status_code==200
-    new_report=client.get("/api/pm-needing-completion").json()
-    assert {x["wo_number"] for x in new_report["past_due_rows"]}=={
-        "PM-PAST","PM-TODAY"}
-    assert new_report["past_due_count"]==2
-
-    # Later Cetaris status in a new upload, not history, clears urgency.
-    assert stage_details(client,[
-        to_be_done("PM-PAST",due="10/25/2026",status="Completed"),
-        to_be_done("PM-TOMORROW",due="10/27/2026"),
-    ]).status_code==200
-    final=client.get("/api/pm-needing-completion").json()
-    assert final["past_due_count"]==0
-    assert final["count"]==1
-    with __import__("app")._db() as conn:
-        import v31_pm_needing_completion
-        before=v31_pm_needing_completion.get(conn,original_shift)
-        assert before["past_due_count"]==1
-        assert before["past_due_rows"][0]["wo_number"]=="PM-PAST"
+        to_be_done("PM-FUTURE",due="10/27/2026"),
+        to_be_done("PM-IN-PROCESS",due="10/25/2026",status="In Process"),
+        to_be_done("PM-PARTS",due="10/25/2026",status="Parts Pending"),
+        to_be_done("PM-REVIEW",due="10/25/2026",status="Manager Review Required"),
+        to_be_done("PM-OUTSIDE",due="10/25/2026",status="Outside Service"),
+        to_be_done("PM-UNCLOSED",due="10/25/2026",status="Unclosed"),
+        to_be_done("PM-COMPLETED",due="10/25/2026",status="Completed"),
+        to_be_done("PM-CLOSED",due="10/26/2026",status="Closed"),
+        to_be_done("PM-VOID",due="10/25/2026",status="Void"),
+        to_be_done("PM-NO-STATUS",due="10/26/2026",status=""),
+        to_be_done("PKM-EXCLUDE",due="10/25/2026",asset="PKM12345"),
+        to_be_done("OTHER-RFR",due="10/25/2026",rfr="11"),
+    ]
+    staged=stage_details(client,items)
+    assert staged.status_code==200,staged.text
+    assert staged.json()["pm_due"]["due_count"]==1
+    pm=client.get("/api/pm-needing-completion").json()
+    assert pm["due_count"]==pm["count"]==1
+    assert [r["wo_number"] for r in pm["rows"]]==["PM-TODAY"]
+    assert pm["rows"][0]["urgency"]=="yellow"
+    assert pm["past_due_count"]==2
+    assert {r["wo_number"] for r in pm["past_due_rows"]}=={
+        "PM-PAST","PM-WEEKS"}
+    assert all(r["urgency"]=="red" and r["wo_status"]=="To be Done"
+               for r in pm["past_due_rows"])
+    assert pm["completed_count"]==0
+    assert pm["outstanding_total"]==3
 
 
 def test_outlook_email_uses_yellow_today_and_red_past_due(
@@ -152,7 +137,7 @@ def test_outlook_email_uses_yellow_today_and_red_past_due(
     assert "YELLOW-01" in html and "RED-01" in html
     assert "#FFF2C7" in html and "#FDE8E8" in html
     assert "DUE TODAY — 11:59 PM" in html and "PAST DUE" in html
-    assert "GREY-DONE" in html
+    assert "GREY-DONE" not in html
     assert "OLD-DONE" not in html and "FUTURE" not in html
 
 
@@ -200,7 +185,7 @@ def test_only_due_pms_no_tech_does_not_fabricate_shift_work(client,monkeypatch):
 def test_ind3_style_s5_daily_date_and_time_are_calendar_based():
     from v31_pm_due_scanner import scan
     source=details([
-        to_be_done("S5-DUE",due="10/25/2026 8:24 PM",status="In Process"),
+        to_be_done("S5-DUE",due="10/25/2026 8:24 PM",status="To be Done"),
         to_be_done("S5-FUTURE",due="10/26/2026 4:30 AM",status="To be Done"),
         to_be_done("S5-AFTER",due="10/27/2026 12:00 AM",status="To be Done"),
         to_be_done("S5-OTHER-RFR",due="10/25/2026 3:01 AM",rfr="04"),
