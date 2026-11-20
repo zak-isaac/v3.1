@@ -96,15 +96,17 @@ def test_real_browser_manual_pm_breakdown_passdown_and_end_shift(live_server):
         target=page.evaluate("""async () => (await (await fetch(
             '/api/pm-needing-completion')).json()).target_dates[0]""")
         due=f"{target[5:7]}/{target[8:10]}/{target[:4]}"
-        pm_csv=chr(10).join(['WO Number,PM Due Date,Asset #',
-                             f'PMUI001,{due},BALER-UI','']).encode('utf-8')
-        with page.expect_response(lambda r:'/api/pm-needing-completion/upload' in r.url) as uploaded:
-            page.locator('#pending-picker').set_input_files({
-              'name':'pm-needing-ui.csv','mimeType':'text/csv','buffer':pm_csv
+        from test_browser_pm_due_inventory import _workbook
+        with page.expect_response(lambda r:'/api/reporting/stage' in r.url) as uploaded:
+            page.locator('#cetaris-picker').set_input_files({
+              'name':'single-wo-details.xlsx',
+              'mimeType':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+              'buffer':_workbook(due)
             })
         assert uploaded.value.status==200
+        assert page.locator('#pending-picker').count()==0
         page.locator('[data-tab="pm"]').click()
-        page.get_by_text('PMUI001',exact=False).wait_for(timeout=10000)
+        page.get_by_text('PMAUTO-T',exact=False).wait_for(timeout=10000)
 
         # One unified Asset Status area: the exact V2 inventory is offered
         # as searchable suggestions, and new asset IDs may still be typed.
