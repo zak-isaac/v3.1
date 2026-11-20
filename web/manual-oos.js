@@ -78,8 +78,8 @@ const statusCard=(item,type)=>{
        '<p class="field-help">No active Breakdown WOs recorded.</p>'}</div>
      <div class="pane-header"><div><h3>Awaiting Parts · ${awaiting.length}</h3></div></div>
      <div class="item-list" id="v31-awaiting-parts-list">${awaiting.length?
-       awaiting.map(item=>'<div class="item-card"><div><strong>'+esc(item.asset)+
-         '</strong> (WO# '+esc(item.wo_number)+')</div></div>').join(''):
+       awaiting.map(item=>'<div class="item-card"><div><span style="font-weight:700">'+esc(item.asset)+
+         '</span> (WO# '+esc(item.wo_number)+')</div></div>').join(''):
        '<p class="field-help">No work orders currently marked Parts Pending.</p>'}</div>
      <div class="pane-header"><div><h3>Currently Out of Service · ${oos.length}</h3></div></div>
      <div class="item-list" id="v31-oos-list">${oos.length?oos.map(x=>statusCard(x,'oos')).join(''):
