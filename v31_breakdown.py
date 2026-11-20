@@ -2,7 +2,8 @@
 
 C/D/I/W/O/P Cetaris WO statuses remain independent of equipment return.
 Active repairs (including Parts Pending) persist; Completed/Closed require
-shift-owned human RTS or keep-OOS review, with explicit equipment holds obeyed.
+explicit human RTS or keep-OOS review by an active shift, regardless of
+which shift started or last imported the work order. Explicit holds remain.
 Never use unrelated maintenance as RTS evidence.
 Global state survives shift boundaries; historical snapshots are immutable.
 """
@@ -59,8 +60,11 @@ def unresolved(conn,asset,exclude_wo=""):
 
 def _resolve(conn,wo,asset,shift_id,actor,*,confirm_manual=False,actor_name=""):
     row=conn.execute("SELECT * FROM breakdown_state WHERE wo_number=?",(wo,)).fetchone()
-    if not row or row["rts_logged"] or unresolved(conn,asset,wo):
+    if not row or row["rts_logged"]:
         return False
+    # Other repair WOs on the same asset remain independently tracked.
+    # Their existence cannot block an operator-confirmed return of THIS
+    # completed WO or make an unrelated WO appear repaired.
     # An explicit equipment hold cannot be bypassed by Cetaris closure or
     # a completed-WO review; it must be separately released first.
     if conn.execute("""SELECT 1 FROM breakdown_manual_holds
@@ -146,38 +150,34 @@ def sync(conn,rows,selected,accepted,shift_id):
         # Never overwrite report_wo's Cetaris C/D/I/W/O/P work status with
         # an equipment status. Physical OOS is recorded separately by manual
         # OOS, an explicit hold, or a keep-OOS review decision.
-    # No automatic RTS on Closed. Both D and C require a documented,
-    # shift-owned physical RTS confirmation. A later administrative closure
-    # does not create a new repair event or overwrite prior verified returns.
+    # No automatic RTS on Closed. Both D and C require documented
+    # physical RTS confirmation from an active shift. Later administrative
+    # closure cannot create a duplicate return or change historical reports.
     return changes
 
 def pending(conn,shift_id=None):
     ensure(conn)
-    # A completed breakdown is reviewable only in its verified completion
-    # shift, never merely by the shift that imported a later daily file.
-    sql="""SELECT wo_number,asset,status,updated_shift_id
+    # Every current shift may verify a still-unresolved completed breakdown.
+    # Never restrict the physical equipment status to the originating shift.
+    return [dict(r) for r in conn.execute("""SELECT wo_number,asset,status,updated_shift_id
       FROM breakdown_state WHERE status IN ('completed','closed')
-        AND decision='' AND rts_logged=0"""
-    params=()
-    if shift_id is not None:
-        sql+=" AND updated_shift_id=?"
-        params=(shift_id,)
-    return [dict(r) for r in conn.execute(sql+" ORDER BY updated_at",params)]
+        AND decision='' AND rts_logged=0 ORDER BY updated_at""")]
 
 def decide(conn,wo,choice,shift_id,actor,actor_name=""):
     ensure(conn)
     if choice not in ('rts','keep_oos'):raise ValueError('Invalid RTS decision')
     state=conn.execute("SELECT * FROM breakdown_state WHERE wo_number=?",(wo,)).fetchone()
-    if not state or state['status'] not in ('completed','closed') or state['decision'] or state['rts_logged']:
+    if (not state or state['status'] not in ('completed','closed') or
+            state['rts_logged'] or state['decision'] not in ('','keep_oos')):
         raise KeyError('Breakdown not pending a decision')
-    if state["updated_shift_id"]!=shift_id:
-        raise ValueError("Only the documented completing shift can review this breakdown")
-    if choice=='rts' and (
-        unresolved(conn,state['asset'],wo) or
-        conn.execute("""SELECT 1 FROM breakdown_manual_holds
-            WHERE lower(trim(asset))=lower(trim(?))""",(state['asset'],)).fetchone()
-    ):
-        raise ValueError("Another active breakdown or OOS hold prevents RTS")
+    if state['decision']=='keep_oos' and choice=='keep_oos':
+        return {'wo_number':wo,'decision':choice,'resolved':False}
+    # A later shift may verify physical RTS even when another shift
+    # performed the original work. A separate open Breakdown WO is not an
+    # automatic equipment lockout. Explicit holds must be released first.
+    if choice=='rts' and conn.execute("""SELECT 1 FROM breakdown_manual_holds
+            WHERE lower(trim(asset))=lower(trim(?))""",(state['asset'],)).fetchone():
+        raise ValueError("Release the explicit OOS hold before confirming RTS")
     resolved=False
     if choice=='rts':
         resolved=_resolve(conn,wo,state['asset'],shift_id,actor,
@@ -187,6 +187,30 @@ def decide(conn,wo,choice,shift_id,actor,actor_name=""):
     conn.execute("UPDATE breakdown_state SET decision=?,updated_at=? WHERE wo_number=?",
                  (choice,_now(),wo))
     return {'wo_number':wo,'decision':choice,'resolved':resolved}
+
+def confirm_completed_asset_rts(conn,asset,shift_id,actor,actor_name=""):
+    """Reconcile finished Breakdown WOs when a technician manually marks RTS.
+
+    Completion alone never triggers this. Only the explicit physical RTS
+    action does. Other In Process/Parts Pending WOs stay in the Breakdown
+    list; their presence does not block a return of a completed repair.
+    """
+    ensure(conn)
+    completed=conn.execute("""SELECT wo_number FROM breakdown_state
+        WHERE lower(trim(asset))=lower(trim(?)) AND rts_logged=0
+          AND status IN ('completed','closed')
+        ORDER BY updated_at""",(asset,)).fetchall()
+    confirmed=[]
+    for item in completed:
+        wo=item["wo_number"]
+        if _resolve(conn,wo,asset,shift_id,actor,
+                    confirm_manual=True,actor_name=actor_name):
+            conn.execute("""UPDATE breakdown_state
+                SET decision='rts',updated_at=? WHERE wo_number=?""",
+                (_now(),wo))
+            confirmed.append(wo)
+    return confirmed
+
 
 def hold(conn,asset,enabled,actor,reason=''):
     ensure(conn)
