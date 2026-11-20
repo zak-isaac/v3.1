@@ -22,6 +22,10 @@ def _workbook(due):
                "Completed daily PM",None,None,None,due])
     ws.append(["NOT-A-PM","OTHER","To be Done","11",
                "Proactive repair",None,None,None,due])
+    ws.append(["PARTS-FOUND","CONV-PARTS","Parts Pending","12",
+               "Repair discovered during PM",None,None,None,due])
+    ws.append(["PARTS-BREAK","RC-PARTS","P","01",
+               "Waiting for repair parts",None,None,None,due])
     buf=BytesIO()
     wb.save(buf);wb.close()
     return buf.getvalue()
@@ -83,6 +87,15 @@ def test_wo_details_to_be_done_pm_auto_flags_on_real_pm_tab(live_server):
             assert state["due_count"]==1
             assert state["count"]==1
             assert not state["present"] and state["auto_available"]
+            # The SAME daily file supplies unassigned parts-pending WOs in
+            # the simple Asset ID (WO#) format, regardless of Primary RFR.
+            page.locator('[data-tab="breakdown"]').click()
+            page.locator("#v31-awaiting-parts-list").get_by_text(
+                "CONV-PARTS",exact=False).wait_for(timeout=12000)
+            parts=page.locator("#v31-awaiting-parts-list").inner_text()
+            assert "CONV-PARTS (WO# PARTS-FOUND)" in parts
+            assert "RC-PARTS (WO# PARTS-BREAK)" in parts
+            assert "PMAUTO-T" not in parts
             assert errors==[],errors
         finally:
             browser.close()
