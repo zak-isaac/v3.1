@@ -21,8 +21,8 @@
     if(!response.ok)throw Error(body.detail||'PM report request failed');
     return body;
   };
-  async function refresh(){
-    const pm=await fetchState();
+  function apply(pm){
+    if(!pm)return;
     target.textContent=pm.has_source ?
       (pm.due_count+' PMs due · '+pm.count+' need completion · '+pm.completed_count+' completed') :
       'Daily PM due list not yet verified';
@@ -32,8 +32,16 @@
         'Today’s DAILY PMs uploaded · '+pm.filename :
         pm.auto_available?'Using PM Due Date from WO Details; verify unassigned To-Be-Done PMs are included':
         'Upload Today’s DAILY PMs to check all due PMs'));
+  }
+  async function refresh(){
+    const pm=await fetchState();
+    apply(pm);
     return pm;
   }
+  // Cetaris WO Details staging updates the due-PM list even when there
+  // are no technician rows. Keep the file-summary display in sync with
+  // reporting state without requiring a page reload or a second API call.
+  window.V31PMNeeds={apply,refresh};
   picker.addEventListener('change',async()=>{
     const file=picker.files?.[0];picker.value='';
     if(!file)return;
