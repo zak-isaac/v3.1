@@ -224,3 +224,21 @@ def test_ind3_style_excel_serial_due_date_is_read_safely():
     raw=details([to_be_done("PM-SERIAL",due=serial)])
     result=scan(raw,"S1","2026-10-26")
     assert [r["wo_number"] for r in result["rows"]]==["PM-SERIAL"]
+
+
+def test_pm_only_wo_details_does_not_block_end_shift_technician_confirmation(
+    client,monkeypatch
+):
+    clock(monkeypatch,day=26,hour=10)
+    enter(client,"S1")
+    assert stage_details(client,[to_be_done("DUE-UNASSIGNED")]).status_code==200
+    # No technician exists in the file and none should be fabricated.
+    state=client.get("/api/reporting/state").json()
+    assert state["stage"]["technicians"]==[]
+    assert not state["stage"]["imported"]
+    assert state["pm_needing_completion"]["count"]==1
+    assert client.post("/api/shifts/report",json={}).status_code==200
+    ready=client.get("/api/shifts/end/readiness")
+    assert ready.status_code==200,ready.text
+    assert not any("Confirm its technicians" in reason
+                   for reason in ready.json().get("blockers",[]))
