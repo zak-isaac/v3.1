@@ -101,7 +101,7 @@
             <section class="work-area" aria-label="Shift work details"><div class="tabstrip" role="tablist" aria-label="Report sections"><button data-tab="happenings" class="tab current" role="tab" aria-selected="true"><svg class="icon"><use href="#i-stack"/></svg>Shift Happenings <span id="tab-wo-count">(0)</span></button><button data-tab="pm" class="tab" role="tab" aria-selected="false"><svg class="icon"><use href="#i-clipboard"/></svg>PMs <span id="pm-tab-count">(0 / 0)</span></button><button data-tab="breakdown" class="tab" role="tab" aria-selected="false"><svg class="icon"><use href="#i-wrench"/></svg>Breakdown / OOS</button><button data-tab="vendors" class="tab" role="tab" aria-selected="false"><svg class="icon"><use href="#i-truck"/></svg>Vendors <span id="vendor-tab-count">(0)</span></button><button data-tab="ro" class="tab" role="tab" aria-selected="false"><svg class="icon"><use href="#i-file"/></svg>RO <span id="ro-tab-count">(0)</span></button></div><div id="tab-content" class="tab-content" role="tabpanel"></div></section>
           </section>
           <aside class="report-actions" aria-label="Report Actions"><div class="actions-heading"><div><h2>Report Actions</h2></div></div>
-            <div class="action-item pm-action"><div class="action-item-title"><span class="action-icon blue-icon"><svg class="icon"><use href="#i-calendar"/></svg></span><div><strong>PMs Needing Completion</strong><small></small></div></div><button id="upload-pending" class="btn btn-light pm-upload"><svg class="icon"><use href="#i-upload"/></svg> Upload File</button><small id="pending-filename" class="chosen-file"></small></div>
+            <div class="action-item pm-action"><div class="action-item-title"><span class="action-icon blue-icon"><svg class="icon"><use href="#i-calendar"/></svg></span><div><strong>Daily &amp; Past Due PMs</strong><small>Automatically extracted from the same Cetaris WO Details file.</small></div></div><small id="pending-filename" class="chosen-file">Upload WO Details to see due PMs</small></div>
             <button class="action-row" data-open="vendors"><span class="action-icon blue-icon"><svg class="icon"><use href="#i-truck"/></svg></span><span><strong>Vendors</strong></span><svg class="icon chevron-right"><use href="#i-arrow"/></svg></button>
             <button class="action-row" data-open="ro"><span class="action-icon blue-icon"><svg class="icon"><use href="#i-file"/></svg></span><span><strong>Reliable Operations</strong></span><svg class="icon chevron-right"><use href="#i-arrow"/></svg></button>
             <button class="action-row" data-open="notes"><span class="action-icon blue-icon"><svg class="icon"><use href="#i-message"/></svg></span><span><strong>Shift Notes</strong></span><svg class="icon chevron-right"><use href="#i-arrow"/></svg></button>
@@ -281,7 +281,7 @@
 </div>
 <div id="modal-root" class="modal-root" hidden><div class="modal-backdrop" data-close-modal="true"></div><section class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title"><header class="modal-header"><div><h2 id="modal-title">Details</h2><p id="modal-description"></p></div><button class="icon-button" data-close-modal="true" aria-label="Close"><svg class="icon"><use href="#i-x"/></svg></button></header><div id="modal-body" class="modal-body"></div><footer id="modal-actions" class="modal-actions"></footer></section></div>
 <div id="toast" class="toast" role="status" aria-live="polite"></div>
-<input type="file" id="cetaris-picker" accept=".xlsx,.csv" hidden><input type="file" id="pending-picker" accept=".xlsx,.xls,.csv,.pdf,.png,.jpg,.jpeg" hidden>
+<input type="file" id="cetaris-picker" accept=".xlsx,.csv" hidden>
 <script>
 /* IND3 Shift Report V3.1 — server-connected local reporting UI. */
 (() => {
@@ -743,11 +743,11 @@ async function confirmEnd(){
               'Review the report and outstanding items.',body,buttons,{wide:true});
   }catch(error){toast(error.message);}
 }
-function showInfo(){showModal('V3.1 Shift Passdown','Separate from live IND3 V3.',`<p>This V3.1 local app uses a separate shift database and actual Cetaris imports. It does not modify the live production V3 application.</p><p><strong>Current workflows:</strong> Cetaris XLSX/CSV import, technician selection, manual repairs, verified breakdown lifecycle, OOS/RTS, carry-overs, LOTO key checks, PMs Needing Completion upload, saved Outlook EML and End Shift.</p><p>Local AI suggestions are optional and require a model installed through an approved process. The V2/V3 production application remains separate.</p>`,[{text:'Got it',onClick:closeModal}]);}
+function showInfo(){showModal('V3.1 Shift Passdown','Separate from live IND3 V3.',`<p>This V3.1 local app uses a separate shift database and actual Cetaris imports. It does not modify the live production V3 application.</p><p><strong>Current workflows:</strong> Cetaris XLSX/CSV import, technician selection, manual repairs, verified breakdown lifecycle, OOS/RTS, carry-overs, LOTO key checks, automatic Daily / Past Due PM inventory from one WO Details file, saved Outlook EML and End Shift.</p><p>Local AI suggestions are optional and require a model installed through an approved process. The V2/V3 production application remains separate.</p>`,[{text:'Got it',onClick:closeModal}]);}
 // Wiring
 $$('.tab').forEach(t=>t.addEventListener('click',()=>{selectedTab=t.dataset.tab;renderTab();}));
 $('#replace-file').addEventListener('click',()=>$('#cetaris-picker').click());$('#cetaris-picker').addEventListener('change',e=>{const f=e.target.files?.[0];if(!f)return;window.V31Reporting?.upload(f);e.target.value='';});
-$('#upload-pending').addEventListener('click',()=>$('#pending-picker').click());/* Upload handling lives in /web/pm-needing-completion.js, not a preview-only handler. */
+
 $('#change-techs').addEventListener('click',()=>window.V31Reporting?.chooseTechs());
 $$('[data-open]').forEach(b=>b.addEventListener('click',()=>b.dataset.open==='notes'?editNotes():editList(b.dataset.open)));
 const keyGrid=$('#missing-keys');
