@@ -226,17 +226,17 @@ def report_section(conn,shift_id):
     dates=", ".join(pm["target_dates"])
     headline='<p style="margin:16px 0 2px"><strong style="font-size:16px">PMs Needing Completion</strong></p>'
     if not pm["has_source"]:
-        return headline+'<p style="margin:0 0 6px;font-size:14px;color:#6b7280;font-style:italic;">No daily PM report or qualifying WO Details due-date data available. Outstanding PM count is unverified.</p>'
-    if not pm["parsed"]:
-        return headline+'<p style="margin:0 0 6px;font-size:14px;color:#6b7280;font-style:italic;">PM reference attached; its contents were not parsed.</p>'
+        return headline+'<p style="margin:0 0 6px;font-size:14px;color:#6b7280;font-style:italic;">No single Cetaris WO Details export available. Daily and past-due PM counts are unverified.</p>'
+    if not pm["parsed"] and not pm["past_due_rows"]:
+        return headline+'<p style="margin:0 0 6px;font-size:14px;color:#6b7280;font-style:italic;">WO Details not staged for this shift. Tracked past-due PMs may have last-known statuses.</p>'
     summary=(f'<p style="font-size:14px;">PM due {escape(dates)}: '
              f'<strong>{pm["due_count"]} identified</strong> · '
              f'<strong>{pm["count"]} still needing completion</strong> · '
              f'{pm["completed_count"]} completed</p>')
     caveat=(''.join(f'<p style="font-size:12px;color:#9a6700;">{escape(n)}</p>'
                     for n in pm["notes"]))
-    if not pm["rows"]:
-        return headline+summary+caveat+'<p style="font-style:italic;">No due PMs found in the available export(s); confirm the To-Be-Done list covers these dates.</p>'
+    if not pm["rows"] and not pm["past_due_rows"]:
+        return headline+summary+caveat+'<p style="font-style:italic;">No due or past-due PMs identified in recorded WO Details. Ensure the export includes all To-Be-Done PMs.</p>'
     border="border:1px solid #d1d5db;"
     th_s=f"padding:8px 12px;text-align:left;font-size:14px;font-weight:bold;background:#{pm_style.PM_HEADER_HEX};color:#fff;font-family:Calibri,Arial,sans-serif;{border}"
     td_s=f"padding:7px 12px;font-size:14px;font-family:Calibri,Arial,sans-serif;{border}"
@@ -260,4 +260,24 @@ def report_section(conn,shift_id):
                     f"<td style='{td_s}color:#666;'>{escape(row['wo_date'] or '')}</td></tr>")
     table=(f"<table style='width:100%;border-collapse:collapse;margin-top:4px;'>"
            f"<thead>{hdr}</thead><tbody>{body_rows}</tbody></table>")
-    return headline+summary+caveat+table
+    overdue=pm["past_due_rows"]
+    past_title=(f'<p style="margin:16px 0 3px;"><strong style="font-size:16px;">'
+                f'Past Due PMs — {pm["past_due_count"]}</strong></p>')
+    if overdue:
+        past_rows="".join(
+            f'<tr style="background:#{pm_style.pm_zebra_hex(i)};">'
+            f'<td style="{td_s}">{escape(i["wo_number"])}</td>'
+            f'<td style="{td_s}">{escape(i["asset_num"])}</td>'
+            f'<td style="{td_s}">{escape(i["pm_due_date"])}</td>'
+            f'<td style="{td_s}">{escape(i["wo_status"])}</td>'
+            f'<td style="{td_s}font-weight:bold;color:#92252e;">PAST DUE</td></tr>'
+            for i_index,i in enumerate(overdue) for i in [dict(i)]
+        )
+        past_header=(f'<tr><th style="{th_s}">WO #</th><th style="{th_s}">Asset</th>'
+                     f'<th style="{th_s}">PM Due Date</th><th style="{th_s}">WO Status</th>'
+                     f'<th style="{th_s}">Flag</th></tr>')
+        past_title+=(f'<table style="width:100%;border-collapse:collapse;">'
+                     f'<thead>{past_header}</thead><tbody>{past_rows}</tbody></table>')
+    else:
+        past_title+='<p style="font-size:13px;">No past-due PMs in imported history.</p>'
+    return headline+summary+caveat+(table if pm["rows"] else '')+past_title
