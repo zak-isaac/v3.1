@@ -10,6 +10,7 @@ import v31_oos
 import v31_breakdown
 import v31_reporting
 import v31_returned_to_service
+import v31_awaiting_parts
 
 
 def _key(asset):
@@ -112,7 +113,8 @@ def summary(conn, shift_id):
     confirmed={item['wo_number']:item for item in verified
                if item['breakdown'] and item['wo_number']}
 
-    return {'oos':sorted(oos.values(),key=lambda item:item['asset'].casefold()),
+    return {'awaiting_parts':v31_awaiting_parts.list_records(conn),
+            'oos':sorted(oos.values(),key=lambda item:item['asset'].casefold()),
             'active_breakdowns':sorted(active_breakdowns,
                                       key=lambda item:item['asset'].casefold()),
             'rts':sorted(rts.values(),key=lambda item:item['asset'].casefold()),
