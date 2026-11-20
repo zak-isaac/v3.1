@@ -148,3 +148,36 @@ def test_only_due_pms_no_tech_does_not_fabricate_shift_work(client,monkeypatch):
     assert client.get("/api/reporting/state").json()["rows"]==[]
     assert client.get("/api/reporting/state").json()["pm_count"]==0
     assert client.get("/api/assets/status").json()["rts"]==[]
+
+
+def test_ind3_style_s5_pm_due_datetime_fields_include_both_calendar_days():
+    """Match actual IND3 WO Details date formats without using facility data."""
+    from v31_pm_due_scanner import scan
+    source=details([
+        to_be_done("S5-PM-EVENING",due="10/25/2026 8:24 PM",status="Closed"),
+        to_be_done("S5-PM-MORNING",due="10/26/2026 4:30 AM",status="In process"),
+        to_be_done("S5-PM-AFTER",due="10/27/2026 12:00 AM",status="To be Done"),
+        to_be_done("S5-OTHER-RFR",due="10/26/2026 3:01 AM",rfr="04"),
+    ])
+    inventory=scan(source,"S5","2026-10-25")
+    assert inventory["available"] is True
+    assert inventory["target_dates"]==["2026-10-25","2026-10-26"]
+    assert {r["wo_number"] for r in inventory["rows"]}=={
+        "S5-PM-EVENING","S5-PM-MORNING"}
+    assert {r["wo_number"]:r["state"] for r in inventory["rows"]}=={
+        "S5-PM-EVENING":"completed","S5-PM-MORNING":"outstanding"}
+    assert next(r for r in inventory["rows"]
+                if r["wo_number"]=="S5-PM-MORNING")["due_iso"]=="2026-10-26"
+
+
+def test_ind3_style_excel_serial_due_date_is_read_safely():
+    from v31_pm_due_scanner import scan,due_date
+    from openpyxl.utils.datetime import to_excel
+    from datetime import datetime
+    day=datetime(2026,10,26,4,30)
+    serial=to_excel(day)
+    assert due_date(serial).isoformat()=="2026-10-26"
+    assert due_date(str(serial)).isoformat()=="2026-10-26"
+    raw=details([to_be_done("PM-SERIAL",due=serial)])
+    result=scan(raw,"S1","2026-10-26")
+    assert [r["wo_number"] for r in result["rows"]]==["PM-SERIAL"]
