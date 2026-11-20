@@ -446,9 +446,16 @@ function pmTab(){
       ${cell(r.wo_number,true)}${cell(r.asset_num,true)}${cell(r.pm_due_date,true)}
       ${cell(r.wo_status||'Not provided')}${cell(r.state==='completed'?'Completed':r.state==='review'?'Review — due today':'NEEDS COMPLETION',r.state!=='completed')}
       ${cell(r.promise_date)}${cell(r.wo_date)}</tr>`).join('')}</tbody></table></div>`:'';
+  const overdue=needed.past_due_rows||[];
+  const overdueTable=overdue.length?`<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13px;min-width:620px"><thead>
+    <tr style="background:#8c2630;color:#fff"><th style="padding:10px;text-align:left">WO #</th><th style="padding:10px;text-align:left">Asset</th><th style="padding:10px;text-align:left">PM Due Date</th><th style="padding:10px;text-align:left">Last WO Status</th><th style="padding:10px;text-align:left">Flag</th></tr></thead>
+    <tbody>${overdue.map((r,i)=>`<tr style="background:${i%2?'#fff3f3':'#fff'}">
+    ${cell(r.wo_number,true)}${cell(r.asset_num,true)}${cell(r.pm_due_date,true)}
+    ${cell(r.wo_status)}${cell('PAST DUE',true)}</tr>`).join('')}</tbody></table></div>`
+    :'<p class="field-help">No past-due PMs in the tracked Cetaris history. This is only as complete as the uploaded WO Details exports.</p>';
   const missing=needed.has_source?
-      'No PMs with the selected due date were identified. Verify that the exported To-Be-Done list covers the date; this does not prove none are due.':
-      'No daily PM source available. Upload Today’s DAILY PMs, or include due PMs in the WO Details export.';
+      'No PMs due on the selected date were identified. Check the single Cetaris WO Details export includes all To-Be-Done and unassigned PMs.':
+      'Upload a complete Cetaris WO Details export with PM Due Date and Primary RFR columns.';
   const dates=(needed.target_dates||[]).join(', ');
   const notes=(needed.notes||[]).map(n=>`<p class="field-help" style="color:#a15c00">${esc(n)}</p>`).join('');
   return `<div class="secondary-pane">
@@ -457,10 +464,12 @@ function pmTab(){
     <div class="pane-header"><div><h3>Daily PMs Due · ${needed.due_count||0}</h3>
       <p>PM Due Date: ${esc(dates||'selected shift date')} · Still needing completion: <strong>${needed.count||0}</strong> · Completed: ${needed.completed_count||0}</p>
       <p>All Primary RFR 08 PMs due on these dates, including unassigned To-Be-Done WOs. Work orders counted once.</p></div></div>
-    ${needed.auto_available?'<p class="field-help">WO Details scan: '+esc(needed.auto_filename||'Cetaris export')+'</p>':''}
-    ${needed.present?'<p class="field-help">Supplemental Today’s DAILY PMs: '+esc(needed.filename)+'</p>':''}
+    ${needed.auto_available?'<p class="field-help">Single Cetaris WO Details source: '+esc(needed.auto_filename||'Cetaris export')+'</p>':''}
     ${notes}
     <div class="item-list">${due||'<p class="field-help">'+missing+'</p>'}</div>
+    <div class="pane-header"><div><h3>Past Due PMs · ${overdue.length}</h3>
+      <p>Previously due, not completed or closed. Carried over until Cetaris provides updated completion evidence.</p></div></div>
+    <div class="item-list">${overdueTable}</div>
   </div>`;
 }
 function breakdownTab(){
@@ -647,11 +656,13 @@ function buildEmailHtml(){
     ?`<p style="color:#c00;margin:2px 0;font-size:14px;font-family:Calibri,Arial,sans-serif;"><strong>Missing key${state.missingKeys.length>1?'s':''}:</strong> ${esc(state.missingKeys.join(', '))}</p>`:'';
   // Match server-rendered daily due-PM data, not an old placeholder.
   // The canonical .eml is saved server-side from this same persisted inventory.
-  const pmDue=state.pmNeeds||{rows:[],count:0,due_count:0,completed_count:0};
+  const pmDue=state.pmNeeds||{rows:[],past_due_rows:[],count:0,due_count:0,completed_count:0};
   const pmRows=(pmDue.rows||[]).map(p=>`<tr><td>${esc(p.wo_number)}</td><td>${esc(p.asset_num||'')}</td><td>${esc(p.pm_due_date||'')}</td><td>${esc(p.wo_status||'')}${p.state==='completed'?'':' — NEEDS COMPLETION'}</td></tr>`).join('');
   const pmHtml=`<p style="margin:16px 0 2px;"><strong style="font-size:16px;">PMs Needing Completion</strong></p>
     <p>PMs due: ${pmDue.due_count||0} · Still needing completion: ${pmDue.count||0} · Completed: ${pmDue.completed_count||0}</p>
-    ${pmRows?'<table style="border-collapse:collapse;" border="1"><thead><tr><th>WO #</th><th>Asset</th><th>PM Due Date</th><th>WO Status</th></tr></thead><tbody>'+pmRows+'</tbody></table>':'<p>Due-PM list not confirmed; verify the To-Be-Done export.</p>'}`;
+    ${pmRows?'<table style="border-collapse:collapse;" border="1"><thead><tr><th>WO #</th><th>Asset</th><th>PM Due Date</th><th>WO Status</th></tr></thead><tbody>'+pmRows+'</tbody></table>':'<p>Due-PM list not confirmed; verify the WO Details export.</p>'}
+    <p><strong>Past Due PMs: ${pmDue.past_due_count||0}</strong></p>
+    ${(pmDue.past_due_rows||[]).map(p=>`<p>${esc(p.wo_number)} · ${esc(p.asset_num)} · Due ${esc(p.pm_due_date)} · ${esc(p.wo_status)}</p>`).join('')}`;
   return '<html><body style="font-family:Calibri,Arial,sans-serif;font-size:14px;color:#111;max-width:700px;line-height:1.6;">'+
     `<p style="margin:0 0 18px;font-size:18px;"><strong>${esc(shift)} End of Shift Passdown</strong></p>`+
     sec('Vendors',bulletList(state.vendors.map(v=>esc(v))))+
