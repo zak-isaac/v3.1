@@ -14,6 +14,9 @@ WO_STATUSES = {
     "W": "Manager Review Required",
     "O": "Outside Service",
     "P": "Parts Pending",
+    "T": "To be Done",
+    "U": "Unclosed",
+    "V": "Void",
 }
 # The screenshot truncates the full W and O descriptions, but shows their
 # codes.  The prefixes and aliases below support exports using either form.
@@ -24,6 +27,8 @@ STATUS_ALIASES = {
     "manager": "W", "outside service": "O",
     "outside services": "O", "outside s": "O",
     "parts pending": "P", "parts pend": "P",
+    "to be done": "T", "to-be-done": "T", "unclosed": "U",
+    "void": "V",
 }
 RFR_CATEGORIES = {
     "01": "Breakdown",
@@ -49,7 +54,8 @@ RFR_ALIASES = {
     "work request": "22",
 }
 ACTIVE_WO_STATUSES = frozenset(("in process", "manager review required",
-                                "outside service", "parts pending"))
+                                "outside service", "parts pending",
+                                "to be done", "unclosed", "void"))
 COMPLETED_WO_STATUSES = frozenset(("closed", "completed"))
 
 
@@ -83,7 +89,7 @@ def _normalize(raw, mapping, aliases, code_pattern):
 
 
 def normalize_wo_status(raw):
-    return _normalize(raw, WO_STATUSES, STATUS_ALIASES, r"(?<![A-Za-z])(?:[CDIWOP])(?![A-Za-z])")
+    return _normalize(raw, WO_STATUSES, STATUS_ALIASES, r"(?<![A-Za-z])(?:[CDIWOPTUV])(?![A-Za-z])")
 
 
 def normalize_primary_rfr(raw):
