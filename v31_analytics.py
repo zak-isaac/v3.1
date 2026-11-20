@@ -127,10 +127,11 @@ def summarize(conn,owner=None,period="30d",today=None):
             totals["completed_pms"]+=1
             shiftdata[parent["code"]]["completed_pms"]+=1
             daydata[parent["shift_day"]]["completed_pms"]+=1
-        for row in conn.execute(
-            f"SELECT shift_id,entries_json FROM pm_needing_completion WHERE shift_id IN ({parameters})",ids):
-            try:totals["pm_needing_completion"]+=len(json.loads(row["entries_json"]))
-            except (ValueError,TypeError):pass
+        # PM urgency comes from each shift's single WO Details file.
+        # No separate upload or cross-shift PM carryover is consulted.
+        for shift_id in ids:
+            due=v31_pm.get(conn,shift_id)
+            totals["pm_needing_completion"]+=due["outstanding_total"]
         for row in conn.execute(
             f"SELECT shift_id,pending_json FROM report_audit WHERE shift_id IN ({parameters})",ids):
             try:totals["pending_import_reviews"]+=len(json.loads(row["pending_json"]))
@@ -175,5 +176,5 @@ def summarize(conn,owner=None,period="30d",today=None):
                      "Repeat breakdowns mean two or more distinct breakdown WOs for one asset, not two sightings of one WO.",
                      "Breakdown descriptions are technician text, not independently verified root causes.",
                      "RTS/OOS totals are recorded report statuses, not current equipment availability.",
-                     "PMs Needing Completion comes only from separate uploaded PM reports.",
+                     "PM urgency is calculated exclusively from the WO Details file staged for each shift, using PM Due Date.",
                      "No calculated downtime or MTTR without timestamped outage intervals."]}
