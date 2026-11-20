@@ -74,7 +74,7 @@ def test_wo_details_to_be_done_pm_auto_flags_on_real_pm_tab(live_server):
             panel=page.locator("#tab-content").inner_text()
             assert "PMAUTO-D" in panel
             assert "NOT-A-PM" not in panel
-            assert "NEEDS COMPLETION" in panel
+            assert "DUE TODAY — 11:59 PM" in panel
             assert "Completed" in panel
             assert "Daily PMs Due · 2" in panel
             assert "Still needing completion: 1" in panel
