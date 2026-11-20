@@ -1,9 +1,10 @@
 """Small facility-wide Awaiting Parts list from daily Cetaris WO Details.
 
-Every WO Status P (Parts Pending) qualifies irrespective of Primary RFR,
-shift attribution, technician, or physical OOS. Unlike PM urgency, unresolved
-parts-pending observations persist when a later daily file omits a WO; only
-a newer explicit non-P status clears it. No historical PM data is consulted.
+Any WO observed as status P (Parts Pending) qualifies regardless of Primary
+RFR, technician, shift or physical OOS. Once known, it stays in the outstanding
+parts-repair list through other unfinished statuses (including In Process)
+until a newer explicit Completed, Closed or Void status clears it.
+An omitted WO is never silently resolved. This is NOT the PM urgency backlog.
 """
 from __future__ import annotations
 from datetime import datetime
@@ -22,15 +23,24 @@ def ensure(conn):
         asset TEXT NOT NULL,
         is_pending INTEGER NOT NULL,
         cetaris_status TEXT NOT NULL,
-        observed_at TEXT NOT NULL)""")
+        observed_at TEXT NOT NULL,
+        source_updated_at TEXT NOT NULL DEFAULT '')""")
+    columns={row['name'] for row in conn.execute(
+        "PRAGMA table_info(awaiting_parts_state)")}
+    if "source_updated_at" not in columns:
+        # Existing production data is preserved. This column lets an older
+        # daily export avoid overwriting a more recently verified WO status.
+        conn.execute("""ALTER TABLE awaiting_parts_state
+             ADD COLUMN source_updated_at TEXT NOT NULL DEFAULT ''""")
 
 
 def observe_wo_details(conn, content):
     """Consume one newly staged DAILY WO Details export, including no-tech WOs.
 
-    Repeated WO labor rows are collapsed to their latest status by the
-    export's Update Date/Time. When there is no timestamp, an explicit
-    non-P status wins a tie to avoid a false outstanding parts flag.
+    Repeated WO labor rows collapse to their newest status by Cetaris's
+    Update Date/Time; later explicit C/D/V resolves a previously pending WO.
+    Other unfinished statuses retain the tracked WO so an unresolved repair
+    never disappears simply because its workflow advanced to In Process.
     """
     ensure(conn)
     newest = {}
@@ -48,7 +58,9 @@ def observe_wo_details(conn, content):
             if not row:
                 continue
             wo = _cell(get(row, "wo number"))
-            asset = _cell(get(row, "asset id")) or _cell(get(row, "asset #"))
+            # Actual WO equipment is Asset #. Asset ID can be a different
+            # alias (e.g. SCRUB0011 vs SCRUB0002 on WO# 28055231).
+            asset = _cell(get(row, "asset #")) or _cell(get(row, "asset id"))
             if not wo or asset.casefold().startswith("pkm"):
                 continue
             status = normalize_wo_status(_cell(get(row, "wo status")))[1]
@@ -70,21 +82,39 @@ def observe_wo_details(conn, content):
     pending = 0
     for record in newest.values():
         wo, asset, status = (record["wo_number"], record["asset"], record["status"])
-        old = conn.execute("""SELECT asset,is_pending FROM awaiting_parts_state
+        old = conn.execute("""SELECT asset,is_pending,cetaris_status,
+                                 source_updated_at FROM awaiting_parts_state
                               WHERE wo_number=?""", (wo,)).fetchone()
         if status == "P" and not asset and not old:
             continue
         if status != "P" and not old:
+            # The Awaiting Parts list is populated only by evidence of P;
+            # generic active repairs belong in the existing WO workflows.
             continue
-        pending += int(status == "P")
+        previous_update = old["source_updated_at"] if old else ""
+        if old and updated and previous_update and updated < previous_update:
+            # Do not regress from Closed/Completed to an older historic P.
+            continue
+        if (old and updated and previous_update and
+                updated == previous_update and
+                old["cetaris_status"] in ("C", "D", "V") and
+                status not in ("C", "D", "V")):
+            continue
+        still_open = status not in ("C", "D", "V")
+        pending_now = bool(still_open and
+                           (status == "P" or (old and old["is_pending"])))
+        pending += int(pending_now)
         conn.execute("""INSERT INTO awaiting_parts_state(
-            wo_number,asset,is_pending,cetaris_status,observed_at)
-            VALUES(?,?,?,?,?)
+            wo_number,asset,is_pending,cetaris_status,observed_at,
+            source_updated_at)
+            VALUES(?,?,?,?,?,?)
             ON CONFLICT(wo_number) DO UPDATE SET
               asset=excluded.asset,is_pending=excluded.is_pending,
               cetaris_status=excluded.cetaris_status,
-              observed_at=excluded.observed_at""",
-            (wo, asset or old["asset"], int(status == "P"), status, now))
+              observed_at=excluded.observed_at,
+              source_updated_at=excluded.source_updated_at""",
+            (wo, asset or old["asset"], int(pending_now), status, now,
+             updated or previous_update))
     return {"observed": len(newest), "parts_pending": pending}
 
 

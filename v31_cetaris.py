@@ -52,9 +52,10 @@ def _hours(value: Any) -> float:
         return 0.0
 
 
-def _is_pkm_asset(asset_id: Any) -> bool:
-    # The Asset ID column, not the RFR or PM Code, controls this exclusion.
-    return _text(asset_id).casefold().startswith('pkm')
+def _is_pkm_asset(asset_number: Any) -> bool:
+    # Prefer the actual Asset #, falling back to Asset ID only when blank.
+    # The PKM exclusion applies to the same canonical equipment identifier.
+    return _text(asset_number).casefold().startswith('pkm')
 
 
 @lru_cache(maxsize=16384)
@@ -153,9 +154,11 @@ def parse_excel(data: bytes, stats: dict | None = None) -> list[dict]:
             if not wo:
                 skipped_no_wo += 1
                 continue
-            # One-file rule: exclude PKM-prefixed Asset IDs from every
-            # downstream category, including Breakdown and Shift Happenings.
-            if _is_pkm_asset(get(row,'Asset ID')):
+            # Asset # is the equipment identifier Cetaris uses for this WO.
+            # Asset ID can be a conflicting alias (e.g. 28055231); use it
+            # only when the Asset # cell is blank.
+            asset_id = _text(get(row, "Asset #")) or _text(get(row, "Asset ID"))
+            if _is_pkm_asset(asset_id):
                 skipped_pkm_assets += 1
                 continue
             if not tech:
@@ -167,10 +170,6 @@ def parse_excel(data: bytes, stats: dict | None = None) -> list[dict]:
             completed = _parse_dt(get(row, "WO Last Complete Date / Time"))
             closed = _parse_dt(get(row, "WO Closed Date/Time"))
             in_service = _parse_dt(get(row, "In Service Date / Time"))
-            # Real exports leave 'Asset ID' blank for most rows -- 'Asset #'
-            # is the common case, not the fallback -- but prefer Asset ID
-            # when a given export does populate it.
-            asset_id = _text(get(row, "Asset ID")) or _text(get(row, "Asset #"))
             reg_hours=_hours(get(row,'Reg Hrs'))
             ot_hours=_hours(get(row,'OT Hrs'))
             status_raw = _text(get(row, "WO Status"))
