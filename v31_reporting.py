@@ -354,7 +354,11 @@ def technician_suggestions(source_techs, roster_rows, shift_code):
                 reason='Drax record found but could not be confirmed automatically.'
         result.append({'name':name,'count':tech['count'],
                        'group':group,'drax_shift':assigned,
-                       'preselected':group=='assigned' or (group=='other_shift' and is_mst),
+                       # Isaac, 2026-11-20: MSTs floating onto another shift
+                       # now require the same manual check as everyone else.
+                       # Visibility in the Additional/Overtime bucket is kept;
+                       # only the auto-preselect privilege is removed.
+                       'preselected':group=='assigned',
                        'is_mst':is_mst,
                        'match_reason':reason})
     return result
