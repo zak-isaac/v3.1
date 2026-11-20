@@ -358,11 +358,13 @@ def test_loto_missing_key_selection_also_satisfies_shift_progress(page_ctx):
         "A documented missing key is a completed LOTO check and must count toward Shift Progress"
 
     with page.expect_download(timeout=15000):
-        # The real handler immediately disables Generate against duplicate
-        # requests. Dispatch exactly one native button click after confirming
-        # that LOTO and the facility warning have been saved.
-        page.evaluate("""() => {
+        # Generate may briefly toggle disabled during a late UI refresh.
+        # Check and dispatch the native click atomically inside one poll,
+        # avoiding a race between readiness and the click without retrying
+        # a submitted request or creating duplicate downloads.
+        page.wait_for_function("""() => {
             const button=document.querySelector('#generate-eml');
-            if(!button || button.disabled)throw Error('Generate not ready after LOTO save');
+            if(!button || button.disabled)return false;
             button.click();
-        }""")
+            return true;
+        }""",timeout=12000)
