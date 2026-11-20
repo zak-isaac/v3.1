@@ -20,10 +20,10 @@ PENDING_CODES=frozenset(("T","I","P","W","O","U"))
 DONE_CODES=frozenset(("D","C"))
 
 def due_dates_for_shift(code, shift_day):
+    # A PM is due on its civil calendar date, through 11:59 PM.
+    # S3/S5 do NOT make two dates simultaneously "due today".
     day=date.fromisoformat(shift_day) if isinstance(shift_day,str) else shift_day
-    # Overnight S3/S5 spans both civil dates. Display each actual PM due date.
-    days=(day,day+timedelta(days=1)) if code in ("S3","S5") else (day,)
-    return frozenset(days)
+    return frozenset((day,))
 
 def due_date(value):
     if isinstance(value,(int,float)) and 20000<=value<=90000:
@@ -164,8 +164,11 @@ def scan(content,code,shift_day):
                     ((new_time==prior_time or (not prior_time and not new_time)) and
                      previous["state"]!="completed" and state=="completed")):
                     keyed[wo]=item
+        # Entire current file, including older due dates. No records from
+        # prior uploads or prior shifts are consulted for this list.
         result["catalog_rows"]=sorted(
-            (dict(item) for item in keyed.values()),
+            ({k:v for k,v in item.items() if not k.startswith("_")}
+             for item in keyed.values()),
             key=lambda x:(x["due_iso"],x["wo_number"]))
         result["rows"]=sorted(
             ({k:v for k,v in item.items() if not k.startswith("_")}
