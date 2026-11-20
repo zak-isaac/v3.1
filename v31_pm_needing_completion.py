@@ -177,62 +177,75 @@ def delete(conn,shift_id):
     return removed.rowcount>0
 
 def report_section(conn,shift_id):
+    """Outlook-compatible, urgency-colored PM status from this export only."""
     pm=get(conn,shift_id)
-    dates=", ".join(pm["target_dates"])
-    headline='<p style="margin:16px 0 2px"><strong style="font-size:16px">PMs Needing Completion</strong></p>'
+    headline='<p style="margin:16px 0 3px"><strong style="font-size:16px">PMs Needing Completion</strong></p>'
     if not pm["has_source"]:
-        return headline+'<p style="margin:0 0 6px;font-size:14px;color:#6b7280;font-style:italic;">No single Cetaris WO Details export available. Daily and past-due PM counts are unverified.</p>'
-    if not pm["parsed"] and not pm["past_due_rows"]:
-        return headline+'<p style="margin:0 0 6px;font-size:14px;color:#6b7280;font-style:italic;">WO Details not staged for this shift. Tracked past-due PMs may have last-known statuses.</p>'
-    summary=(f'<p style="font-size:14px;">PM due {escape(dates)}: '
-             f'<strong>{pm["due_count"]} identified</strong> · '
-             f'<strong>{pm["count"]} still needing completion</strong> · '
-             f'{pm["completed_count"]} completed</p>')
-    caveat=(''.join(f'<p style="font-size:12px;color:#9a6700;">{escape(n)}</p>'
-                    for n in pm["notes"]))
-    if not pm["rows"] and not pm["past_due_rows"]:
-        return headline+summary+caveat+'<p style="font-style:italic;">No due or past-due PMs identified in recorded WO Details. Ensure the export includes all To-Be-Done PMs.</p>'
-    border="border:1px solid #d1d5db;"
-    th_s=f"padding:8px 12px;text-align:left;font-size:14px;font-weight:bold;background:#{pm_style.PM_HEADER_HEX};color:#fff;font-family:Calibri,Arial,sans-serif;{border}"
-    td_s=f"padding:7px 12px;font-size:14px;font-family:Calibri,Arial,sans-serif;{border}"
-    hdr=(f"<tr><th style='{th_s}'>WO #</th><th style='{th_s}'>Asset</th>"
-         f"<th style='{th_s}'>PM Due Date</th><th style='{th_s}'>WO Status</th>"
-         f"<th style='{th_s}'>Promise Date / Time</th>"
-         f"<th style='{th_s}'>WO Date / Time</th></tr>")
-    body_rows=""
-    for i,row in enumerate(pm["rows"]):
-        row_bg=f"#{pm_style.pm_zebra_hex(i)}"
-        bold="font-weight:bold;" if row["state"]!="completed" else ""
-        status=(row["wo_status"] or "Status not provided")
-        if row["state"]!="completed":
-            status+=" — NEEDS COMPLETION"
-        body_rows+=(f"<tr style='background:{row_bg};'>"
-                    f"<td style='{td_s}font-family:monospace;'>{escape(row['wo_number'])}</td>"
-                    f"<td style='{td_s}{bold}'>{escape(row['asset_num'] or '')}</td>"
-                    f"<td style='{td_s}{bold}'>{escape(row['pm_due_date'] or '')}</td>"
-                    f"<td style='{td_s}{bold}'>{escape(status)}</td>"
-                    f"<td style='{td_s}'>{escape(row['promise_date'] or '')}</td>"
-                    f"<td style='{td_s}color:#666;'>{escape(row['wo_date'] or '')}</td></tr>")
-    table=(f"<table style='width:100%;border-collapse:collapse;margin-top:4px;'>"
-           f"<thead>{hdr}</thead><tbody>{body_rows}</tbody></table>")
-    overdue=pm["past_due_rows"]
-    past_title=(f'<p style="margin:16px 0 3px;"><strong style="font-size:16px;">'
-                f'Past Due PMs — {pm["past_due_count"]}</strong></p>')
-    if overdue:
-        past_rows="".join(
-            f'<tr style="background:#{pm_style.pm_zebra_hex(index)};">'
-            f'<td style="{td_s}">{escape(i["wo_number"])}</td>'
-            f'<td style="{td_s}">{escape(i["asset_num"])}</td>'
-            f'<td style="{td_s}">{escape(i["pm_due_date"])}</td>'
-            f'<td style="{td_s}">{escape(i["wo_status"])}</td>'
-            f'<td style="{td_s}font-weight:bold;color:#92252e;">PAST DUE</td></tr>'
-            for index,i in enumerate(overdue)
+        return headline+(
+            '<p style="color:#9A3412;font-size:14px;">WO Details not available; '
+            'PM urgency has not been verified.</p>'
         )
-        past_header=(f'<tr><th style="{th_s}">WO #</th><th style="{th_s}">Asset</th>'
-                     f'<th style="{th_s}">PM Due Date</th><th style="{th_s}">WO Status</th>'
-                     f'<th style="{th_s}">Flag</th></tr>')
-        past_title+=(f'<table style="width:100%;border-collapse:collapse;">'
-                     f'<thead>{past_header}</thead><tbody>{past_rows}</tbody></table>')
-    else:
-        past_title+='<p style="font-size:13px;">No past-due PMs in imported history.</p>'
-    return headline+summary+caveat+(table if pm["rows"] else '')+past_title
+    summary=(
+        f'<p style="font-size:14px;">PM status as of {escape(pm["as_of_date"])}: '
+        f'<strong>{pm["due_count"]} due today</strong> · '
+        f'<strong>{pm["count"]} outstanding today</strong> · '
+        f'{pm["completed_count"]} completed · '
+        f'<strong style="color:#991B1B;">{pm["past_due_count"]} past due</strong></p>'
+    )
+    notes="".join(
+        f'<p style="font-size:12px;color:#92400E;">{escape(note)}</p>'
+        for note in pm["notes"]
+    )
+    border="border:1px solid #D1D5DB;"
+    th=(f"padding:8px 10px;text-align:left;font-size:14px;font-weight:bold;"
+        f"background-color:#{pm_style.PM_HEADER_HEX};color:#FFFFFF;"
+        f"font-family:Calibri,Arial,sans-serif;{border}")
+    heading=(f"<tr><th style='{th}'>WO #</th>"
+             f"<th style='{th}'>Asset</th>"
+             f"<th style='{th}'>PM Due Date</th>"
+             f"<th style='{th}'>WO Status</th>"
+             f"<th style='{th}'>Urgency</th>"
+             f"<th style='{th}'>Promise Date / Time</th></tr>")
+
+    def render_table(rows,urgency):
+        body=[]
+        for row in rows:
+            # Outlook's Word HTML engine may ignore background on <tr>.
+            # Put urgency background on EVERY <td>.
+            if row.get("state")=="completed":
+                bg,ink,label="#F3F4F6","#374151","Completed"
+            elif urgency=="past":
+                bg,ink,label="#FDE8E8","#991B1B","PAST DUE"
+            else:
+                bg,ink,label="#FFF2C7","#805500","DUE TODAY — 11:59 PM"
+            cell=(f"padding:8px 10px;font-size:14px;font-family:Calibri,Arial,"
+                  f"sans-serif;background-color:{bg};color:{ink};{border}")
+            bold=cell+"font-weight:bold;"
+            body.append(
+                "<tr>"
+                f"<td style='{bold}'>{escape(row['wo_number'])}</td>"
+                f"<td style='{cell}'>{escape(row.get('asset_num') or '')}</td>"
+                f"<td style='{bold}'>{escape(row.get('pm_due_date') or '')}</td>"
+                f"<td style='{cell}'>{escape(row.get('wo_status') or '')}</td>"
+                f"<td style='{bold}'>{escape(label)}</td>"
+                f"<td style='{cell}'>{escape(row.get('promise_date') or '')}</td>"
+                "</tr>"
+            )
+        return (f"<table style='width:100%;border-collapse:collapse;margin-top:4px;'>"
+                f"<thead>{heading}</thead><tbody>{''.join(body)}</tbody></table>")
+
+    due_title=(
+        '<p style="margin:12px 0 3px;"><strong style="font-size:15px;'
+        'color:#805500;">Due Today — until 11:59 PM</strong></p>'
+    )
+    due=render_table(pm["rows"],"today") if pm["rows"] else (
+        '<p style="font-size:13px;">No PMs due today in this WO Details export.</p>'
+    )
+    past_title=(
+        '<p style="margin:16px 0 3px;"><strong style="font-size:15px;'
+        'color:#991B1B;">Past Due PMs</strong></p>'
+    )
+    overdue=render_table(pm["past_due_rows"],"past") if pm["past_due_rows"] else (
+        '<p style="font-size:13px;">No unfinished past-due PMs in this WO Details export.</p>'
+    )
+    return headline+summary+notes+due_title+due+past_title+overdue
