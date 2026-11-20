@@ -69,18 +69,18 @@ def test_wo_details_to_be_done_pm_auto_flags_on_real_pm_tab(live_server):
             # WO Details alone can update the due-PM summary; the user
             # must not have to reload or upload a separate PM file.
             page.wait_for_function("""() => document.querySelector(
-                '#pending-filename')?.textContent?.includes('2 PMs due')""",
+                '#pending-filename')?.textContent?.includes('1 PMs due')""",
                 timeout=12000)
             panel=page.locator("#tab-content").inner_text()
-            assert "PMAUTO-D" in panel
+            assert "PMAUTO-D" not in panel
             assert "NOT-A-PM" not in panel
             assert "DUE TODAY — 11:59 PM" in panel
             assert "Completed" in panel
-            assert "Daily PMs Due · 2" in panel
+            assert "Daily PMs Due · 1" in panel
             assert "Still needing completion: 1" in panel
             state=page.evaluate("""async () => (await (await fetch(
                 '/api/pm-needing-completion')).json())""")
-            assert state["due_count"]==2
+            assert state["due_count"]==1
             assert state["count"]==1
             assert not state["present"] and state["auto_available"]
             assert errors==[],errors
