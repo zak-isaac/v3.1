@@ -81,11 +81,11 @@ def test_unassigned_to_be_done_and_other_due_pms_are_found_in_wo_details(
     assert "NOT-PM" not in html
 
 
-def test_one_file_tracks_past_due_and_reconciles_completion_across_days(
+def test_past_due_comes_only_from_current_file_not_prior_uploads(
     client,monkeypatch
 ):
     clock(monkeypatch,day=26,hour=10)
-    day1=enter(client,"S1")
+    original_shift=enter(client,"S1")
     assert stage_details(client,[
         to_be_done("PM-PAST",due="10/25/2026"),
         to_be_done("PM-TODAY",due="10/26/2026"),
@@ -94,34 +94,67 @@ def test_one_file_tracks_past_due_and_reconciles_completion_across_days(
     ]).status_code==200
     first=client.get("/api/pm-needing-completion").json()
     assert first["due_count"]==1 and first["count"]==1
+    assert first["past_due_count"]==1
     assert [x["wo_number"] for x in first["past_due_rows"]]==["PM-PAST"]
-    assert not first["present"]  # no second PM upload
+    assert first["rows"][0]["urgency"]=="yellow"
+    assert first["past_due_rows"][0]["urgency"]=="red"
 
     clock(monkeypatch,day=27,hour=10)
-    shifted=client.post("/api/shifts/start",json={"code":"S1"})
-    assert shifted.status_code==200,shifted.text
-    # The new daily WO Details export omits both older outstanding WOs.
+    switched=client.post("/api/shifts/start",json={"code":"S1"})
+    assert switched.status_code==200,switched.text
+    # Upload only today's work: older missing WOs must NOT be carried over.
     assert stage_details(client,[to_be_done("PM-TOMORROW",
                          due="10/27/2026")]).status_code==200
-    carried=client.get("/api/pm-needing-completion").json()
-    assert carried["due_count"]==1
-    assert {x["wo_number"] for x in carried["past_due_rows"]}=={
-        "PM-PAST","PM-TODAY"}
-    assert carried["past_due_count"]==2
+    new_report=client.get("/api/pm-needing-completion").json()
+    assert new_report["due_count"]==1
+    assert new_report["past_due_count"]==0
+    assert not new_report["past_due_rows"]
 
-    # Cetaris later reports one of those old WOs as Completed. It must
-    # leave Past Due without deleting the other unresolved PM.
+    # The same CURRENT file can show older unfinished WOs as past due.
+    assert stage_details(client,[
+        to_be_done("PM-PAST",due="10/25/2026"),
+        to_be_done("PM-TODAY",due="10/26/2026"),
+        to_be_done("PM-TOMORROW",due="10/27/2026"),
+    ]).status_code==200
+    new_report=client.get("/api/pm-needing-completion").json()
+    assert {x["wo_number"] for x in new_report["past_due_rows"]}=={
+        "PM-PAST","PM-TODAY"}
+    assert new_report["past_due_count"]==2
+
+    # Later Cetaris status in a new upload, not history, clears urgency.
     assert stage_details(client,[
         to_be_done("PM-PAST",due="10/25/2026",status="Completed"),
         to_be_done("PM-TOMORROW",due="10/27/2026"),
     ]).status_code==200
-    updated=client.get("/api/pm-needing-completion").json()
-    assert [x["wo_number"] for x in updated["past_due_rows"]]==["PM-TODAY"]
+    final=client.get("/api/pm-needing-completion").json()
+    assert final["past_due_count"]==0
+    assert final["count"]==1
     with __import__("app")._db() as conn:
         import v31_pm_needing_completion
-        historical=v31_pm_needing_completion.get(conn,day1)
-        assert historical["past_due_count"]==1
-        assert historical["past_due_rows"][0]["wo_number"]=="PM-PAST"
+        before=v31_pm_needing_completion.get(conn,original_shift)
+        assert before["past_due_count"]==1
+        assert before["past_due_rows"][0]["wo_number"]=="PM-PAST"
+
+
+def test_outlook_email_uses_yellow_today_and_red_past_due(
+    client,monkeypatch
+):
+    clock(monkeypatch,day=26,hour=10)
+    enter(client,"S1")
+    assert stage_details(client,[
+        to_be_done("YELLOW-01",due="10/26/2026"),
+        to_be_done("RED-01",due="10/25/2026"),
+        to_be_done("GREY-DONE",due="10/26/2026",status="Closed"),
+        to_be_done("OLD-DONE",due="10/24/2026",status="Completed"),
+        to_be_done("FUTURE",due="10/27/2026")
+    ]).status_code==200
+    html=client.get("/api/shifts/report/preview").json()["html"]
+    assert "YELLOW-01" in html and "RED-01" in html
+    assert "#FFF2C7" in html and "#FDE8E8" in html
+    assert "DUE TODAY — 11:59 PM" in html and "PAST DUE" in html
+    assert "GREY-DONE" in html
+    assert "OLD-DONE" not in html and "FUTURE" not in html
+
 
 
 def test_missing_date_is_flagged_not_assumed_due_today(client,monkeypatch):
@@ -135,20 +168,21 @@ def test_missing_date_is_flagged_not_assumed_due_today(client,monkeypatch):
                for note in due["notes"])
 
 
-def test_overnight_s3_includes_both_actual_due_dates_not_other_dates(
+def test_overnight_s3_switches_yellow_to_red_after_midnight(
     client,monkeypatch
 ):
     clock(monkeypatch,day=27,hour=2)
     enter(client,"S3")
-    pm_rows=[to_be_done("S3-EVENING",due="10/26/2026"),
-             to_be_done("S3-MORNING",due="10/27/2026"),
-             to_be_done("S3-AFTER",due="10/28/2026")]
+    pm_rows=[to_be_done("S3-YESTERDAY",due="10/26/2026"),
+             to_be_done("S3-TODAY",due="10/27/2026"),
+             to_be_done("S3-TOMORROW",due="10/28/2026")]
     staged=stage_details(client,pm_rows)
     assert staged.status_code==200,staged.text
     due=client.get("/api/pm-needing-completion").json()
-    assert due["target_dates"]==["2026-10-26","2026-10-27"]
-    assert {r["wo_number"] for r in due["rows"]}=={"S3-EVENING","S3-MORNING"}
-    assert due["count"]==2
+    assert due["target_dates"]==["2026-10-27"]
+    assert [r["wo_number"] for r in due["rows"]]==["S3-TODAY"]
+    assert [r["wo_number"] for r in due["past_due_rows"]]==["S3-YESTERDAY"]
+    assert due["count"]==1 and due["past_due_count"]==1
 
 
 def test_only_due_pms_no_tech_does_not_fabricate_shift_work(client,monkeypatch):
@@ -163,24 +197,20 @@ def test_only_due_pms_no_tech_does_not_fabricate_shift_work(client,monkeypatch):
     assert client.get("/api/assets/status").json()["rts"]==[]
 
 
-def test_ind3_style_s5_pm_due_datetime_fields_include_both_calendar_days():
-    """Match actual IND3 WO Details date formats without using facility data."""
+def test_ind3_style_s5_daily_date_and_time_are_calendar_based():
     from v31_pm_due_scanner import scan
     source=details([
-        to_be_done("S5-PM-EVENING",due="10/25/2026 8:24 PM",status="Closed"),
-        to_be_done("S5-PM-MORNING",due="10/26/2026 4:30 AM",status="In process"),
-        to_be_done("S5-PM-AFTER",due="10/27/2026 12:00 AM",status="To be Done"),
-        to_be_done("S5-OTHER-RFR",due="10/26/2026 3:01 AM",rfr="04"),
+        to_be_done("S5-DUE",due="10/25/2026 8:24 PM",status="In Process"),
+        to_be_done("S5-FUTURE",due="10/26/2026 4:30 AM",status="To be Done"),
+        to_be_done("S5-AFTER",due="10/27/2026 12:00 AM",status="To be Done"),
+        to_be_done("S5-OTHER-RFR",due="10/25/2026 3:01 AM",rfr="04"),
     ])
     inventory=scan(source,"S5","2026-10-25")
     assert inventory["available"] is True
-    assert inventory["target_dates"]==["2026-10-25","2026-10-26"]
-    assert {r["wo_number"] for r in inventory["rows"]}=={
-        "S5-PM-EVENING","S5-PM-MORNING"}
-    assert {r["wo_number"]:r["state"] for r in inventory["rows"]}=={
-        "S5-PM-EVENING":"completed","S5-PM-MORNING":"outstanding"}
-    assert next(r for r in inventory["rows"]
-                if r["wo_number"]=="S5-PM-MORNING")["due_iso"]=="2026-10-26"
+    assert inventory["target_dates"]==["2026-10-25"]
+    assert [r["wo_number"] for r in inventory["rows"]]==["S5-DUE"]
+    assert {r["wo_number"] for r in inventory["catalog_rows"]}=={
+        "S5-DUE","S5-FUTURE","S5-AFTER"}
 
 
 def test_ind3_style_excel_serial_due_date_is_read_safely():
