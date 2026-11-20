@@ -30,7 +30,12 @@ async function refresh(){
  view.applySnapshot(snapshot);
  // The PM due inventory can change on WO Details staging independently
  // of the technician-selection import. Keep the upload summary synced.
- window.V31PMNeeds?.apply?.(snapshot.pm_needing_completion);
+ const due=snapshot.pm_needing_completion||{};
+ const pmLabel=document.querySelector('#pending-filename');
+ if(pmLabel)pmLabel.textContent=due.has_source?
+   ((due.due_count||0)+' PMs due · '+(due.past_due_count||0)+
+   ' past due · '+(due.outstanding_total||0)+' outstanding'):
+   'PM due inventory not verified — import full WO Details';
  // Cetaris import or WO edits may change OOS, RTS and confirmed breakdown
  // evidence. Reload all three KPI sources from the same canonical snapshot.
  await window.v31AssetManager?.refresh?.();
