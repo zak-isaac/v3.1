@@ -8,7 +8,7 @@ assuming that merely importing a WO means work was performed.
 """
 from __future__ import annotations
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime,date
 from zoneinfo import ZoneInfo
 from html import escape
 import hashlib
@@ -34,17 +34,6 @@ def ensure(conn:sqlite3.Connection):
     conn.execute("""CREATE TABLE IF NOT EXISTS pm_due_wo_details(
       shift_id INTEGER PRIMARY KEY,filename TEXT NOT NULL,
       result_json TEXT NOT NULL,scanned_at TEXT NOT NULL)""")
-    # Chronological observations make the PM backlog survive daily exports
-    # without rewriting older shift history or needing a second PM file.
-    conn.execute("""CREATE TABLE IF NOT EXISTS pm_due_observations(
-      shift_id INTEGER NOT NULL,wo_number TEXT NOT NULL,
-      due_iso TEXT NOT NULL, asset_num TEXT NOT NULL DEFAULT '',
-      wo_status TEXT NOT NULL DEFAULT '', status_code TEXT NOT NULL DEFAULT '',
-      state TEXT NOT NULL DEFAULT '',source_updated_at TEXT NOT NULL DEFAULT '',
-      item_json TEXT NOT NULL,observed_at TEXT NOT NULL,
-      PRIMARY KEY(shift_id,wo_number))""")
-    conn.execute("""CREATE INDEX IF NOT EXISTS pm_due_observations_due
-      ON pm_due_observations(due_iso,shift_id)""")
 
 def _shift_info(conn,shift_id):
     if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='shifts'").fetchone():
@@ -64,118 +53,84 @@ def scan_wo_details(conn,shift_id,filename,content):
                 "target_dates":sorted(d.isoformat() for d in due_dates_for_shift(code,shift_day)),
                 "matching":0,"missing_due":0,"to_be_done_seen":0,
                 "scanned_rows":0,"notes":[str(exc)]}
-    seen=datetime.now(TZ).isoformat()
-    # The same WO can appear on multiple labor rows and across daily files.
-    # Keep the newest source timestamp, and never regress a known Completed
-    # state to a stale pending status without newer Cetaris evidence.
-    for item in result.pop("catalog_rows",[]):
-        latest=conn.execute("""SELECT source_updated_at,state FROM pm_due_observations
-            WHERE wo_number=? ORDER BY shift_id DESC LIMIT 1""",
-            (item["wo_number"],)).fetchone()
-        timestamp=item.pop("_updated","")
-        if latest:
-            old_timestamp=latest["source_updated_at"]
-            if old_timestamp and (not timestamp or timestamp<old_timestamp):
-                continue
-            if (not timestamp or timestamp==old_timestamp) and latest["state"]=="completed" and item["state"]!="completed":
-                continue
-        conn.execute("""INSERT INTO pm_due_observations(
-          shift_id,wo_number,due_iso,asset_num,wo_status,status_code,
-          state,source_updated_at,item_json,observed_at)
-          VALUES(?,?,?,?,?,?,?,?,?,?)
-          ON CONFLICT(shift_id,wo_number) DO UPDATE SET
-          due_iso=excluded.due_iso,asset_num=excluded.asset_num,
-          wo_status=excluded.wo_status,status_code=excluded.status_code,
-          state=excluded.state,source_updated_at=excluded.source_updated_at,
-          item_json=excluded.item_json,observed_at=excluded.observed_at""",
-          (shift_id,item["wo_number"],item["due_iso"],item["asset_num"],
-           item["wo_status"],item["status_code"],item["state"],timestamp,
-           json.dumps(item),seen))
+    # Save ONLY this shift's newly staged WO Details snapshot. Never
+    # write PM observations or pull overdue WOs from earlier uploads.
+    # Historical tables may exist in production; leave them untouched
+    # for compatibility, but never read them for current PM urgency.
+    scanned=datetime.now(TZ).isoformat()
     conn.execute("""INSERT INTO pm_due_wo_details
       (shift_id,filename,result_json,scanned_at) VALUES(?,?,?,?)
       ON CONFLICT(shift_id) DO UPDATE SET filename=excluded.filename,
       result_json=excluded.result_json,scanned_at=excluded.scanned_at""",
-      (shift_id,Path(filename).name[:120],json.dumps(result),seen))
+      (shift_id,Path(filename).name[:120],json.dumps(result),scanned))
     return {"available":result["available"],"due_count":len(result["rows"]),
             "target_dates":result["target_dates"],
             "to_be_done_seen":result["to_be_done_seen"],
             "notes":result["notes"]}
 
-def _completed_wo_numbers(conn,shift_id):
-    if not conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='report_pm'").fetchone():
-        return set()
-    # A later shift must not retroactively mark an earlier shift's due
-    # inventory completed. Only accept completed PMs already reported by
-    # the time the target shift opened, plus its own PM completions.
-    if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='shifts'").fetchone():
-        target=conn.execute("SELECT created_at FROM shifts WHERE id=?",(shift_id,)).fetchone()
-        if target:
-            return {r[0] for r in conn.execute(
-                """SELECT DISTINCT p.wo_number FROM report_pm p
-                   JOIN shifts s ON s.id=p.shift_id
-                   WHERE p.selection_hidden=0
-                     AND (s.created_at<=? OR p.shift_id=?)""",
-                (target["created_at"],shift_id))}
-    return {r[0] for r in conn.execute(
-        "SELECT DISTINCT wo_number FROM report_pm WHERE selection_hidden=0")}
 
 def get(conn,shift_id,include_data=False):
-    """One-file PM inventory, with an auditable persistent overdue backlog.
+    """Show only the PM statuses present in THIS shift's latest WO Details file.
 
-    Most recent observation on or before this shift wins. Later shifts may
-    resolve an old overdue WO, but may not retroactively modify yesterday's
-    due/overdue snapshot. Missing WOs are carried forward as last-known
-    outstanding, NEVER silently treated as completed.
+    RED: unfinished PM whose due date is before the report date.
+    YELLOW: unfinished PM due on the report date, through 11:59 PM.
+    Closed/Completed PMs are not overdue or urgent. Future PMs are excluded.
+    No earlier upload is consulted, and missing records are never invented.
     """
     ensure(conn)
-    code,shift_day=_shift_info(conn,shift_id)
-    dates=due_dates_for_shift(code,shift_day)
-    start=min(dates)
-    final=max(dates)
+    _code,shift_day=_shift_info(conn,shift_id)
+    reference=date.fromisoformat(shift_day)
     auto=conn.execute("SELECT * FROM pm_due_wo_details WHERE shift_id=?",
                       (shift_id,)).fetchone()
     raw=json.loads(auto["result_json"]) if auto else {}
     available=bool(raw.get("available"))
     notes=list(raw.get("notes",[]))
-    matches={}
-    for obs in conn.execute("""SELECT * FROM pm_due_observations
-              WHERE shift_id<=? AND due_iso<=?
-              ORDER BY shift_id DESC""",(shift_id,final.isoformat())):
-        if obs["wo_number"] in matches:
+    by_wo={}
+    # catalog_rows contains all PM due dates in this ONE file; old stored
+    # snapshots without catalog_rows can still display their known due rows.
+    for item in raw.get("catalog_rows",raw.get("rows",[])):
+        if item.get("wo_number"):
+            by_wo[item["wo_number"]]=dict(item)
+    today=[]
+    overdue=[]
+    for item in by_wo.values():
+        due=due_date(item.get("due_iso") or item.get("pm_due_date"))
+        if not due:
             continue
-        item=json.loads(obs["item_json"])
-        item["last_seen_shift_id"]=obs["shift_id"]
-        item["last_seen_at"]=obs["observed_at"]
-        item["due_bucket"]="past_due" if item["due_iso"]<start.isoformat() else "due_today"
-        matches[obs["wo_number"]]=item
-    # A verified completed PM is a separate shift-work fact, not a generic
-    # consequence of a work order merely appearing in the due inventory.
-    completed=_completed_wo_numbers(conn,shift_id)
-    for item in matches.values():
-        if item["wo_number"] in completed:
-            item["state"]="completed"
-            item["wo_status"]="Completed (verified in shift PM history)"
-    due_rows=sorted((i for i in matches.values() if i["due_bucket"]=="due_today"),
-                    key=lambda i:(i["due_iso"],i["wo_number"]))
-    overdue=sorted((i for i in matches.values()
-                    if i["due_bucket"]=="past_due" and i["state"]!="completed"),
-                   key=lambda i:(i["due_iso"],i["wo_number"]))
-    outstanding=[i for i in due_rows if i["state"]!="completed"]
+        if due>reference:
+            continue
+        item["due_bucket"]="past_due" if due<reference else "due_today"
+        item["urgency"]=(
+            "none" if item.get("state")=="completed"
+            else "red" if due<reference else "yellow"
+        )
+        if due<reference:
+            if item.get("state")!="completed":
+                overdue.append(item)
+        else:
+            today.append(item)
+    today.sort(key=lambda p:(p["due_iso"],p["wo_number"]))
+    overdue.sort(key=lambda p:(p["due_iso"],p["wo_number"]))
+    outstanding=[p for p in today if p.get("state")!="completed"]
     if not available:
-        notes.append("No complete WO Details report staged for this shift. Prior PM statuses are last-known values.")
-    if not raw.get("to_be_done_seen") and available:
-        notes.append("Single-file completeness is unverified: the export contains no To-Be-Done WOs; confirm Cetaris search filters include all unassigned PMs.")
+        notes.append(
+            "No usable WO Details export for this shift: daily and past-due PM counts are unverified."
+        )
+    elif not raw.get("to_be_done_seen"):
+        notes.append(
+            "No To-Be-Done PMs were included. Check that the WO Details export includes all pending and unassigned PMs."
+        )
     return {
       "present":False,"filename":auto["filename"] if auto else "",
-      "extension":"","parsed":available,"has_source":bool(available or matches),
+      "extension":"","parsed":available,"has_source":available,
       "auto_available":available,"auto_filename":auto["filename"] if auto else "",
       "uploaded_daily_pm":False,
-      "rows":due_rows,"outstanding_rows":outstanding,"past_due_rows":overdue,
-      "due_count":len(due_rows),"completed_count":len(due_rows)-len(outstanding),
+      "rows":today,"outstanding_rows":outstanding,"past_due_rows":overdue,
+      "due_count":len(today),"completed_count":len(today)-len(outstanding),
       "count":len(outstanding),"past_due_count":len(overdue),
       "outstanding_total":len(outstanding)+len(overdue),
       "notes":list(dict.fromkeys(notes)),
-      "target_dates":sorted(d.isoformat() for d in dates),
+      "target_dates":[reference.isoformat()],"as_of_date":reference.isoformat(),
       "uploaded_at":auto["scanned_at"] if auto else "",
       "sha256":"",
     }
