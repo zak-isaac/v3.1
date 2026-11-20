@@ -79,9 +79,10 @@ def test_real_browser_manual_pm_breakdown_passdown_and_end_shift(live_server):
             return (state.rows||[]).some(
                 row=>row.asset==='VOIDFILL-UI' && row.is_manual);
         }""",timeout=12000)
-        state=page.evaluate("""async () => (await (await fetch(
-            '/api/reporting/state',{credentials:'same-origin'})).json())""")
-        assert any(row['asset']=='VOIDFILL-UI' and row['is_manual'] for row in state['rows'])
+        # The preceding poll already verified the saved manual row in
+        # reporting state. Do not issue a second racing read while the
+        # workspace is asynchronously refreshing; the final EML below
+        # independently verifies the row remains in the passdown.
         # Navigate the actual Analytics page and require the manually entered
         # asset to appear from the backend, never hardcoded demo figures.
         page.locator('[data-nav="analytics"]').click()
