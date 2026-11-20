@@ -58,6 +58,9 @@ def test_daily_parts_status_survives_omission_but_clears_on_new_cetaris_status(
     # The next day's WO Details may omit a parts-pending repair.
     # This is independent of the no-persistence PM-urgency rule.
     clock(monkeypatch, day=27, hour=10)
+    # A new daily export belongs to a new shift session, not yesterday's
+    # expired S1 report. The facility-wide parts backlog stays available.
+    enter(client, "S1")
     assert upload(client, [details("P-OTHER", "RC0011", "P")]).status_code == 200
     listed = client.get("/api/assets/status").json()["awaiting_parts"]
     assert {x["wo_number"] for x in listed} == {"P-OLD", "P-OTHER"}
