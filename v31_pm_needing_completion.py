@@ -224,7 +224,8 @@ def report_section(conn,shift_id):
              f"<th style='{th}'>PM Due Date</th>"
              f"<th style='{th}'>WO Status</th>"
              f"<th style='{th}'>Urgency</th>"
-             f"<th style='{th}'>Promise Date / Time</th></tr>")
+             f"<th style='{th}'>Promise Date / Time</th>"
+             f"<th style='{th}'>WO Date / Time</th></tr>")
 
     def render_table(rows,urgency):
         body=[]
@@ -248,6 +249,7 @@ def report_section(conn,shift_id):
                 f"<td style='{cell}'>{escape(row.get('wo_status') or '')}</td>"
                 f"<td style='{bold}'>{escape(label)}</td>"
                 f"<td style='{cell}'>{escape(row.get('promise_date') or '')}</td>"
+                f"<td style='{cell}'>{escape(row.get('wo_date') or '')}</td>"
                 "</tr>"
             )
         return (f"<table style='width:100%;border-collapse:collapse;margin-top:4px;'>"
