@@ -114,9 +114,9 @@ def scan(content,code,shift_day):
             wo=_cell(get(row,"wo number"))
             if not wo:
                 continue
-            # Facility exception: PKM-prefixed Asset IDs are not imported
-            # into shift work, due-today PMs, or overdue PM inventory.
-            asset_id=_cell(get(row,"asset id")) or _cell(get(row,"asset #"))
+            # The equipment's Asset # is authoritative for PM listings.
+            # Asset ID may be a conflicting alias; fall back only if blank.
+            asset_id=_cell(get(row,"asset #")) or _cell(get(row,"asset id"))
             if asset_id.casefold().startswith("pkm"):
                 result["skipped_pkm_assets"]+=1
                 continue
