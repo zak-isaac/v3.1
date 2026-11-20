@@ -8,7 +8,7 @@ from v31_cetaris_codes import WO_STATUSES
 from v31_cetaris import select_records
 
 
-def test_proactive_repair_each_six_wo_statuses_is_shift_happening(
+def test_proactive_repair_each_nine_wo_statuses_is_shift_happening(
     client, monkeypatch
 ):
     clock(monkeypatch,day=26,hour=10)
@@ -32,10 +32,11 @@ def test_proactive_repair_each_six_wo_statuses_is_shift_happening(
     assert report["pm_count"]==0
     assert report["pms"]==[]
     by_wo={r["wo_number"]:r for r in report["rows"]}
-    assert len(by_wo)==6,by_wo
+    assert len(by_wo)==9,by_wo
     expected={"C":"CLOSED","D":"COMPLETED","I":"IN_PROGRESS",
               "W":"MANAGER_REVIEW","O":"OUTSIDE_SERVICE",
-              "P":"PARTS_PENDING"}
+              "P":"PARTS_PENDING","T":"TO_BE_DONE",
+              "U":"UNCLOSED","V":"VOIDED"}
     for code,status in expected.items():
         rec=by_wo[f"PRO-11-{code}"]
         assert rec["category"]=="Proactive Repair"
