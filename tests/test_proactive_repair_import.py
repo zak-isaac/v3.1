@@ -52,7 +52,7 @@ def test_proactive_repair_each_nine_wo_statuses_is_shift_happening(
     for code in expected:
         assert f"PRO-11-{code}" in html
     assert import_techs(client,["Synthetic A"]).status_code==200
-    assert len(client.get("/api/reporting/state").json()["rows"])==6
+    assert len(client.get("/api/reporting/state").json()["rows"])==9
 
 
 def test_proactive_repair_completed_or_closed_without_in_service_is_worked_only(
