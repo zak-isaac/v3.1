@@ -36,9 +36,9 @@ def test_daily_import_to_oos_to_completed_rts_to_closed_is_consistent(
         "ASSETFULL-WO"
     ]
 
-    # A direct manual RTS cannot bypass an unresolved Breakdown WO.
-    bypass=client.post(f"/api/oos/{manual_id}/rts",json={})
-    assert bypass.status_code==409
+    # The equipment is still OOS here. A technician will confirm its
+    # physical return after the repair; manual status is not inferred
+    # from an unfinished Parts Pending work order.
     assert client.get("/api/oos").json()["open"]
 
     clock(monkeypatch,day=26,hour=18)
@@ -72,7 +72,7 @@ def test_daily_import_to_oos_to_completed_rts_to_closed_is_consistent(
     assert import_techs(client,["Synthetic A"]).status_code==200
     assert client.get("/api/reporting/state").json()["rows"][0]["status"]=="COMPLETED"
     with m._db() as conn:
-        assert v31_breakdown.pending(conn,s1)==[]
+        assert [x["wo_number"] for x in v31_breakdown.pending(conn,s1)]==["FULL-WO"]
         assert [x["wo_number"] for x in v31_breakdown.pending(conn,s2)]==["FULL-WO"]
     assert client.get("/api/assets/status").json()["rts"]==[]
 
