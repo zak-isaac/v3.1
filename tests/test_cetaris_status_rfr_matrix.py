@@ -61,7 +61,7 @@ def test_all_ten_primary_rfr_categories_and_nine_wo_statuses_import(
             assert happenings[wo]["category"] == rfr
             assert status in ("Closed","Completed","In Process",
                               "Manager Review Required","Outside Service",
-                              "Parts Pending")
+                              "Parts Pending","To be Done","Unclosed","Void")
     assert happenings["CODE-11-P"]["status"] == "PARTS_PENDING"
     assert happenings["CODE-11-T"]["status"] == "TO_BE_DONE"
     assert happenings["CODE-11-U"]["status"] == "UNCLOSED"
