@@ -66,6 +66,10 @@ def test_wo_details_to_be_done_pm_auto_flags_on_real_pm_tab(live_server):
             assert staged.value.status==200,staged.value.text()
             page.locator('[data-tab="pm"]').click()
             page.get_by_text("PMAUTO-T").wait_for(timeout=12000)
+            # WO Details alone can update the due-PM summary; the user
+            # must not have to reload or upload a separate PM file.
+            page.locator("#pending-filename").get_by_text(
+                "2 PMs due",exact=False).wait_for(timeout=12000)
             panel=page.locator("#tab-content").inner_text()
             assert "PMAUTO-D" in panel
             assert "NOT-A-PM" not in panel
