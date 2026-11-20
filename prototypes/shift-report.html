@@ -446,7 +446,7 @@ function pmTab(){
     <th style="padding:10px;text-align:left">Asset</th><th style="padding:10px;text-align:left">PM Due Date</th>
     <th style="padding:10px;text-align:left">WO Status</th><th style="padding:10px;text-align:left">Due Flag</th>
     <th style="padding:10px;text-align:left">Promise Date / Time</th><th style="padding:10px;text-align:left">WO Date / Time</th></tr></thead>
-    <tbody>${needed.rows.map(r=>`<tr>
+    <tbody>${needed.rows.map((r,i)=>`<tr>
       ${cell(r.wo_number,true,'yellow')}${cell(r.asset_num,true,'yellow')}${cell(r.pm_due_date,true,'yellow')}
       ${cell(r.wo_status||'Not provided',false,'yellow')}${cell('DUE TODAY — 11:59 PM',true,'yellow')}
       ${cell(r.promise_date,false,'yellow')}${cell(r.wo_date,false,'yellow')}</tr>`).join('')}</tbody></table></div>`:'';  const overdue=needed.past_due_rows||[];
