@@ -42,15 +42,34 @@ def _shift_info(conn,shift_id):
             return row["code"],row["shift_day"]
     return "S1",datetime.now(TZ).date().isoformat()
 
+def _as_of_date(code, shift_day):
+    """Date for the running shift, including the after-midnight S3/S5 half.
+
+    The source WO Due Date is a calendar-day deadline (11:59 PM local).
+    A shift started yesterday must show yesterday's PM as RED after
+    midnight and today's PM as YELLOW, without carrying old PM records.
+    """
+    start=date.fromisoformat(shift_day)
+    if code in ("S3","S5"):
+        # Use app's shared clock so this matches live Indiana time as well
+        # as the isolated shift-time simulation.
+        import app as _app
+        now=_app.datetime.now(TZ).date()
+        if now==start+__import__("datetime").timedelta(days=1):
+            return now
+    return start
+
+
 def scan_wo_details(conn,shift_id,filename,content):
     """Called at WO Details staging, independent of technician selection."""
     ensure(conn)
     code,shift_day=_shift_info(conn,shift_id)
+    report_day=_as_of_date(code,shift_day)
     try:
-        result=scan(content,code,shift_day)
+        result=scan(content,code,report_day)
     except ValueError as exc:
         result={"rows":[],"available":False,
-                "target_dates":sorted(d.isoformat() for d in due_dates_for_shift(code,shift_day)),
+                "target_dates":[report_day.isoformat()],
                 "matching":0,"missing_due":0,"to_be_done_seen":0,
                 "scanned_rows":0,"notes":[str(exc)]}
     # Save ONLY this shift's newly staged WO Details snapshot. Never
@@ -78,8 +97,8 @@ def get(conn,shift_id,include_data=False):
     No earlier upload is consulted, and missing records are never invented.
     """
     ensure(conn)
-    _code,shift_day=_shift_info(conn,shift_id)
-    reference=date.fromisoformat(shift_day)
+    code,shift_day=_shift_info(conn,shift_id)
+    reference=_as_of_date(code,shift_day)
     auto=conn.execute("SELECT * FROM pm_due_wo_details WHERE shift_id=?",
                       (shift_id,)).fetchone()
     raw=json.loads(auto["result_json"]) if auto else {}
