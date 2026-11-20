@@ -96,18 +96,21 @@ def _resolve(conn,wo,asset,shift_id,actor,*,confirm_manual=False,actor_name=""):
     return True
 
 def sync(conn,rows,selected,accepted,shift_id):
-    """V3 parity: track same WO across imports even if later closure is on
-    a different shift; accept new WOs only if selected/attributed here.
+    """Track repairs across shifts using new labor OR newer Cetaris status.
+
+    New Breakdown WOs require accepted shift labor. For an ALREADY tracked
+    WO, a later unselected technician's dated Completed/Closed status can
+    advance its repair state without creating work for the importing shift.
+    The current shift still must explicitly confirm the physical RTS.
     """
     ensure(conn)
-    # A daily export can contain another shift's labor or newer WO status.
-    # Only current-shift completion evidence can change the global breakdown
-    # lifecycle. Activity-only rows remain visible in that shift's report,
-    # but are NOT proof that it completed or returned the asset.
-    # Use exact accepted labor-row identity from the current import.
-    # WO+tech+status is NOT unique: a monthly export can have several days
-    # with the same technician and status, only one attributable here.
     accepted_ids={id(r) for r in accepted if not r.get('_activity_only')}
+    tracked={r['wo_number'] for r in conn.execute(
+        "SELECT wo_number FROM breakdown_state")}
+    # Use the same clock as the reporting session so an S1 import cannot
+    # claim a completion from S2 which has not happened yet.
+    import app as _app
+    now=_app.datetime.now(TZ)
     grouped={}
     for raw in rows:
         if normalize_primary_rfr(raw.get('rfr'))[1]!='01':
@@ -117,24 +120,37 @@ def sync(conn,rows,selected,accepted,shift_id):
         status=normalize_wo_status(raw.get('status'))[0].casefold()
         if not wo or not asset or status not in PRIORITY:
             continue
-        if id(raw) not in accepted_ids:
-            continue
+        accepted_here=id(raw) in accepted_ids
+        if not accepted_here:
+            if wo not in tracked or status not in ('completed','closed'):
+                continue
+            timestamp=(raw.get('last_complete_at') or
+                       raw.get('closed_at') or raw.get('updated_at') or '')
+            if timestamp:
+                try:
+                    completed_at=datetime.fromisoformat(timestamp)
+                except ValueError:
+                    continue
+                if completed_at.tzinfo is None:
+                    completed_at=completed_at.replace(tzinfo=TZ)
+                if completed_at>now:
+                    continue
         old=grouped.get(wo)
         if not old or PRIORITY[status]>PRIORITY[old[0]]:
-            grouped[wo]=(status,asset)
+            grouped[wo]=(status,asset,accepted_here)
     changes=0
-    for wo,(status,asset) in grouped.items():
+    for wo,(status,asset,accepted_here) in grouped.items():
         previous=conn.execute("SELECT * FROM breakdown_state WHERE wo_number=?",(wo,)).fetchone()
         if previous and PRIORITY[status]<PRIORITY.get(previous['status'],0):
             continue
-        renewed=(previous and status=='completed' and
+        renewed=(previous and accepted_here and status=='completed' and
                  previous['status']=='completed' and previous['decision']=='keep_oos'
                  and previous['updated_shift_id']!=shift_id)
         if previous and status==previous['status'] and asset==previous['asset'] and not renewed:
             continue
-        # A later shift with NEW, genuinely attributed completion evidence
-        # can review the same unfinished repair again. A reimport by the
-        # original shift cannot silently reopen a decision.
+        # A documented later shift can complete the original WO; status-only
+        # imports do not award technician work or automatically clear OOS.
+        # Reimporting unchanged files never creates duplicate RTS events.
         decision=("" if renewed else
                   previous['decision'] if previous and status==previous['status'] else '')
         logged=previous['rts_logged'] if previous else 0
