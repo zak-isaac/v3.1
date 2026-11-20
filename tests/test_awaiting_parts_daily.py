@@ -130,8 +130,9 @@ def test_asset_number_wins_over_conflicting_asset_id_for_parts_pm_and_work(
     work=client.get("/api/reporting/state").json()["rows"]
     assert any(r["wo_number"]=="28055231" and r["asset"]=="SCRUB0011"
                for r in work)
+    refreshed=client.get("/api/assets/status").json()
     assert any(r["wo_number"]=="28055231" and r["asset"]=="SCRUB0011"
-               for r in board["active_breakdowns"])
+               for r in refreshed["active_breakdowns"])
 
 
 def test_stale_cetaris_export_cannot_restore_completed_parts_pending_wo(
