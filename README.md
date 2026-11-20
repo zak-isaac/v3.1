@@ -2,6 +2,8 @@
 
 This is a **new, independent local development application**, separate from the live Workshop V3 and `zak-isaac/ind3-shift-passdown`. Its database, roster cache, and sessions are private to this project.
 
+**Current IND3 export workflow:** Export **Today's WO Details** from Cetaris, not a monthly WO report. Upload that **one** XLSX/CSV through Import Cetaris; no second PM upload. PM urgency (yellow Today, red Past Due) is calculated solely from the uploaded WO Details with actual PM Due Date and WO Status **T — To Be Done**. S3/S5 target the next calendar day's PM handoff. The separate **Awaiting Parts** list scans all WOs with status **P — Parts Pending**, regardless of Primary RFR, technician assignment, or physical OOS, and displays only `Asset ID (WO# number)`. Outstanding Parts Pending WOs remain visible across daily exports until a newer explicit Cetaris status clears them; missing a WO from today's file is not proof parts arrived.
+
 ## Windows workstation pilot (localhost only)
 
 V3.1 has **not** been installed or validated on a real Walmart workstation. Windows CI tests are an additional safeguard, not proof of approved operational deployment.
