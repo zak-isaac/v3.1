@@ -81,34 +81,47 @@ def test_unassigned_to_be_done_and_other_due_pms_are_found_in_wo_details(
     assert "NOT-PM" not in html
 
 
-def test_manual_today_daily_pms_fills_gap_in_filtered_wo_details(
+def test_one_file_tracks_past_due_and_reconciles_completion_across_days(
     client,monkeypatch
 ):
     clock(monkeypatch,day=26,hour=10)
-    enter(client,"S1")
-    # The normal WO Details export was filtered: no unassigned To-Be-Done
-    # records. Its Completed PM should stay completed after list merge.
-    report=stage_details(client,[to_be_done("PM-D",status="Completed")])
-    assert report.status_code==200,report.text
-    pm_csv=(b"WO Number,PM Due Date,Asset #\n"
-            b"PM-D,10/26/2026,ASSET-PM-D\n"
-            b"PM-T1,10/26/2026,ASSET-PM-T1\n"
-            b"PM-T2,10/26/2026,ASSET-PM-T2\n"
-            b"PM-TOMORROW,10/27/2026,ASSET-PM-LATER\n")
-    uploaded=client.post("/api/pm-needing-completion/upload",
-          files={"file":("todays-daily-pms.csv",pm_csv,"text/csv")})
-    assert uploaded.status_code==200,uploaded.text
-    pm=uploaded.json()
-    assert pm["present"] and pm["auto_available"]
-    assert pm["due_count"]==3 and pm["count"]==2 and pm["completed_count"]==1
-    assert {p["wo_number"] for p in pm["rows"]}=={"PM-D","PM-T1","PM-T2"}
-    assert next(p for p in pm["rows"] if p["wo_number"]=="PM-D")["state"]=="completed"
-    assert client.get("/api/pm-needing-completion/download").content==pm_csv
-    deleted=client.delete("/api/pm-needing-completion")
-    assert deleted.status_code==200
-    after=client.get("/api/pm-needing-completion").json()
-    assert not after["present"] and after["auto_available"]
-    assert after["due_count"]==1 and after["count"]==0
+    day1=enter(client,"S1")
+    assert stage_details(client,[
+        to_be_done("PM-PAST",due="10/25/2026"),
+        to_be_done("PM-TODAY",due="10/26/2026"),
+        to_be_done("PM-OLD-DONE",due="10/24/2026",status="Completed"),
+        to_be_done("PM-TOMORROW",due="10/27/2026"),
+    ]).status_code==200
+    first=client.get("/api/pm-needing-completion").json()
+    assert first["due_count"]==1 and first["count"]==1
+    assert [x["wo_number"] for x in first["past_due_rows"]]==["PM-PAST"]
+    assert not first["present"]  # no second PM upload
+
+    clock(monkeypatch,day=27,hour=10)
+    shifted=client.post("/api/shifts/start",json={"code":"S1"})
+    assert shifted.status_code==200,shifted.text
+    # The new daily WO Details export omits both older outstanding WOs.
+    assert stage_details(client,[to_be_done("PM-TOMORROW",
+                         due="10/27/2026")]).status_code==200
+    carried=client.get("/api/pm-needing-completion").json()
+    assert carried["due_count"]==1
+    assert {x["wo_number"] for x in carried["past_due_rows"]}=={
+        "PM-PAST","PM-TODAY"}
+    assert carried["past_due_count"]==2
+
+    # Cetaris later reports one of those old WOs as Completed. It must
+    # leave Past Due without deleting the other unresolved PM.
+    assert stage_details(client,[
+        to_be_done("PM-PAST",due="10/25/2026",status="Completed"),
+        to_be_done("PM-TOMORROW",due="10/27/2026"),
+    ]).status_code==200
+    updated=client.get("/api/pm-needing-completion").json()
+    assert [x["wo_number"] for x in updated["past_due_rows"]]==["PM-TODAY"]
+    with __import__("app")._db() as conn:
+        import v31_pm_needing_completion
+        historical=v31_pm_needing_completion.get(conn,day1)
+        assert historical["past_due_count"]==1
+        assert historical["past_due_rows"][0]["wo_number"]=="PM-PAST"
 
 
 def test_missing_date_is_flagged_not_assumed_due_today(client,monkeypatch):
