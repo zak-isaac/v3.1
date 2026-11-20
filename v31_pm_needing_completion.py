@@ -88,12 +88,12 @@ def scan_wo_details(conn,shift_id,filename,content):
 
 
 def get(conn,shift_id,include_data=False):
-    """Show only the PM statuses present in THIS shift's latest WO Details file.
+    """Use only To-Be-Done PMs in the current shift's uploaded WO Details.
 
-    RED: unfinished PM whose due date is before the report date.
-    YELLOW: unfinished PM due on the report date, through 11:59 PM.
-    Closed/Completed PMs are not overdue or urgent. Future PMs are excluded.
-    No earlier upload is consulted, and missing records are never invented.
+    RED: due date earlier than the report date.
+    YELLOW: due on the report date until 11:59 PM.
+    All other statuses, including In Process and Completed, are excluded.
+    No earlier upload is consulted and missing records are never invented.
     """
     ensure(conn)
     code,shift_day=_shift_info(conn,shift_id)
@@ -113,23 +113,24 @@ def get(conn,shift_id,include_data=False):
     overdue=[]
     for item in by_wo.values():
         due=due_date(item.get("due_iso") or item.get("pm_due_date"))
-        if not due:
+        if not due or due>reference:
             continue
-        if due>reference:
+        # Trust the actual Cetaris WO Status, not a generic "unfinished"
+        # category. Old staged snapshots may have classified I/P/W/O/U
+        # as outstanding; those must never appear in PM urgency.
+        status_code=item.get("status_code") or normalize_wo_status(
+            item.get("wo_status"))[1]
+        if status_code!="T":
             continue
+        item["state"]="outstanding"
         item["due_bucket"]="past_due" if due<reference else "due_today"
-        item["urgency"]=(
-            "none" if item.get("state")=="completed"
-            else "red" if due<reference else "yellow"
-        )
+        item["urgency"]="red" if due<reference else "yellow"
         if due<reference:
-            if item.get("state")!="completed":
-                overdue.append(item)
+            overdue.append(item)
         else:
             today.append(item)
     today.sort(key=lambda p:(p["due_iso"],p["wo_number"]))
     overdue.sort(key=lambda p:(p["due_iso"],p["wo_number"]))
-    outstanding=[p for p in today if p.get("state")!="completed"]
     if not available:
         notes.append(
             "No usable WO Details export for this shift: daily and past-due PM counts are unverified."
@@ -143,10 +144,10 @@ def get(conn,shift_id,include_data=False):
       "extension":"","parsed":available,"has_source":available,
       "auto_available":available,"auto_filename":auto["filename"] if auto else "",
       "uploaded_daily_pm":False,
-      "rows":today,"outstanding_rows":outstanding,"past_due_rows":overdue,
-      "due_count":len(today),"completed_count":len(today)-len(outstanding),
-      "count":len(outstanding),"past_due_count":len(overdue),
-      "outstanding_total":len(outstanding)+len(overdue),
+      "rows":today,"outstanding_rows":today,"past_due_rows":overdue,
+      "due_count":len(today),"completed_count":0,
+      "count":len(today),"past_due_count":len(overdue),
+      "outstanding_total":len(today)+len(overdue),
       "notes":list(dict.fromkeys(notes)),
       "target_dates":[reference.isoformat()],"as_of_date":reference.isoformat(),
       "uploaded_at":auto["scanned_at"] if auto else "",
@@ -205,9 +206,7 @@ def report_section(conn,shift_id):
         )
     summary=(
         f'<p style="font-size:14px;">PM status as of {escape(pm["as_of_date"])}: '
-        f'<strong>{pm["due_count"]} due today</strong> · '
-        f'<strong>{pm["count"]} outstanding today</strong> · '
-        f'{pm["completed_count"]} completed · '
+        f'<strong>{pm["due_count"]} To Be Done PMs due today</strong> · '
         f'<strong style="color:#991B1B;">{pm["past_due_count"]} past due</strong></p>'
     )
     notes="".join(
@@ -231,9 +230,7 @@ def report_section(conn,shift_id):
         for row in rows:
             # Outlook's Word HTML engine may ignore background on <tr>.
             # Put urgency background on EVERY <td>.
-            if row.get("state")=="completed":
-                bg,ink,label="#F3F4F6","#374151","Completed"
-            elif urgency=="past":
+            if urgency=="past":
                 bg,ink,label="#FDE8E8","#991B1B","PAST DUE"
             else:
                 bg,ink,label="#FFF2C7","#805500","DUE TODAY — 11:59 PM"
