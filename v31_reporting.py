@@ -22,6 +22,7 @@ import v31_signature
 import v31_pm_needing_completion as v31_pm
 import v31_breakdown
 import v31_returned_to_service
+import v31_awaiting_parts
 
 TZ=ZoneInfo("America/Indiana/Indianapolis")
 
@@ -169,7 +170,10 @@ def stage(conn, shift_id, payload: bytes, filename: str, actor: str):
     # To Be Done). Keep this due-date scan distinct from labor attribution:
     # a To-Be-Done PM must never become a completed PM or a happening.
     due_summary=v31_pm.scan_wo_details(conn,shift_id,filename,payload)
-    # An updated due-PM table changes the saved Outlook passdown, even before
+    # Scan all WO statuses from the daily export, including unassigned P rows.
+    # Facility-wide Parts Pending is independent from technician labor and PMs.
+    v31_awaiting_parts.observe_wo_details(conn,payload)
+    # Updated due-PM and parts lists change saved Outlook passdown, even before
     # the new shift labor rows have been explicitly selected/imported.
     if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='shifts'").fetchone():
         conn.execute("""UPDATE shifts SET report_saved_at='',report_content='',
@@ -915,6 +919,9 @@ def build_passdown_html(conn, shift_id, shift_code, lead_name=''):
 
     # Returned to Service means confirmed breakdown recovery OR explicit
     # manual RTS. Routine completed/closed Shift Happenings never qualify.
+    awaiting_parts=[
+        f'<strong>{esc(item["asset"])}</strong> (WO# {esc(item["wo_number"])})'
+        for item in v31_awaiting_parts.list_records(conn)]
     rts=[f'<strong>{esc(item["asset"])}</strong>' for item in
          v31_returned_to_service.confirmed_returns(conn,shift_id)]
     # Use the same facility-wide active OOS inventory as the dashboard.
@@ -965,6 +972,7 @@ def build_passdown_html(conn, shift_id, shift_code, lead_name=''):
         + sec("Open Follow-ups / Shift Carry-overs", bullet_list(followups))
         + sec("Reliable Operations", bullet_list(ro))
         + pm_html
+        + sec("Awaiting Parts", bullet_list(awaiting_parts))
         + sec("Returned to Service", bullet_list(rts))
         + sec("Current Out of Service", bullet_list(oos))
         + loto_html + missing_html + '</body></html>')
