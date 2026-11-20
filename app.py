@@ -386,10 +386,12 @@ def shift_choices(profile: dict, now: datetime, associate: str | None = None) ->
                 ready_items.append({**entry(record), 'action': 'reopen',
                                     'closed_reason': record['closed_reason']})
         else:
-            # A new shift starts before its scheduled end. The extra hour
-            # after closing belongs only to an already-open passdown.
+            # Every shift opens an hour early and closes an hour late -- a
+            # brand-new shift may start anywhere in that same window, not
+            # just up to the scheduled end. (Isaac, 2026-11-07: techs were
+            # getting locked out trying to start S4 shortly after 6pm.)
             _, scheduled_end = shift_times(code, day)
-            if now <= scheduled_end and has_capacity:
+            if now <= scheduled_end + WINDOW_GRACE and has_capacity:
                 ready_items.append({'id': None, 'code': code, 'date': day.isoformat(),
                                     'label': SHIFT_RULES[code][0], 'open': False,
                                     'action': 'start',
@@ -646,8 +648,8 @@ def start_shift(payload: ShiftChoice, request: Request, response: Response):
     with _db() as conn:
         existing = conn.execute('SELECT * FROM shifts WHERE code=? AND shift_day=?',
                                 (payload.code, day.isoformat())).fetchone()
-        if existing is None and now > shift_times(payload.code, day)[1]:
-            raise HTTPException(409, 'New shift may not start after its scheduled end')
+        if existing is None and now > shift_times(payload.code, day)[1] + WINDOW_GRACE:
+            raise HTTPException(409, 'New shift may not start after its one-hour closing grace')
         if existing is None and _current_open_count(conn, now) >= 2:
             raise HTTPException(409, 'Two overlapping shifts are already active')
         conn.execute('''INSERT OR IGNORE INTO shifts
@@ -897,6 +899,11 @@ class AdminEditAssociate(BaseModel):
     full_name: str = Field(min_length=2, max_length=180)
     new_number: str | None = Field(default=None, min_length=1, max_length=12, pattern='^[0-9]+$')
 
+
+class AdminDeleteAssociate(BaseModel):
+    number: str = Field(min_length=1, max_length=12, pattern='^[0-9]+$')
+
+
 def require_manager(request: Request) -> dict:
     session, profile = who(request)
     if not profile.get('all_shifts'):
@@ -974,6 +981,26 @@ def admin_roster_add(payload: AdminAddAssociate, request: Request):
     return v31_roster.status(DB_FILE, include_rows=True)
 
 
+def _sync_override_to_drax(number, *, name=None, shift=None, is_mst=None):
+    """Best-effort push of a just-saved Administration override into the
+    live Drax workbook. Never blocks or fails the local save on a Drax
+    write problem -- that's reported back to the admin as a warning
+    alongside the (already-successful) local save, not an exception.
+    A manually-added local-only associate has no real Drax row, so this
+    is a silent no-op for them.
+    """
+    status = v31_roster.status(DB_FILE, include_rows=True)
+    row = next((r for r in status['associates'] if r['number'] == number), None)
+    if row is None or row['manual']:
+        return status, None
+    drax_path, _ = v31_roster._source(PRIVATE)
+    if drax_path is None:
+        return status, {'written': False, 'reason': 'workbook_unavailable'}
+    result = v31_drax_bridge.write_admin_override(
+        drax_path, PRIVATE, number, name=name, shift=shift, is_mst=is_mst)
+    return status, result
+
+
 @app.post('/api/admin/roster/override')
 def admin_roster_override(payload: AdminAssociateOverride, request: Request):
     _origin_check(request)
@@ -987,7 +1014,15 @@ def admin_roster_override(payload: AdminAssociateOverride, request: Request):
                                 mst=payload.is_mst, shift=payload.shift, reset=payload.reset)
     except KeyError as exc:
         raise HTTPException(404, str(exc))
-    return v31_roster.status(DB_FILE, include_rows=True)
+    if payload.reset:
+        # Clearing a local override never touches Drax -- there is nothing
+        # new to push, Drax already holds whatever it already held.
+        return v31_roster.status(DB_FILE, include_rows=True)
+    status, drax_result = _sync_override_to_drax(
+        payload.number, shift=payload.shift, is_mst=payload.is_mst)
+    if drax_result is not None:
+        status['drax_write'] = drax_result
+    return status
 
 
 @app.post('/api/admin/roster/edit')
@@ -1003,6 +1038,49 @@ def admin_roster_edit(payload: AdminEditAssociate, request: Request):
         raise HTTPException(404, str(exc))
     except ValueError as exc:
         raise HTTPException(409, str(exc))
+    # new_number only ever succeeds for a manual (local-only) associate --
+    # edit_associate() itself blocks renumbering a real Drax-sourced row --
+    # so _sync_override_to_drax's own manual check naturally no-ops there.
+    final_number = payload.new_number or payload.number
+    status, drax_result = _sync_override_to_drax(final_number, name=payload.full_name.strip())
+    if drax_result is not None:
+        status['drax_write'] = drax_result
+    return status
+
+
+@app.post('/api/admin/roster/delete')
+def admin_roster_delete(payload: AdminDeleteAssociate, request: Request):
+    _origin_check(request)
+    require_manager(request)
+    if payload.number in MANAGEMENT_ASSOCIATES:
+        raise HTTPException(403, 'Management profiles cannot be deleted')
+    status = v31_roster.status(DB_FILE, include_rows=True)
+    row = next((r for r in status['associates'] if r['number'] == payload.number), None)
+    if row is None:
+        raise HTTPException(404, 'Associate does not exist')
+    if row['manual']:
+        # Local-only associate: a plain, permanent local delete. No Drax
+        # row exists for them at all.
+        try:
+            v31_roster.delete_manual(DB_FILE, payload.number)
+        except KeyError as exc:
+            raise HTTPException(404, str(exc))
+        except ValueError as exc:
+            raise HTTPException(409, str(exc))
+        return v31_roster.status(DB_FILE, include_rows=True)
+    # Real Drax-sourced associate: deleting only locally would just resync
+    # them right back within 5 minutes, so this must actually remove their
+    # row from the live workbook -- no local-only fallback makes sense here,
+    # unlike the softer shift/MST/name edits above.
+    drax_path, _ = v31_roster._source(PRIVATE)
+    if drax_path is None:
+        raise HTTPException(409, 'No Drax workbook is currently configured')
+    result = v31_drax_bridge.delete_admin_row(drax_path, PRIVATE, payload.number)
+    if not result['deleted']:
+        raise HTTPException(409, 'Could not delete from Drax: ' + result['reason'])
+    # Reflect the removal immediately instead of waiting up to 5 minutes
+    # for the next background poll to notice the row is gone.
+    v31_roster.sync(PRIVATE, DB_FILE, force=True)
     return v31_roster.status(DB_FILE, include_rows=True)
 
 

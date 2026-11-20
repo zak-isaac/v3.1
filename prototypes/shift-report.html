@@ -668,18 +668,28 @@ async function emlDownload(){
       headers:{'Content-Type':'application/json'},body:'{}'});
     const receipt=await saved.json().catch(()=>({}));
     if(!saved.ok)throw Error(receipt.detail||'Could not save authoritative passdown.');
-    const download=await fetch('/api/shifts/report/download',{credentials:'same-origin'});
-    if(!download.ok){
-      const error=await download.json().catch(()=>({}));
-      throw Error(error.detail||'Could not download saved EML.');
-    }
-    const url=URL.createObjectURL(await download.blob());
+    // A plain link to the real server URL (not a blob + forced `download`
+    // attribute) lets the browser's own native download handling apply --
+    // that's what makes a one-time 'Always open files of this type' choice
+    // in the browser's download tray actually work on repeat use. A blob
+    // URL with a forced download attribute defeats that in some browsers.
     const link=document.createElement('a');
-    link.href=url;link.download=receipt.filename||'IND3_Shift_Passdown.eml';
+    link.href='/api/shifts/report/download';
+    link.rel='noopener';
     document.body.append(link);link.click();link.remove();
-    setTimeout(()=>URL.revokeObjectURL(url),2000);
     const savedLabel=$('#last-saved');if(savedLabel)savedLabel.textContent='Canonical passdown saved · Outlook EML downloaded';
-    toast('Passdown saved and downloaded. Email not sent.');
+    // localStorage can throw under locked-down corporate browser policies
+    // (storage access blocked for this origin, etc.) -- isolate it so a
+    // storage failure can never swallow the actual save/download
+    // confirmation the user needs to see.
+    let firstTime=false;
+    try{
+      firstTime=!localStorage.getItem('v31-eml-open-tip-seen');
+      if(firstTime)localStorage.setItem('v31-eml-open-tip-seen','1');
+    }catch(_storageError){firstTime=false;}
+    toast(firstTime
+      ? 'Passdown saved and downloaded. Email not sent. Tip: in your browser\'s download tray, choose "Always open files of this type" so future passdowns open directly in Outlook. (If that option does nothing, set Outlook as the default app for .eml files in Windows first.)'
+      : 'Passdown saved and downloaded. Email not sent.');
   }catch(error){toast(error.message);}
   finally{generate.disabled=false;}
 }

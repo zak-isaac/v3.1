@@ -293,13 +293,19 @@ def _next_day_work_orders(rows, shift_day, selected, imported, pms, pending, ign
 
 
 def technician_suggestions(source_techs, roster_rows, shift_code):
-    """Preselect every uniquely matched active Drax associate on this shift.
+    '''Preselect every uniquely matched active Drax associate on this shift,
+    plus any uniquely matched active MST regardless of their Drax home shift.
 
-    Import preselection is based on the Drax-assigned shift, NEVER the
-    associate who opened the report or a literal MST Job Title.
+    An MST's whole role is floating between shifts to cover/relieve, so
+    requiring a home-shift match for them too meant their WOs were unchecked
+    on nearly every single import -- easy to miss, and real crew WOs were
+    getting silently left out. (Isaac, 2026-11-09.) They still land in the
+    Additional/Overtime bucket in the UI so it stays visually obvious they
+    are off their home shift, just pre-checked instead of requiring a
+    manual click every time.
     Exact normalized name matching protects against accidental ownership;
     ambiguous, unmatched and inactive people remain unchecked.
-    """
+    '''
     by_name={}
     by_name_any={}
     for person in roster_rows:
@@ -316,6 +322,7 @@ def technician_suggestions(source_techs, roster_rows, shift_code):
         matches=by_name.get(key,[])
         match=matches[0] if len(matches)==1 else None
         assigned=match.get('shift') if match else None
+        is_mst=bool(match.get('is_mst')) if match else False
         group=('assigned' if assigned==shift_code else
                'other_shift' if assigned else 'unmatched')
         reason=None
@@ -333,7 +340,8 @@ def technician_suggestions(source_techs, roster_rows, shift_code):
                 reason='Drax record found but could not be confirmed automatically.'
         result.append({'name':name,'count':tech['count'],
                        'group':group,'drax_shift':assigned,
-                       'preselected':group=='assigned',
+                       'preselected':group=='assigned' or (group=='other_shift' and is_mst),
+                       'is_mst':is_mst,
                        'match_reason':reason})
     return result
 

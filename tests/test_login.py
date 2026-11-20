@@ -329,8 +329,19 @@ def test_time_window_one_hour_before_after_and_overnight():
     assert t('S5', at(2026, 10, 31, 7, 1)) != date(2026, 10, 30)
 
 
-def test_not_create_new_shift_in_late_closing_grace(client, monkeypatch):
+def test_can_create_new_shift_in_late_closing_grace(client, monkeypatch):
+    # S1 scheduled end is 4pm; a brand-new shift may still start up to the
+    # same one-hour closing grace every other shift gets (Isaac, 2026-11-07:
+    # techs were getting locked out trying to start S4 shortly after 6pm).
     freeze(monkeypatch, at(2026, 10, 27, 16, 30))
+    sign_in(client, '8972')
+    assert 'S1' in {x['code'] for x in client.get('/api/me').json()['ready']}
+    assert client.post('/api/shifts/start',json={'code':'S1'}).status_code == 200
+
+
+def test_cannot_create_new_shift_after_closing_grace_expires(client, monkeypatch):
+    # 17:01 is past S1's 4pm end + 1hr grace -- genuinely too late.
+    freeze(monkeypatch, at(2026, 10, 27, 17, 1))
     sign_in(client, '8972')
     assert 'S1' not in {x['code'] for x in client.get('/api/me').json()['ready']}
     assert client.post('/api/shifts/start',json={'code':'S1'}).status_code == 409

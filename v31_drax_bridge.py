@@ -111,6 +111,76 @@ def enabled():
     return os.getenv("IND3_V31_DRAX_WRITE_ENABLED")=="1"
 
 
+def write_admin_override(drax_path, private, assoc, *, name=None, shift=None, is_mst=None):
+    """Push a single Administration-page override straight into the live
+    Drax workbook, immediately, instead of staying a local-only V3.1 patch.
+
+    Approved 2026-11-09 for this facility's deployment (IT-cleared) -- see
+    README's Drax write-back section. Reuses the exact same guarded
+    single-cell primitive as the old-V3 bridge above: only Name/Shift/Job
+    Title cells are touched, a timestamped before-image backup is kept, and
+    the write aborts cleanly (no partial edit) if the workbook changed on
+    disk since we last read it. A manually-added local-only associate (one
+    with no real Drax row at all) is a silent no-op here -- there is
+    nothing to write back to.
+    """
+    if not enabled():
+        return {"written": False, "reason": "write_disabled"}
+    drax_path = Path(drax_path)
+    if not drax_path.is_file():
+        return {"written": False, "reason": "workbook_unavailable"}
+    changes = {}
+    if name is not None: changes["name"] = name
+    if shift is not None: changes["shift"] = shift
+    if is_mst is not None: changes["is_mst"] = is_mst
+    if not changes:
+        return {"written": False, "reason": "no_changes"}
+    try:
+        expected = _digest(drax_path)
+        _, drax = _workbook_values(drax_path)
+    except Exception as exc:
+        # Covers a non-.xlsx fallback source (e.g. a CSV roster, which can
+        # legitimately be the active source when OneDrive is unreachable) --
+        # there's no real workbook to write into, so this degrades to a
+        # local-only save instead of crashing the whole admin action. Broad
+        # on purpose: this is a best-effort secondary step layered on top of
+        # an already-successful local save, so any failure here must always
+        # degrade gracefully, never bubble up and fail the admin's request.
+        return {"written": False, "reason": "workbook_unreadable: " + str(exc)[:150]}
+    if assoc not in drax:
+        return {"written": False, "reason": "not_in_drax"}
+    try:
+        backup = _apply_cells(drax_path, {assoc: changes}, expected, private)
+    except Exception as exc:
+        return {"written": False, "reason": str(exc)[:150]}
+    return {"written": True, "backup": str(backup)}
+
+
+def _save_with_backup(book, workbook_path, expected_digest, private, label):
+    """Shared safe-write tail: backup, write to a temp file, verify nothing
+    changed on disk since we last read it, then atomically replace. Used by
+    every write path below so there is exactly one place that knows how to
+    safely commit a workbook change.
+    """
+    private=Path(private)
+    private.mkdir(parents=True,exist_ok=True)
+    # Keep a local backup of the original approved workbook, NOT in Git.
+    backup=private/(f"drax-before-{label}-"+datetime.now(TZ).strftime("%Y%m%d-%H%M%S-%f")+".xlsx")
+    shutil.copy2(workbook_path,backup)
+    backup.chmod(0o600)
+    fd,tmp=tempfile.mkstemp(prefix=".v31-drax-",suffix=".xlsx",dir=str(Path(workbook_path).parent))
+    os.close(fd)
+    temp=Path(tmp)
+    try:
+        book.save(temp)
+        if _digest(workbook_path)!=expected_digest:
+            raise BridgeError(f"Drax changed while preparing {label}; no write performed")
+        os.replace(temp,workbook_path)
+    finally:
+        temp.unlink(missing_ok=True)
+    return backup
+
+
 def _apply_cells(workbook_path, changed, expected_digest, private):
     """Write only Name, Shift, and Job Title cells; never recreate entire rows."""
     book=load_workbook(workbook_path)
@@ -133,25 +203,67 @@ def _apply_cells(workbook_path, changed, expected_digest, private):
                     # Promote/demote MST without inventing an unrelated job title.
                     ws.cell(row,headers["Job Title"]).value=("MST" if value else
                          ("Associate" if current.upper()=="MST" else current))
-        private=Path(private)
-        private.mkdir(parents=True,exist_ok=True)
-        # Keep a local backup of the original approved workbook, NOT in Git.
-        backup=private/("drax-before-sync-"+datetime.now(TZ).strftime("%Y%m%d-%H%M%S-%f")+".xlsx")
-        shutil.copy2(workbook_path,backup)
-        backup.chmod(0o600)
-        fd,tmp=tempfile.mkstemp(prefix=".v31-drax-",suffix=".xlsx",dir=str(Path(workbook_path).parent))
-        os.close(fd)
-        temp=Path(tmp)
-        try:
-            book.save(temp)
-            if _digest(workbook_path)!=expected_digest:
-                raise BridgeError("Drax changed while preparing sync; no write performed")
-            os.replace(temp,workbook_path)
-        finally:
-            temp.unlink(missing_ok=True)
-        return backup
+        return _save_with_backup(book,workbook_path,expected_digest,private,"sync")
     finally:
         book.close()
+
+
+def _delete_row(workbook_path, assoc, expected_digest, private):
+    """Delete a single associate's row entirely.
+
+    Row deletion shifts every subsequent row up by one -- a materially
+    bigger change than a single-cell edit, since anything elsewhere in the
+    workbook anchored to absolute row positions (formulas, named ranges)
+    could be affected. Refuses to proceed if the associate number is
+    ambiguous or already gone, exactly like the cell-edit path above.
+    """
+    book=load_workbook(workbook_path)
+    try:
+        ws=book.active
+        headers={str(cell.value or "").strip():cell.column for cell in ws[1]}
+        if "Assoc. #" not in headers:
+            raise BridgeError("Drax columns changed during sync")
+        positions=[i for i in range(2,ws.max_row+1)
+                   if _normalize_id(ws.cell(i,headers["Assoc. #"]).value)==assoc]
+        if len(positions)!=1:
+            raise BridgeError("Drax row missing or duplicated during delete")
+        ws.delete_rows(positions[0],1)
+        return _save_with_backup(book,workbook_path,expected_digest,private,"delete")
+    finally:
+        book.close()
+
+
+def delete_admin_row(drax_path, private, assoc):
+    """Delete a single associate's row from the live Drax workbook,
+    triggered by an Administration-page Delete action on a real
+    Drax-sourced associate. A manually-added local-only associate has no
+    Drax row at all and must never reach this function -- that path is
+    v31_roster.delete_manual() instead, a plain local-only delete.
+
+    Unlike the cell-edit write-back, there is no sensible local-only
+    fallback here: deleting someone locally without also deleting them from
+    Drax would just have them resync right back within 5 minutes. So this
+    either genuinely removes the row, or reports exactly why it couldn't --
+    callers should treat any non-deleted result as a hard failure, not a
+    silent partial success.
+    """
+    if not enabled():
+        return {"deleted": False, "reason": "write_disabled"}
+    drax_path=Path(drax_path)
+    if not drax_path.is_file():
+        return {"deleted": False, "reason": "workbook_unavailable"}
+    try:
+        expected=_digest(drax_path)
+        _,drax=_workbook_values(drax_path)
+    except Exception as exc:
+        return {"deleted": False, "reason": "workbook_unreadable: "+str(exc)[:150]}
+    if assoc not in drax:
+        return {"deleted": False, "reason": "not_in_drax"}
+    try:
+        backup=_delete_row(drax_path,assoc,expected,private)
+    except Exception as exc:
+        return {"deleted": False, "reason": str(exc)[:150]}
+    return {"deleted": True, "backup": str(backup)}
 
 
 def reconcile(v3_path, drax_path, private, *, write=False):

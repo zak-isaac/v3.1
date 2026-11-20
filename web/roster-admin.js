@@ -35,6 +35,16 @@
     if(cls)node.className=cls;
     return node;
   };
+  // Turns the backend's best-effort Drax write-back result into a short
+  // suffix for the save confirmation, so an admin always knows whether
+  // their change actually landed in the real Drax workbook too, or just
+  // stayed a local V3.1 override (and if so, why).
+  const draxSuffix=result=>{
+    if(!result)return '';
+    if(result.written)return ' Also updated in Drax.';
+    if(result.reason==='not_in_drax'||result.reason==='write_disabled')return '';
+    return ' Drax write did not complete ('+result.reason+') -- saved locally only.';
+  };
   const busy=async fn=>{
     if(pending)return;
     pending=true;
@@ -99,7 +109,7 @@
     status.textContent=details.error?'Sync issue':details.last_synced?'Connected':'Not connected';
     $('v31-sync-warning').textContent=details.error
       ? 'Drax source issue: '+details.error+' The last local roster snapshot is retained.'
-      : 'Workbook reading is enabled. Local MST/shift changes are V3.1 overrides, not automatic edits to the Drax Excel file. Approved two-way write-back is a separate controlled process.';
+      : 'Workbook reading is enabled. Shift, MST, and name changes here are saved in V3.1 immediately and, for IT-approved deployments, also written straight into the live Drax workbook (confirmed per-change below). Local-only manually-added associates have no Drax row and are never written back.';
     drawPeople(rows);
   }
   function drawPeople(rows){
@@ -128,7 +138,7 @@
         busy(async()=>{
           details=await api('/api/admin/roster/override',
                             {number:person.number,shift:code});
-          draw();notify('Shift assignment saved in V3.1 for '+person.name+'.');
+          draw();notify('Shift assignment saved in V3.1 for '+person.name+'.'+draxSuffix(details.drax_write));
         });
       });
       shiftCell.append(shift);
@@ -148,7 +158,7 @@
       makeAction(person.is_mst?'Disable MST':'Enable MST',async()=>{
         details=await api('/api/admin/roster/override',
                    {number:person.number,is_mst:!person.is_mst});
-        draw();notify('MST privileges updated for '+person.name+'. Active Drax shift access is separate.');
+        draw();notify('MST privileges updated for '+person.name+'. Active Drax shift access is separate.'+draxSuffix(details.drax_write));
       });
       makeAction('Edit Name',async()=>{
         const answer=window.prompt('Associate display name',person.name);
@@ -156,7 +166,7 @@
         if(answer.trim().length<2){notify('Enter a valid associate name.',true);return;}
         details=await api('/api/admin/roster/edit',
                      {number:person.number,full_name:answer.trim()});
-        draw();notify('Associate name updated for '+person.number+'.');
+        draw();notify('Associate name updated for '+person.number+'.'+draxSuffix(details.drax_write));
       });
       if(person.manual){
         makeAction('Edit Number',async()=>{
@@ -175,6 +185,15 @@
           draw();notify('Source defaults restored for '+person.name+'.');
         });
       }
+      makeAction('Delete',async()=>{
+        const warning=person.manual
+          ? 'Permanently delete '+person.name+' ('+person.number+') from V3.1? This cannot be undone.'
+          : 'Permanently delete '+person.name+' ('+person.number+') from the live Drax workbook itself? '
+            +'This changes the real shared file and cannot be undone.';
+        if(!window.confirm(warning))return;
+        details=await api('/api/admin/roster/delete',{number:person.number});
+        draw();notify(person.name+' was deleted.'+(person.manual?'':' Removed from Drax.'));
+      });
       actions.append(group);
       tr.append(who,shiftCell,access,source,actions);
       tbody.append(tr);

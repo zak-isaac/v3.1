@@ -736,7 +736,13 @@ def test_drax_preselects_any_assigned_active_tech_not_only_msts(client,monkeypat
     assert suggestions["Synthetic, A"]["preselected"] is True
     assert suggestions["Synthetic, A"]["match_reason"] is None
     assert suggestions["Synthetic B"]["group"]=="other_shift"
-    assert suggestions["Synthetic B"]["preselected"] is False
+    # B Synthetic is an MST home-based on S2, importing into S1: still shown
+    # under Additional/Overtime (not their home shift), but auto-checked
+    # since 2026-11-09 -- MSTs float between shifts as their normal job, so
+    # requiring a manual click every single time meant real WOs kept
+    # getting missed.
+    assert suggestions["Synthetic B"]["preselected"] is True
+    assert suggestions["Synthetic B"]["is_mst"] is True
     assert suggestions["Synthetic C"]["group"]=="assigned"
     assert suggestions["Synthetic C"]["preselected"] is True
     assert suggestions["Synthetic C"]["match_reason"] is None
@@ -775,6 +781,28 @@ def test_technician_suggestions_explains_every_unmatched_case():
     # No Drax record at all, active or not.
     assert suggestions["Nobody Here"]["group"]=="unmatched"
     assert "No Drax associate" in suggestions["Nobody Here"]["match_reason"]
+
+
+def test_mst_auto_preselected_even_off_home_shift():
+    import v31_reporting
+    roster_rows=[
+        {"name":"Kevin Smith","shift":"S3","is_mst":True,"active":True},
+        {"name":"Regular Tech","shift":"S3","is_mst":False,"active":True},
+    ]
+    source=[{"name":"Kevin Smith","count":2},{"name":"Regular Tech","count":1}]
+    suggestions={t["name"]:t for t in v31_reporting.technician_suggestions(source,roster_rows,"S1")}
+    # MST floating onto S1 from their S3 home shift: still lands in the
+    # Additional/Overtime bucket for visibility, but is pre-checked now --
+    # their WOs shouldn't get silently dropped just because nobody
+    # remembered to manually tick the box (Isaac, 2026-11-09).
+    assert suggestions["Kevin Smith"]["group"]=="other_shift"
+    assert suggestions["Kevin Smith"]["preselected"] is True
+    assert suggestions["Kevin Smith"]["is_mst"] is True
+    # A regular (non-MST) technician off their home shift still requires an
+    # explicit manual check -- the safety rule for everyone else is unchanged.
+    assert suggestions["Regular Tech"]["group"]=="other_shift"
+    assert suggestions["Regular Tech"]["preselected"] is False
+    assert suggestions["Regular Tech"]["is_mst"] is False
 
 
 def test_cetaris_replacement_requires_import_confirmation_again(client,monkeypatch):

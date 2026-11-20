@@ -40,7 +40,9 @@ def _connect(database: Path):
 
 
 def _source(private: Path):
-    # Original V3's canonical OneDrive path (double-space is intentional).
+    # Original V3's canonical OneDrive path. Renamed 2026-11-09 from the old
+    # double-spaced "Drax  Associates.xlsx" to this single-spaced name --
+    # old V3 is retired, so that filename quirk no longer needs preserving.
     # Compatible with the existing ASSOCIATES_PATH override; V3.1-specific
     # override takes precedence and supports Mac workstation testing.
     configured = (os.getenv("IND3_V31_ROSTER_PATH") or os.getenv("ASSOCIATES_PATH") or "").strip()
@@ -52,10 +54,10 @@ def _source(private: Path):
     # machine where that file happens to be synced. Unset in every real
     # deployment, so production fallback behavior is unchanged by default.
     if not os.getenv("IND3_V31_TEST_SKIP_ONEDRIVE"):
-        original = Path(r"C:\Users\ins0002\OneDrive - Walmart Inc\Drax  Associates.xlsx")
+        original = Path(r"C:\Users\ins0002\OneDrive - Walmart Inc\Drax Associates.xlsx")
         if original.is_file():
             return original, None
-    choices = [private / "Drax  Associates.xlsx", private / "Drax Associates.xlsx",
+    choices = [private / "Drax Associates.xlsx", private / "Drax  Associates.xlsx",
                private / "mst-roster.xlsx", private / "mst-roster.csv"]
     return next((file for file in choices if file.is_file()), None), None
 
@@ -260,3 +262,25 @@ def edit_associate(database, number, full_name, new_number=None):
             conn.execute("UPDATE roster_associates SET full_name=? WHERE number=?",(full_name,final_number))
         else:
             conn.execute("UPDATE roster_associates SET override_name=? WHERE number=?",(full_name,final_number))
+
+
+def delete_manual(database, number):
+    """Permanently remove a manually-added local-only associate.
+
+    Only ever valid for a manual=1 row -- a real Drax-sourced associate has
+    no equivalent here; deleting one of those means removing their row from
+    Drax itself (see v31_drax_bridge.delete_admin_row), not this table,
+    since they would just resync right back within 5 minutes otherwise.
+    Blocked if referenced by real shift history, the same protection
+    edit_associate() already applies to renumbering -- the row stays intact
+    until manually resolved rather than silently orphaning history.
+    """
+    with _connect(database) as conn:
+        row = conn.execute("SELECT * FROM roster_associates WHERE number=?", (number,)).fetchone()
+        if row is None:
+            raise KeyError("Associate does not exist")
+        if not row["manual"]:
+            raise ValueError("Only a manually-added local associate can be deleted here")
+        if conn.execute("SELECT 1 FROM shifts WHERE owner=? LIMIT 1", (number,)).fetchone():
+            raise ValueError("Cannot delete an associate referenced by shift history")
+        conn.execute("DELETE FROM roster_associates WHERE number=?", (number,))

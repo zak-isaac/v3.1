@@ -140,6 +140,111 @@ def test_manager_edit_survives_drax_reload(client, monkeypatch):
     assert m.roster()["333333"]["is_mst"] is False
 
 
+def test_admin_override_writes_into_live_drax_workbook_when_enabled(client, tmp_path, monkeypatch):
+    from openpyxl import Workbook, load_workbook
+    freeze(monkeypatch, at())
+    sign(client)
+    xlsx = tmp_path / "Drax  Associates.xlsx"
+    book = Workbook(); sheet = book.active
+    sheet.append(["Name", "Assoc. #", "Default ID", "Shift", "Job Title"])
+    sheet.append(["Synthetic Associate C", 333333, "c33", "S1", "Associate"])
+    book.save(xlsx)
+    monkeypatch.setenv("IND3_V31_DRAX_WRITE_ENABLED", "1")
+    # Reload now picks the xlsx over the fixture's CSV (xlsx wins in _source()'s
+    # search order), same as a real facility machine with OneDrive synced.
+    assert client.post("/api/admin/roster/reload", json={}).status_code == 200
+    result = client.post("/api/admin/roster/override", json={"number": "333333", "shift": "S4"})
+    assert result.status_code == 200, result.text
+    assert result.json()["drax_write"] == {"written": True,
+        "backup": result.json()["drax_write"]["backup"]}
+    assert load_workbook(xlsx).active["D2"].value == "S4"
+    name_result = client.post("/api/admin/roster/edit",
+        json={"number": "333333", "full_name": "Renamed Synthetic"})
+    assert name_result.status_code == 200, name_result.text
+    assert name_result.json()["drax_write"]["written"] is True
+    assert load_workbook(xlsx).active["A2"].value == "Renamed Synthetic"
+
+
+def test_admin_override_stays_local_only_when_drax_write_disabled(client, monkeypatch):
+    freeze(monkeypatch, at())
+    sign(client)
+    # IND3_V31_DRAX_WRITE_ENABLED is not set here -- default, safe state.
+    result = client.post("/api/admin/roster/override", json={"number": "333333", "shift": "S2"})
+    assert result.status_code == 200, result.text
+    assert result.json()["drax_write"] == {"written": False, "reason": "write_disabled"}
+
+
+def test_admin_override_for_manual_associate_never_touches_drax(client, monkeypatch):
+    freeze(monkeypatch, at())
+    sign(client)
+    monkeypatch.setenv("IND3_V31_DRAX_WRITE_ENABLED", "1")
+    client.post("/api/admin/roster/add",
+        json={"number": "555555", "name": "Synthetic manual", "shift": "S1", "is_mst": True})
+    # A manually-added associate has no row in Drax at all -- the response
+    # must not even claim a Drax write was attempted.
+    result = client.post("/api/admin/roster/edit",
+        json={"number": "555555", "full_name": "Still Local Only"})
+    assert result.status_code == 200, result.text
+    assert "drax_write" not in result.json()
+
+
+def test_delete_manual_associate_removes_them_locally(client, monkeypatch):
+    freeze(monkeypatch, at())
+    sign(client)
+    client.post("/api/admin/roster/add",
+        json={"number": "555555", "name": "Synthetic manual", "shift": "S1", "is_mst": True})
+    result = client.post("/api/admin/roster/delete", json={"number": "555555"})
+    assert result.status_code == 200, result.text
+    assert not any(p["number"] == "555555" for p in result.json()["associates"])
+
+
+def test_delete_manual_associate_blocked_if_referenced_by_shift_history(client, monkeypatch):
+    freeze(monkeypatch, at())
+    sign(client)
+    client.post("/api/admin/roster/add",
+        json={"number": "555555", "name": "Synthetic manual", "shift": "S1", "is_mst": True})
+    sign(client, "555555")
+    client.post("/api/shifts/start", json={"code": "S1"})
+    sign(client)
+    result = client.post("/api/admin/roster/delete", json={"number": "555555"})
+    assert result.status_code == 409
+    assert "shift history" in result.json()["detail"]
+
+
+def test_delete_drax_sourced_associate_requires_write_enabled(client, monkeypatch):
+    freeze(monkeypatch, at())
+    sign(client)
+    # IND3_V31_DRAX_WRITE_ENABLED is not set -- a local-only delete would
+    # just have them resync right back, so this must fail loudly, not
+    # pretend to succeed.
+    result = client.post("/api/admin/roster/delete", json={"number": "333333"})
+    assert result.status_code == 409
+    assert "write_disabled" in result.json()["detail"]
+    assert "333333" in m.roster()
+
+
+def test_delete_drax_sourced_associate_removes_row_and_resyncs(client, tmp_path, monkeypatch):
+    from openpyxl import Workbook, load_workbook
+    freeze(monkeypatch, at())
+    sign(client)
+    xlsx = tmp_path / "Drax  Associates.xlsx"
+    book = Workbook(); sheet = book.active
+    sheet.append(["Name", "Assoc. #", "Default ID", "Shift", "Job Title"])
+    sheet.append(["Synthetic Associate C", 333333, "c33", "S1", "Associate"])
+    book.save(xlsx)
+    monkeypatch.setenv("IND3_V31_DRAX_WRITE_ENABLED", "1")
+    assert client.post("/api/admin/roster/reload", json={}).status_code == 200
+    result = client.post("/api/admin/roster/delete", json={"number": "333333"})
+    assert result.status_code == 200, result.text
+    # Gone from the live workbook...
+    book_after = load_workbook(xlsx)
+    assert book_after.active.max_row == 1
+    # ...and immediately reflected locally too, without waiting on the
+    # background 5-minute poll.
+    assert "333333" not in m.roster()
+    assert sign(client, "333333").status_code == 401
+
+
 def test_management_can_add_manual_mst_not_in_drax(client,monkeypatch):
     freeze(monkeypatch, at())
     sign(client)
@@ -321,7 +426,7 @@ def test_roster_error_does_not_erase_cached_data(client,tmp_path,monkeypatch):
 def test_original_v3_drax_path_is_preferred_when_present(tmp_path, monkeypatch):
     from pathlib import Path
     old_is_file=Path.is_file
-    original=r"C:\Users\ins0002\OneDrive - Walmart Inc\Drax  Associates.xlsx"
+    original=r"C:\Users\ins0002\OneDrive - Walmart Inc\Drax Associates.xlsx"
     monkeypatch.delenv("IND3_V31_ROSTER_PATH",raising=False)
     monkeypatch.delenv("ASSOCIATES_PATH",raising=False)
     # This test specifically verifies the real OneDrive-priority branch, so it

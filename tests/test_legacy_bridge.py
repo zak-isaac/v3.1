@@ -142,3 +142,100 @@ def test_v3_deletion_is_reported_for_manual_review(tmp_path):
     outcome=bridge.reconcile(old,xlsx,private)
     assert any(x["assoc"]=="222222" and x["field"]=="row" for x in outcome["conflicts"])
     assert load_workbook(xlsx).active["B3"].value==222222
+
+
+def test_write_admin_override_requires_env_flag(tmp_path,monkeypatch):
+    xlsx=tmp_path/"Drax  Associates.xlsx";make_drax(xlsx)
+    before=xlsx.read_bytes()
+    monkeypatch.delenv("IND3_V31_DRAX_WRITE_ENABLED",raising=False)
+    result=bridge.write_admin_override(xlsx,tmp_path/"private","111111",shift="S3")
+    assert result=={"written":False,"reason":"write_disabled"}
+    assert xlsx.read_bytes()==before
+
+
+def test_write_admin_override_updates_name_shift_mst(tmp_path,monkeypatch):
+    xlsx=tmp_path/"Drax  Associates.xlsx";make_drax(xlsx)
+    monkeypatch.setenv("IND3_V31_DRAX_WRITE_ENABLED","1")
+    result=bridge.write_admin_override(xlsx,tmp_path/"private","111111",
+        name="RENAMED PERSON",shift="S3",is_mst=False)
+    assert result["written"] is True
+    assert Path(result["backup"]).is_file()
+    book=load_workbook(xlsx)
+    assert book.active["A2"].value=="RENAMED PERSON"
+    assert book.active["D2"].value=="S3"
+    assert book.active["E2"].value=="Associate"
+    assert book.active["A3"].value=="SYNTHETIC B"
+    assert book.active["F2"].value=="=2+2"
+
+
+def test_write_admin_override_skips_associate_not_in_drax(tmp_path,monkeypatch):
+    xlsx=tmp_path/"Drax  Associates.xlsx";make_drax(xlsx)
+    before=xlsx.read_bytes()
+    monkeypatch.setenv("IND3_V31_DRAX_WRITE_ENABLED","1")
+    result=bridge.write_admin_override(xlsx,tmp_path/"private","999999",shift="S1")
+    assert result=={"written":False,"reason":"not_in_drax"}
+    assert xlsx.read_bytes()==before
+
+
+def test_write_admin_override_degrades_gracefully_on_non_xlsx_source(tmp_path,monkeypatch):
+    # A CSV roster is a legitimate fallback source when OneDrive is
+    # unreachable -- there's no real workbook to write cells into, so this
+    # must report a clean failure reason, never crash the whole admin save.
+    csv_path=tmp_path/"mst-roster.csv"
+    csv_path.write_text("Name,Assoc. #,Default ID,Shift,Job Title\nA,111111,a1,S1,MST\n")
+    monkeypatch.setenv("IND3_V31_DRAX_WRITE_ENABLED","1")
+    result=bridge.write_admin_override(csv_path,tmp_path/"private","111111",shift="S3")
+    assert result["written"] is False
+    assert result["reason"].startswith("workbook_unreadable")
+
+
+def test_delete_admin_row_requires_env_flag(tmp_path,monkeypatch):
+    xlsx=tmp_path/"Drax  Associates.xlsx";make_drax(xlsx)
+    before=xlsx.read_bytes()
+    monkeypatch.delenv("IND3_V31_DRAX_WRITE_ENABLED",raising=False)
+    result=bridge.delete_admin_row(xlsx,tmp_path/"private","111111")
+    assert result=={"deleted":False,"reason":"write_disabled"}
+    assert xlsx.read_bytes()==before
+
+
+def test_delete_admin_row_removes_only_the_matching_row(tmp_path,monkeypatch):
+    xlsx=tmp_path/"Drax  Associates.xlsx";make_drax(xlsx)
+    monkeypatch.setenv("IND3_V31_DRAX_WRITE_ENABLED","1")
+    result=bridge.delete_admin_row(xlsx,tmp_path/"private","111111")
+    assert result["deleted"] is True
+    assert Path(result["backup"]).is_file()
+    book=load_workbook(xlsx)
+    # Only one data row left, and it's the untouched sibling -- row 2 now,
+    # since row 2 (111111) was deleted and everything shifted up.
+    assert book.active.max_row==2
+    assert book.active["A2"].value=="SYNTHETIC B"
+    assert book.active["B2"].value==222222
+    # The backup preserves the original, pre-delete two-row state.
+    backup_book=load_workbook(result["backup"])
+    assert backup_book.active.max_row==3
+
+
+def test_delete_admin_row_skips_associate_not_in_drax(tmp_path,monkeypatch):
+    xlsx=tmp_path/"Drax  Associates.xlsx";make_drax(xlsx)
+    before=xlsx.read_bytes()
+    monkeypatch.setenv("IND3_V31_DRAX_WRITE_ENABLED","1")
+    result=bridge.delete_admin_row(xlsx,tmp_path/"private","999999")
+    assert result=={"deleted":False,"reason":"not_in_drax"}
+    assert xlsx.read_bytes()==before
+
+
+def test_delete_admin_row_aborts_on_concurrent_drax_change(tmp_path,monkeypatch):
+    xlsx=tmp_path/"Drax  Associates.xlsx";make_drax(xlsx)
+    monkeypatch.setenv("IND3_V31_DRAX_WRITE_ENABLED","1")
+    # Simulate someone editing the live file between our read and our write
+    # by monkeypatching the digest check to always report a mismatch.
+    import v31_drax_bridge
+    real_apply=v31_drax_bridge._save_with_backup
+    def tampered(book,path,expected,private,label):
+        return real_apply(book,path,"not-the-real-digest",private,label)
+    monkeypatch.setattr(v31_drax_bridge,"_save_with_backup",tampered)
+    before=xlsx.read_bytes()
+    result=bridge.delete_admin_row(xlsx,tmp_path/"private","111111")
+    assert result["deleted"] is False
+    assert "changed while preparing" in result["reason"]
+    assert xlsx.read_bytes()==before

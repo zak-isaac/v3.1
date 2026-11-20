@@ -14,7 +14,7 @@ py -3.12 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt pytest httpx
 python -m pytest -q tests/
-$env:IND3_V31_ROSTER_PATH = "C:\approved\Drax  Associates.xlsx"
+$env:IND3_V31_ROSTER_PATH = "C:\approved\Drax Associates.xlsx"
 python -m uvicorn app:app --host 127.0.0.1 --port 8980
 ```
 
@@ -40,22 +40,22 @@ Open <http://127.0.0.1:8980/> and use Command+Shift+R to refresh the UI after up
 
 For authorized Drax-backed local logins, V3.1 needs an **approved copy or authorized synchronized path** to the Drax roster. It **does not connect to the production V3 database** and does not download the live Excel roster automatically.
 
-The workbook must contain the existing Drax columns `Name`, `Assoc. #`, `Default ID`, `Shift`, and `Job Title`. The original double-spaced filename `Drax  Associates.xlsx` and its exact Windows OneDrive location are recognized.
+The workbook must contain the existing Drax columns `Name`, `Assoc. #`, `Default ID`, `Shift`, and `Job Title`. The canonical filename is `Drax Associates.xlsx` (renamed 2026-11-09 from an old double-spaced name kept only for a now-retired V3 compatibility quirk) at its exact Windows OneDrive location.
 
 **Original V3 Windows path — used automatically in V3.1 on the Workshop PC:**
 
 ```text
-C:\Users\ins0002\OneDrive - Walmart Inc\Drax  Associates.xlsx
+C:\Users\ins0002\OneDrive - Walmart Inc\Drax Associates.xlsx
 ```
 
-The **two spaces** between `Drax` and `Associates.xlsx` are intentional. V3.1 reads this existing synchronized file **read-only**; it does not change the actual Drax workbook.
+V3.1 reads this synchronized file on every poll. For most roster reads this is read-only, but see the "V3.1 Administration -> Drax" and "Administration -> Delete" entries in the Drax synchronization section below: shift/MST/name edits and associate deletion from Administration *do* write back into this exact file when explicitly enabled, not just read it.
 
 You can still use the original `ASSOCIATES_PATH` environment variable or override the source specifically for V3.1 with `IND3_V31_ROSTER_PATH` (higher priority). The canonical Windows path cannot work unchanged on macOS because Mac drive layouts differ.
 
 **Option A (for local Mac development):** Point V3.1 to an authorized OneDrive-synced Mac copy:
 
 ```bash
-export IND3_V31_ROSTER_PATH="/absolute/mac/path/to/Drax  Associates.xlsx"
+export IND3_V31_ROSTER_PATH="/absolute/mac/path/to/Drax Associates.xlsx"
 python -m uvicorn app:app --host 127.0.0.1 --port 8980
 ```
 
@@ -105,6 +105,12 @@ At most **two overlapping shift sessions** may be active at the current facility
 
 **End Shift** requires a saved passdown. Use **Generate Passdown (.eml)** first; this stores a copy in the selected V3.1 session, then downloads a local Outlook draft. End Shift only closes the selected session. Sign Out only ends the browser login session.
 
+**Opening the downloaded .eml faster (2026-11-09):** V3.1 runs as a shared, multi-workstation service -- different technicians open it in a browser on their own PCs, not on the server machine -- so the backend cannot force-launch Outlook directly on a user's PC; no website can force-open a native desktop app without the browser's own permission, by design, on any browser. What *does* work, and now works more reliably since the download was switched from a forced blob save to a normal server link: in the browser's download tray, after the first passdown download, choose **"Always open files of this type"** (Chrome/Edge) once per workstation. After that one-time step, every future **Generate Passdown** click opens directly in Outlook with no extra click. A first-time on-screen tip now reminds the user of this the first time they generate a passdown on a given browser.
+
+**"Always open" does nothing at all (2026-11-09 finding):** on a freshly-checked workstation, Windows had *no* default app set for `.eml` at all (`HKCU...\FileExts\.eml\UserChoice` was empty), even though Outlook was installed and registers a valid handler (`Outlook.File.eml.15`). Without a Windows-level default, the browser's "Always open" setting has nothing to hand the file to, so it silently keeps downloading instead. Fix once per workstation, from File Explorer (Windows blocks scripts/registry edits from silently setting this, by design, so it has to go through the real UI): right-click any downloaded `.eml` → **Open with** → **Outlook** → check **"Always use this app to open .eml files"** → OK. Only after that will the browser's "Always open" setting actually work.
+
+**Why a generated draft can sit in Outlook's Outbox:** once a `.eml` is opened and Send is clicked inside Outlook, whether it actually leaves the Outbox right away depends on that workstation's own Outlook configuration (Send/Receive settings, Work Offline state, and which application Windows has associated with `.eml` files) -- none of which V3.1's backend can see or control once the file has left the browser. Confirm each workstation's `.eml` file association points at the full Outlook application (not a lightweight viewer) and that Outlook's "Send immediately when connected" setting is on. A true zero-dependency send (no Outlook involved at all) would require a server-side Microsoft Graph or SMTP relay integration; that was evaluated and intentionally not pursued (see `v31_facility.py`) and remains out of scope here by explicit choice, not oversight.
+
 ### V3.1 Shift Report workspace (October 2026 refresh)
 
 Cetaris import status, **Import Cetaris**, **Change Technicians**, and **Import Audit** are now grouped next to the Shift Report title. The Shift Progress bar is a live, equally-weighted checklist recomputed on every render, not a one-time flag or elapsed time: (1) Cetaris import confirmed, only required if a file was actually chosen -- a fully-manual shift with no Cetaris file at all is legitimate and is never blocked by this item; (2) work orders or PMs recorded for the shift; (3) LOTO verification completed (marking any key missing also counts, since documenting a missing key is itself a completed inspection). Reaching 100% is required before **Generate Passdown** will proceed -- it is a gate, never a side effect of generating the report itself.
@@ -150,12 +156,14 @@ The first command is a **dry run**. The second makes an independent snapshot usi
 The approved Drax roster is the same OneDrive workbook as original V3:
 
 \`\`\`text
-C:\Users\ins0002\OneDrive - Walmart Inc\Drax  Associates.xlsx
+C:\Users\ins0002\OneDrive - Walmart Inc\Drax Associates.xlsx
 \`\`\`
 
 - **Drax -> V3.1:** Existing \`v31_roster.py\` refreshes the private roster cache from the authorized workbook about every 5 minutes. Changes made in Excel/OneDrive appear after the next successful read.
 - **Drax -> old V3:** The old V3 program already watches the workbook. Its exact handling of administrative overrides and MST demotions depends on its legacy database rules; do not assume every changed cell overwrites prior manual V3 overrides.
 - **Old V3 -> Drax:** New \`v31_drax_bridge.py\` compares the old V3 \`associates\` database (read-only), the workbook, and its last private baseline. Nonconflicting changes to \`Name\`, \`Shift\`, and MST flag can be written to the Excel file only with **explicit authorization and a write flag**. Workbook differences on first setup establish a baseline, and conflicting changes remain for human review. Deletions/new associates are not auto-mirrored.
+- **V3.1 Administration -> Drax (approved 2026-11-09 for this facility's deployment):** Shift reassignment, MST toggle, and name edits made in Administration now also write immediately into the same live Drax workbook, in addition to saving locally -- see \`v31_drax_bridge.write_admin_override()\`. It reuses the exact same guarded single-cell primitive as the bridge above (before-image backup, only the changed cell, aborts cleanly instead of overwriting if the workbook changed on disk mid-write). A manually-added local-only associate has no real Drax row and is never written back. This write path shares the same \`IND3_V31_DRAX_WRITE_ENABLED=1\` gate as the CLI bridge below -- disable that flag to fall back to local-only overrides again.
+- **Administration -> Delete (approved 2026-11-09):** Administration now has a Delete action per associate, permission-gated the same as every other roster edit (management session required). For a manually-added local-only associate it's a plain, permanent local delete (blocked if they're referenced by real shift history). For a real Drax-sourced associate it actually removes their row from the live Drax workbook itself -- see \`v31_drax_bridge.delete_admin_row()\` -- since a local-only delete would just have them resync right back within 5 minutes. Unlike the softer field edits above, a failed Drax delete is reported as a hard error, not a silent local-only fallback: there is no safe partial state for "deleted here but not there." Row deletion shifts every subsequent row up by one, a materially bigger change than a single-cell edit, so it still shares the same before-image backup and concurrent-change abort, but is inherently riskier -- treat it with the same care as editing the workbook by hand.
 
 Review only (does not edit Drax):
 
@@ -163,7 +171,7 @@ Review only (does not edit Drax):
 python scripts/sync_drax_from_v3.py --v3-db "C:\approved\old-v3\dbs\ind3.db"
 \`\`\`
 
-**Do not enable the following on a live company OneDrive workbook without approved IT authorization, an exclusive maintenance window, a verified backup and actual Windows/OneDrive acceptance testing.** If approved, the write setting is \`IND3_V31_DRAX_WRITE_ENABLED=1\`, and \`--apply\` enables the manual CLI write. The optional background bridge also needs \`IND3_V31_LEGACY_DB_PATH\` explicitly set to the old database file. The bridge never writes to the old V3 database. Each proposed workbook write creates a private before-image backup and checks for changes during preparation. OneDrive sync conflicts or Excel file locks still require manual recovery.
+**Do not enable the following on a live company OneDrive workbook without approved IT authorization, an exclusive maintenance window, a verified backup and actual Windows/OneDrive acceptance testing.** If approved, the write setting is \`IND3_V31_DRAX_WRITE_ENABLED=1\`, and \`--apply\` enables the manual CLI write (this same flag also gates the live Administration-page write-back described above). The optional background bridge also needs \`IND3_V31_LEGACY_DB_PATH\` explicitly set to the old database file. The bridge never writes to the old V3 database. Each proposed workbook write creates a private before-image backup and checks for changes during preparation. OneDrive sync conflicts or Excel file locks still require manual recovery.
 
 This is a **limited, guarded two-way synchronization bridge, not an unconditional real-time bidirectional merge**. It does not change original V3's code or guarantee that every administrative override in V3 is immediately reflected in Excel.
 
