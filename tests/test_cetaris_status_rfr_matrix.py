@@ -110,7 +110,7 @@ def test_breakdown_parts_pending_to_in_process_then_closed_requires_rts(
     assert upload(client,[closed]).status_code==200
     assert import_techs(client,["Synthetic A"]).status_code==200
     with m._db() as conn:
-        assert v31_breakdown.pending(conn,s1)==[]
+        assert [x["status"] for x in v31_breakdown.pending(conn,s1)]==["closed"]
         assert [x["status"] for x in v31_breakdown.pending(conn,s2)]==["closed"]
     assert client.get("/api/assets/status").json()["rts"]==[]
     result=client.post("/api/breakdowns/P-WO/decision",json={"decision":"rts"})
