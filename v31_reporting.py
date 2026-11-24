@@ -896,6 +896,34 @@ def happenings_counts(conn, shift_ids):
     return {r["shift_id"]: r["n"] for r in rows}
 
 
+# Raw Drax job_title codes -> the display wording that goes in the Outlook
+# signature. Anything not listed here (or missing/no roster match at all)
+# renders with no title line, rather than guessing or showing a raw code.
+_TITLE_LABELS={"mst":"Multi-Skilled Technician","technician":"Maintenance Technician",
+              "manager":"Maintenance Manager","clerk":"Clerk"}
+
+
+def _lead_title(conn,lead_name):
+    """Resolve the signature's job-title line from the live Drax roster.
+
+    Exact-name matching only (via the same _person_key() used for technician
+    attribution elsewhere) -- never guesses a title for an unmatched or
+    ambiguous name. is_mst wins over a stale/contradictory raw job_title.
+    """
+    key=_person_key(lead_name)
+    if not key:
+        return ""
+    matches=[row for row in conn.execute(
+        "SELECT job_title,is_mst,full_name FROM roster_associates WHERE source_active=1")
+        if _person_key(row["full_name"])==key]
+    if len(matches)!=1:
+        return ""
+    row=matches[0]
+    if row["is_mst"]:
+        return _TITLE_LABELS["mst"]
+    return _TITLE_LABELS.get(str(row["job_title"]).strip().casefold(),"")
+
+
 def build_passdown_html(conn, shift_id, shift_code, lead_name=''):
     """Python mirror of the client-side buildEmailHtml() in shift-report.html,
     used only so Shift History can regenerate a historical shift's EML after
@@ -1003,4 +1031,4 @@ def build_passdown_html(conn, shift_id, shift_code, lead_name=''):
         + sec("Returned to Service", bullet_list(rts))
         + sec("Current Out of Service", bullet_list(oos))
         + loto_html + missing_html + '</body></html>')
-    return v31_signature.append_signature(html_body, lead_name)
+    return v31_signature.append_signature(html_body, lead_name, _lead_title(conn,lead_name))

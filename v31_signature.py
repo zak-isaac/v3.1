@@ -31,8 +31,14 @@ KNOWN = {
 }
 
 
-def get_signature_html(lead_name: str, *, spark_src: str = f"cid:{SPARK_CID}") -> str:
-    """Return a standalone signature; spark_src may be a data URL for preview."""
+def get_signature_html(lead_name: str, *, spark_src: str = f"cid:{SPARK_CID}",
+                       title: str = "") -> str:
+    """Return a standalone signature; spark_src may be a data URL for preview.
+
+    title is a plain display string (e.g. "Multi-Skilled Technician") resolved
+    by the caller from the live Drax roster -- this module stays a pure HTML
+    formatter and never looks up or guesses a person's role itself.
+    """
     name = (lead_name or "").strip() or "IND3 Maintenance Team"
     _, _, known_id = KNOWN.get(name.casefold(), ("", "", ""))
     safe_name = html.escape(name)
@@ -41,10 +47,13 @@ def get_signature_html(lead_name: str, *, spark_src: str = f"cid:{SPARK_CID}") -
     # Match the 16px Calibri/Arial section headings (Vendors, Shift
     # Happenings, etc.), while keeping compact line spacing.
     line_style = "font-family:Calibri,Arial,sans-serif;font-size:16px;line-height:22px;color:#253349;"
+    title_row = (f'<tr><td style="{line_style}padding:0 0 2px;">{html.escape(title.strip())}</td></tr>'
+                 if title and title.strip() else "")
 
     return SIGNATURE_MARKER + f"""<table role="presentation" cellspacing="0" cellpadding="0" border="0"
       style="width:100%;max-width:560px;margin:16px 0 0;border-collapse:collapse;">
       <tr><td style="{line_style}font-weight:700;padding:0 0 2px;">{safe_name}{id_html}</td></tr>
+      {title_row}
       <tr><td style="{line_style}padding:0 0 2px;">{html.escape(FACILITY)}</td></tr>
       <tr><td style="{line_style}padding:0 0 6px;">{html.escape(ADDRESS)}</td></tr>
       <tr><td style="{line_style}font-weight:700;padding:0 0 2px;white-space:nowrap;"><span style="white-space:nowrap;color:#0071CE;">Walmart&nbsp;<img src="{safe_src}" width="20" height="20" alt="Walmart Spark" style="display:inline-block;width:20px;height:20px;border:0;vertical-align:middle;margin-left:3px;" /></span></td></tr>
@@ -52,11 +61,11 @@ def get_signature_html(lead_name: str, *, spark_src: str = f"cid:{SPARK_CID}") -
     </table>"""
 
 
-def append_signature(body_html: str, lead_name: str) -> str:
+def append_signature(body_html: str, lead_name: str, title: str = "") -> str:
     """Append the signature once; do not modify the existing report body."""
     if SIGNATURE_MARKER in body_html:
         return body_html
-    sig = get_signature_html(lead_name)
+    sig = get_signature_html(lead_name, title=title)
     return re.sub(r"</body\s*>", lambda m: sig + m.group(0), body_html,
                   count=1, flags=re.IGNORECASE) if re.search(
                       r"</body\s*>", body_html, re.IGNORECASE

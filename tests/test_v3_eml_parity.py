@@ -161,3 +161,35 @@ def test_completed_pm_count_is_bold_in_email(client, monkeypatch):
         shift_id=client.get("/api/me").json()["selected"]["id"]
         html=build_passdown_html(conn,shift_id,"S1","Management")
     assert "<strong>1 PM completed this shift</strong>" in html
+
+
+def test_signature_title_reflects_live_drax_job_title(client, monkeypatch):
+    clock(monkeypatch)
+    enter(client,"S1")
+    from test_reporting import upload, import_techs, row
+    assert upload(client,[row("TITLE1")]).status_code==200
+    assert import_techs(client,["Synthetic A"]).status_code==200
+    from v31_reporting import build_passdown_html
+    import app as m
+    with m._db() as conn:
+        shift_id=client.get("/api/me").json()["selected"]["id"]
+        conn.executemany(
+            """INSERT INTO roster_associates
+               (number,full_name,shift,job_title,is_mst,source_active)
+               VALUES(?,?,?,?,?,1)""",
+            [("900001","MST Person","S1","MST",1),
+             ("900002","Regular Person","S1","Technician",0),
+             ("900003","Boss Person","S1","Manager",0)])
+        conn.commit()
+        mst_html=build_passdown_html(conn,shift_id,"S1","MST Person")
+        tech_html=build_passdown_html(conn,shift_id,"S1","Regular Person")
+        manager_html=build_passdown_html(conn,shift_id,"S1","Boss Person")
+        unmatched_html=build_passdown_html(conn,shift_id,"S1","Nobody Here")
+    assert "Multi-Skilled Technician" in mst_html
+    assert "Maintenance Technician" in tech_html
+    assert "Maintenance Manager" in manager_html
+    # An unmatched/ambiguous name still signs the report -- it just omits
+    # a title line instead of guessing one.
+    for label in ("Multi-Skilled Technician","Maintenance Technician","Maintenance Manager"):
+        assert label not in unmatched_html
+
