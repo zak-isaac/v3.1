@@ -908,18 +908,23 @@ def _lead_title(conn,lead_name):
 
     Exact-name matching only (via the same _person_key() used for technician
     attribution elsewhere) -- never guesses a title for an unmatched or
-    ambiguous name. is_mst wins over a stale/contradictory raw job_title.
+    ambiguous name. An admin-page override_mst always wins over the raw
+    synced is_mst, matching how every other MST decision in the app resolves
+    (v31_roster.profiles()/status()) -- a manual correction must take effect
+    everywhere, not just on the roster admin page itself.
     """
     key=_person_key(lead_name)
     if not key:
         return ""
     matches=[row for row in conn.execute(
-        "SELECT job_title,is_mst,full_name FROM roster_associates WHERE source_active=1")
-        if _person_key(row["full_name"])==key]
+        """SELECT job_title,is_mst,override_mst,full_name,override_name
+           FROM roster_associates WHERE source_active=1""")
+        if key in (_person_key(row["full_name"]),_person_key(row["override_name"] or ""))]
     if len(matches)!=1:
         return ""
     row=matches[0]
-    if row["is_mst"]:
+    effective_is_mst=row["override_mst"] if row["override_mst"] is not None else row["is_mst"]
+    if effective_is_mst:
         return _TITLE_LABELS["mst"]
     return _TITLE_LABELS.get(str(row["job_title"]).strip().casefold(),"")
 

@@ -70,7 +70,9 @@ def test_unassigned_to_be_done_only_is_due_in_wo_details(
     assert next(p for p in pm["rows"] if p["wo_number"]=="PM-T")["wo_status"]=="To be Done"
     assert pm["rows"][0]["pm_due_date"]=="10/26/2026"
     assert pm["target_dates"]==["2026-10-26"]
-    assert pm["notes"]  # To-Be-Done rows and missing due-date warning.
+    # The missing-due-date PM is simply left off the due/overdue lists --
+    # no explanatory note is shown for it anywhere (Isaac, 2026-11-25).
+    assert pm["notes"]==[]
     assert state["pm_count"]==0
     assert state["rows"]==[]
     preview=client.get("/api/shifts/report/preview")
@@ -149,8 +151,12 @@ def test_missing_date_is_flagged_not_assumed_due_today(client,monkeypatch):
     assert response.status_code==200,response.text
     due=client.get("/api/pm-needing-completion").json()
     assert due["due_count"]==0 and due["count"]==0
-    assert any("no valid" in note.lower() or "parseable" in note.lower()
-               for note in due["notes"])
+    # A missing due date must never be silently treated as "due today" --
+    # that's the real behavior under test, asserted above by due_count==0.
+    # The note explaining *why* was removed from display entirely on
+    # 2026-11-25 (Isaac): a PM missing a due date is just left off the
+    # list, with no separate explanatory note shown anywhere.
+    assert not any("parseable" in note.lower() for note in due["notes"])
 
 
 def test_overnight_s3_switches_yellow_to_red_after_midnight(

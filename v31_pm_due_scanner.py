@@ -175,9 +175,10 @@ def scan(content,code,shift_day):
              for item in keyed.values() if item["due_iso"] in result["target_dates"]
              and item["status_code"]=="T"),
             key=lambda x:(x["due_iso"],x["wo_number"]))
-        if result["missing_due"]:
-            result["notes"].append(
-                f'{result["missing_due"]} PM rows lacked a parseable PM Due Date and could not be assigned to a day')
+        # missing_due is still counted (diagnostics/tests rely on it), but it
+        # is no longer surfaced as a user-facing note in the EML or UI -- a
+        # PM row without a parseable due date is simply left off the due/
+        # overdue lists, which is self-evident without an explanatory note.
         if not result["to_be_done_seen"]:
             result["notes"].append(
                 "No To-Be-Done PM rows found. The single WO Details export may be filtered; re-export with all RFR 08 PMs including unassigned To-Be-Done WOs.")

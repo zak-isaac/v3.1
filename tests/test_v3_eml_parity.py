@@ -193,3 +193,28 @@ def test_signature_title_reflects_live_drax_job_title(client, monkeypatch):
     for label in ("Multi-Skilled Technician","Maintenance Technician","Maintenance Manager"):
         assert label not in unmatched_html
 
+
+def test_signature_title_honors_admin_page_mst_override(client, monkeypatch):
+    """A manual MST correction made on the roster admin page (override_mst)
+    must take effect in the signature immediately, not just on the admin
+    page itself -- the raw synced Drax is_mst is stale once overridden
+    (Isaac, 2026-11-25)."""
+    clock(monkeypatch)
+    enter(client,"S1")
+    from test_reporting import upload, import_techs, row
+    assert upload(client,[row("TITLE2")]).status_code==200
+    assert import_techs(client,["Synthetic A"]).status_code==200
+    from v31_reporting import build_passdown_html
+    import app as m
+    with m._db() as conn:
+        shift_id=client.get("/api/me").json()["selected"]["id"]
+        conn.execute(
+            """INSERT INTO roster_associates
+               (number,full_name,shift,job_title,is_mst,override_mst,source_active)
+               VALUES(?,?,?,?,?,?,1)""",
+            ("900004","Promoted Person","S1","Technician",0,1))
+        conn.commit()
+        promoted_html=build_passdown_html(conn,shift_id,"S1","Promoted Person")
+    assert "Multi-Skilled Technician" in promoted_html
+    assert "Maintenance Technician" not in promoted_html
+
